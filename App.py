@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 import google.generativeai as genai
 import datetime
 
@@ -14,6 +14,12 @@ if 'history' not in st.session_state:
 
 st.sidebar.header("⚙️ Настройки и Статистика")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
+
+# Выбор модели прямо в интерфейсе на случай ограничений ключа
+selected_model = st.sidebar.selectbox(
+    "Модель Gemini",
+    ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+)
 
 if api_key:
     genai.configure(api_key=api_key)
@@ -50,12 +56,16 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Ищем матчи на Flashscore/SofaScore, анализируем мнения экспертов в сети..."):
+        with st.spinner(f"Ищем матчи через модель {selected_model} (Flashscore/SofaScore)..."):
             try:
-                model = genai.GenerativeModel(
-                    model_name='gemini-1.5-flash',
-                    tools='google_search_retrieval'
-                )
+                # Подключаем поиск, если модель поддерживает инструменты
+                if "1.5" in selected_model:
+                    model = genai.GenerativeModel(
+                        model_name=selected_model,
+                        tools='google_search_retrieval'
+                    )
+                else:
+                    model = genai.GenerativeModel(model_name=selected_model)
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
@@ -84,7 +94,7 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
                 st.success("Сигналы успешно найдены и проанализированы!")
                 
             except Exception as e:
-                st.error(f"Ошибка при запросе к Gemini API: {e}")
+                st.error(f"Ошибка при запросе к Gemini API: {e}\n\n💡 Попробуй переключить модель на `gemini-1.5-pro` или `gemini-pro` в боковой панели слева.")
 
 st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
