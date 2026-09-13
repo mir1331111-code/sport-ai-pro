@@ -121,9 +121,9 @@ SPORT_GROUPS = {
             ("soccer_germany_bundesliga", "Бундеслига (Германия)"),
             ("soccer_italy_serie_a", "Серия А (Италия)"),
             ("soccer_france_ligue_one", "Лига 1 (Франция)"),
-            ("soccer_uefa_nations_league", "Лига Наций УЕФА (Сборные)"),
-            ("soccer_fifa_world_cup", "ЧМ / Отборы (Сборные)"),
-            ("soccer_international_friendly", "Товарищеские матчи (Сборные)"),
+            ("soccer_uefa_nations_league", "Лига Наций УЕФА"),
+            ("soccer_fifa_world_cup", "ЧМ / Отборы"),
+            ("soccer_international_friendly", "Товарищеские матчи"),
         ],
     },
     "🏒 Хоккей": {
@@ -131,6 +131,7 @@ SPORT_GROUPS = {
         "endpoints": [
             ("icehockey_nhl", "НХЛ (США/Канада)"),
             ("icehockey_khl", "КХЛ (Россия/Евразия)"),
+            ("icehockey_sweden_hockey_league", "Шведская хоккейная лига"),
         ],
     },
     "🏀 Баскетбол": {
@@ -138,26 +139,28 @@ SPORT_GROUPS = {
         "endpoints": [
             ("basketball_nba", "НБА (США)"),
             ("basketball_euroleague", "Евролига (Европа)"),
-            ("basketball_russia_vtb", "Единая лига ВТБ"),
+            ("basketball_ncaab", "NCAA (США)"),
         ],
     },
     "🎾 Теннис": {
         "category": "tennis",
         "endpoints": [
-            ("tennis_atp_us_open", "ATP / Турниры Большого Шлема"),
-            ("tennis_wta_us_open", "WTA / Турниры"),
+            ("tennis_atp_aus_open", "ATP Австралиан Опен"),
+            ("tennis_wta_aus_open", "WTA Австралиан Опен"),
+            ("tennis_atp_us_open", "ATP US Open"),
+            ("tennis_wta_us_open", "WTA US Open"),
         ],
     },
     "🏐 Волейбол": {
         "category": "volleyball",
         "endpoints": [
-            ("volleyball_fivb", "Международный Волейбол (ФИВБ)"),
+            ("volleyball_cev_champions_league", "Лига Чемпионов ЕКВ"),
         ],
     },
     "🤾 Гандбол": {
         "category": "handball",
         "endpoints": [
-            ("handball_germhandball", "Бундеслига / Гандбол"),
+            ("handball_bundesliga", "Бундеслига (Гандбол)"),
         ],
     },
     "🎮 Киберспорт": {
@@ -165,6 +168,7 @@ SPORT_GROUPS = {
         "endpoints": [
             ("esports_cs_go", "Counter-Strike 2"),
             ("esports_dota_2", "Dota 2"),
+            ("esports_lol", "League of Legends"),
         ],
     },
 }
@@ -243,68 +247,13 @@ def send_telegram_message(token, chat_id, text):
     return False
 
 
-def generate_fallback_matches(sport_category, endpoints_list):
-  mock_data = {
-      "hockey": [
-          ("СКА Санкт-Петербург", "ЦСКА Москва", "КХЛ"),
-          ("Металлург Магнитогорск", "Авангард Омск", "КХЛ"),
-          ("Эдмонтон Ойлерз", "Калгари Флэймз", "НХЛ (Предсезонка)"),
-      ],
-      "basketball": [
-          ("Реал Мадрид", "Барселона", "Евролига"),
-          ("ЦСКА Москва", "УНИКС Казань", "Единая лига ВТБ"),
-          ("Бостон Селтикс", "Нью-Йорк Никс", "НБА (Товарищеский)"),
-      ],
-      "tennis": [
-          ("Янник Синнер", "Карлос Алькарас", "ATP Финал"),
-          ("Новак Джокович", "Даниил Медведев", "ATP Турнир"),
-          ("Арина Соболенко", "Ига Свёнтек", "WTA Турнир"),
-      ],
-      "volleyball": [
-          ("Зенит-Казань", "Динамо Москва", "Суперлига"),
-          ("Перуджа", "Трентино", "Лига Чемпионов ЕКВ"),
-      ],
-      "handball": [
-          ("Киль", "ПСЖ Гандбол", "Лига Чемпионов ЕГФ"),
-          ("Барселона", "Веспрем", "Евролига"),
-      ],
-      "esports": [
-          ("Natus Vincere", "Team Vitality", "Counter-Strike 2 (BLAST)"),
-          ("Team Spirit", "G2 Esports", "Counter-Strike 2 (IEM)"),
-          ("Tundra Esports", "BetBoom Team", "Dota 2 (Tier-1)"),
-      ],
-  }
-
-  pool = mock_data.get(
-      sport_category,
-      [("Команда А", "Команда Б", endpoints_list[0][1] if endpoints_list else "Турнир")],
-  )
-  raw_matches = []
-  for t1, t2, label in pool:
-    raw_matches.append({
-        "sport_label": label,
-        "sport_category": sport_category,
-        "team1": t1,
-        "team2": t2,
-        "team1_logo": f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66",
-        "team2_logo": f"https://ui-avatars.com/api/?name={t2}&background=1e293b&color=00bfff",
-        "status": "⏳ Скоро в лайве",
-        "is_finished": False,
-        "score": "0:0",
-        "state": "pre",
-        "short_detail": "Сегодня",
-        "real_odds": {"1": round(random.uniform(1.4, 2.3), 2), "X": 3.20, "2": round(random.uniform(1.5, 2.6), 2)},
-    })
-  return raw_matches
-
-
 def fetch_matches_from_odds_api(
     endpoints_list, sport_category, api_key, max_hours_ahead=12
 ):
+  """Строгий запрос реальных данных из The Odds API без каких-либо заглушек."""
   raw_matches = []
-  unsupported_in_odds_api = ["esports", "volleyball", "handball"]
-  if not api_key or sport_category in unsupported_in_odds_api:
-    return generate_fallback_matches(sport_category, endpoints_list)
+  if not api_key:
+    return []
 
   now_utc = datetime.now(timezone.utc)
 
@@ -369,9 +318,6 @@ def fetch_matches_from_odds_api(
           })
     except Exception:
       pass
-
-  if not raw_matches:
-    return generate_fallback_matches(sport_category, endpoints_list)
 
   return raw_matches
 
@@ -568,9 +514,8 @@ if selected_window in window_mapping:
   col_ctrl1, col_ctrl2 = st.columns([2, 1])
   with col_ctrl1:
     st.info(
-        f"🎯 Режим поиска **ВЫСОКОЙ ВЕРОЯТНОСТИ (ЖЕЛЕЗО)**: сканируем матчи в"
-        f" категории {sport_title}. Анализируются исходы, тоталы, форы и"
-        " статистика."
+        f"🎯 Сканируем **реальные живые линии** в категории {sport_title} через"
+        " The Odds API. Никаких симуляций."
     )
   with col_ctrl2:
     scan_button = st.button(
@@ -578,95 +523,106 @@ if selected_window in window_mapping:
     )
 
   if scan_button:
-    with st.spinner(
-        "Сканируем рынок и отбираем события с высокой вероятностью (>75%)..."
-    ):
-      matches = fetch_matches_from_odds_api(
-          sport_data["endpoints"],
-          sport_data["category"],
-          odds_api_key,
-          max_hours_ahead=max_hours_filter,
-      )
-
-      analyzed_cards = []
-      for m in matches[:8]:
-        real_o1 = m["real_odds"]["1"]
-        real_ox = m["real_odds"]["X"]
-        real_o2 = m["real_odds"]["2"]
-
-        prompt = f"""
-                Ты элитный профессиональный спортивный капер и математический аналитик синдиката.
-                Проанализируй матч: {m['team1']} против {m['team2']} в турнире {m['sport_label']}.
-                Коэффициенты БК: П1={real_o1}, Х={real_ox}, П2={real_o2}.
-                Твоя цель — найти СУПЕР-НАДЕЖНУЮ ставку с ОЧЕНЬ ВЫСОКОЙ вероятностью прохода (от 78% до 94%).
-                Выдай строго JSON со следующими полями:
-                - "recommendation": Точное название ставки (например, "Тотал больше 2.5", "Фора (0)", "ТМ 3.5").
-                - "coefficient": Адекватный коэффициент для этой ставки (float, от 1.35 до 2.15).
-                - "closing_odds": Прогнозируемый закрывающий кэф (float).
-                - "probability": Оценка вероятности прохода от 0.78 до 0.94 (float).
-                - "analysis": Глубокое обоснование в 2-3 предложениях на русском языке.
-                """
-        raw_resp = None
-        if (
-            ai_mode in ["🧠 Только Groq AI", "🤖🤖 Консилиум (Groq + Gemini)"]
-            and groq_api_key
-        ):
-          try:
-            client = Groq(api_key=groq_api_key)
-            chat_completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model=selected_groq_model or "llama-3.3-70b-versatile",
-                response_format={"type": "json_object"},
-            )
-            raw_resp = chat_completion.choices[0].message.content
-          except Exception:
-            pass
-        if not raw_resp and gemini_api_key:
-          raw_resp = call_gemini_api(gemini_api_key, prompt)
-
-        if raw_resp:
-          try:
-            parsed = json.loads(raw_resp)
-            odds = float(parsed.get("coefficient", real_o1))
-            prob = float(parsed.get("probability", 0.82))
-            closing = float(parsed.get("closing_odds", odds))
-            stake = calculate_kelly_stake(
-                current_virtual_bank, odds, prob, active_kelly_fraction
-            )
-
-            if prob >= 0.75:
-              analyzed_cards.append({
-                  **m,
-                  "bet": parsed.get("recommendation", "Надежный исход"),
-                  "coefficient": odds,
-                  "closing_odds": closing,
-                  "probability": prob,
-                  "analysis": parsed.get(
-                      "analysis", "Высоковероятное событие отобрано."
-                  ),
-                  "recommended_stake": stake,
-                  "status": "⌛ Ожидание",
-              })
-          except Exception:
-            pass
-
-      if analyzed_cards:
-        st.session_state.history.insert(
-            0,
-            {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sport": sport_title,
-                "data": analyzed_cards,
-            },
+    if not odds_api_key:
+      st.error("⚠️ Введите API-ключ The Odds API в боковой панели слева!")
+    else:
+      with st.spinner("Запрос к букмекерским базам данных..."):
+        matches = fetch_matches_from_odds_api(
+            sport_data["endpoints"],
+            sport_data["category"],
+            odds_api_key,
+            max_hours_ahead=max_hours_filter,
         )
-        save_history(st.session_state.history)
-        st.success(
-            "Сканирование завершено! Найдено железо с высокой вероятностью:"
-            f" {len(analyzed_cards)} шт."
-        )
-        st.rerun()
-      else:
-        st.warning("Алгоритм не нашел событий с требуемой высокой вероятностью.")
+
+        if not matches:
+          st.warning(
+              "В данный момент в букмекерской линии по этому виду спорта нет"
+              " матчей на выбранный интервал времени. Попробуйте увеличить"
+              " диапазон часов или выбрать другую лигу."
+          )
+        else:
+          analyzed_cards = []
+          for m in matches[:8]:
+            real_o1 = m["real_odds"]["1"]
+            real_ox = m["real_odds"]["X"]
+            real_o2 = m["real_odds"]["2"]
+
+            prompt = f"""
+                    Ты элитный профессиональный спортивный капер и математический аналитик синдиката.
+                    Проанализируй реальный матч: {m['team1']} против {m['team2']} в турнире {m['sport_label']}.
+                    Коэффициенты БК: П1={real_o1}, Х={real_ox}, П2={real_o2}.
+                    Твоя цель — найти СУПЕР-НАДЕЖНУЮ ставку с ОЧЕНЬ ВЫСОКОЙ вероятностью прохода (от 78% до 94%).
+                    Выдай строго JSON со следующими полями:
+                    - "recommendation": Точное название ставки (например, "Тотал больше 2.5", "Фора (0)", "ТМ 3.5").
+                    - "coefficient": Адекватный коэффициент для этой ставки (float, от 1.35 до 2.15).
+                    - "closing_odds": Прогнозируемый закрывающий кэф (float).
+                    - "probability": Оценка вероятности прохода от 0.78 до 0.94 (float).
+                    - "analysis": Глубокое обоснование в 2-3 предложениях на русском языке.
+                    """
+            raw_resp = None
+            if (
+                ai_mode in ["🧠 Только Groq AI", "🤖🤖 Консилиум (Groq + Gemini)"]
+                and groq_api_key
+            ):
+              try:
+                client = Groq(api_key=groq_api_key)
+                chat_completion = client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=selected_groq_model or "llama-3.3-70b-versatile",
+                    response_format={"type": "json_object"},
+                )
+                raw_resp = chat_completion.choices[0].message.content
+              except Exception:
+                pass
+            if not raw_resp and gemini_api_key:
+              raw_resp = call_gemini_api(gemini_api_key, prompt)
+
+            if raw_resp:
+              try:
+                parsed = json.loads(raw_resp)
+                odds = float(parsed.get("coefficient", real_o1))
+                prob = float(parsed.get("probability", 0.82))
+                closing = float(parsed.get("closing_odds", odds))
+                stake = calculate_kelly_stake(
+                    current_virtual_bank, odds, prob, active_kelly_fraction
+                )
+
+                if prob >= 0.75:
+                  analyzed_cards.append({
+                      **m,
+                      "bet": parsed.get("recommendation", "Надежный исход"),
+                      "coefficient": odds,
+                      "closing_odds": closing,
+                      "probability": prob,
+                      "analysis": parsed.get(
+                          "analysis", "Высоковероятное событие отобрано."
+                      ),
+                      "recommended_stake": stake,
+                      "status": "⌛ Ожидание",
+                  })
+              except Exception:
+                pass
+
+          if analyzed_cards:
+            st.session_state.history.insert(
+                0,
+                {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "sport": sport_title,
+                    "data": analyzed_cards,
+                },
+            )
+            save_history(st.session_state.history)
+            st.success(
+                "Сканирование завершено! Найдено железо с высокой вероятностью:"
+                f" {len(analyzed_cards)} шт."
+            )
+            st.rerun()
+          else:
+            st.warning(
+                "Рынок просканирован, но ИИ не выявил железо с требуемой"
+                " вероятностью (>75%) среди текущих матчей."
+            )
 
   st.markdown("### 📋 Активные сигналы с высокой вероятностью")
   filtered_history = [
@@ -726,12 +682,8 @@ elif selected_window == "📈 Аналитика и статистика":
   )
 
   if not st.session_state.history:
-    st.info(
-        "История ставок пуста. Сгенерируйте и разметьте несколько матчей,"
-        " чтобы увидеть статистику."
-    )
+    st.info("История ставок пуста. Проведите сканирование и сохраните матчи.")
   else:
-    # Сводные расчеты по видам спорта
     sports_stats = {}
     total_bets_count = 0
     total_won_count = 0
@@ -797,10 +749,12 @@ elif selected_window == "📈 Аналитика и статистика":
         st.write(f"- Чистый профит: {data['profit']:+,.2f} руб.")
         st.write(f"- ROI по данному спорту: {roi_с}%")
 
-    st.markdown("### 🤖 ИИ-аудит и рекомендации (Что брать, а что нет)")
+    st.markdown("### 🤖 ИИ-аудит и рекомендации")
     if st.button("🧠 Запустить ИИ-анализ эффективности стратегии"):
       with st.spinner("Анализируем паттерны побед и поражений..."):
-        history_summary = json.dumps(st.session_state.history[:15], ensure_ascii=False)
+        history_summary = json.dumps(
+            st.session_state.history[:15], ensure_ascii=False
+        )
         audit_prompt = f"""
                 Ты главный риск-менеджер и аналитик беттинг-синдиката.
                 Проанализируй следующую историю ставок пользователя:
@@ -829,14 +783,11 @@ elif selected_window == "📈 Аналитика и статистика":
           st.success("Анализ завершен!")
           st.markdown(audit_res)
         else:
-          st.error(
-              "Не удалось получить ответ от ИИ. Проверьте правильность API-ключей"
-              " Groq/Gemini в сайдбаре."
-          )
+          st.error("Не удалось получить ответ от ИИ. Проверьте API-ключи.")
 
 elif selected_window == "🚨 Лайв-радар (Поиск железа в реальном времени)":
   st.subheader("🚨 Лайв-радар поиска железа в реальном времени")
-  st.write("Мониторинг матчей и поиск ситуаций в Live.")
+  st.write("Мониторинг матчей в Live режиме.")
   if st.button("🔴 Запустить сканирование Live-мощности"):
     st.success("Лайв-радар активирован.")
 
@@ -848,7 +799,7 @@ elif selected_window == "🎯 Player Props (Индивидуальная ста�
   st.subheader("🎯 Player Props & Индивидуальные тоталы")
   p_name = st.text_input("Игрок / Спортсмен:", "Лионель Месси")
   if st.button("📊 Проанализировать Prop"):
-    st.success(f"Анализ для игрока {p_name} выполнен. Найдена ставка 84%.")
+    st.success(f"Анализ для игрока {p_name} выполнен.")
 
 elif selected_window == "⚡ Sharp & CLV Менеджер":
   st.subheader("⚡ Управление Closing Line Value (CLV)")
