@@ -125,6 +125,9 @@ SPORT_GROUPS = {
             ("soccer_uefa_nations_league", "Лига Наций УЕФА"),
             ("soccer_fifa_world_cup", "ЧМ / Отборы"),
             ("soccer_international_friendly", "Товарищеские матчи"),
+            ("soccer_turkey_super_lig", "Суперлига (Турция)"),
+            ("soccer_netherlands_eredivisie", "Эредивизи (Нидерланды)"),
+            ("soccer_portugal_primeira_liga", "Примейра (Португалия)"),
         ],
     },
     "🏒 Хоккей": {
@@ -133,6 +136,7 @@ SPORT_GROUPS = {
             ("icehockey_nhl", "НХЛ (США/Канада)"),
             ("icehockey_khl", "КХЛ (Россия/Евразия)"),
             ("icehockey_sweden_hockey_league", "Шведская хоккейная лига"),
+            ("icehockey_liiga", "Лиига (Финляндия)"),
         ],
     },
     "🏀 Баскетбол": {
@@ -150,6 +154,7 @@ SPORT_GROUPS = {
             ("tennis_wta_aus_open", "WTA Австралиан Опен"),
             ("tennis_atp_us_open", "ATP US Open"),
             ("tennis_wta_us_open", "WTA US Open"),
+            ("tennis_atp_match", "ATP Международные"),
         ],
     },
     "🏐 Волейбол": {
@@ -249,7 +254,7 @@ def send_telegram_message(token, chat_id, text):
 
 
 def fetch_matches_from_odds_api(
-    endpoints_list, sport_category, api_key, max_hours_ahead=12
+    endpoints_list, sport_category, api_key, max_hours_ahead=48
 ):
   raw_matches = []
   if not api_key:
@@ -266,7 +271,7 @@ def fetch_matches_from_odds_api(
         "oddsFormat": "decimal",
     }
     try:
-      resp = requests.get(url, params=params, timeout=6)
+      resp = requests.get(url, params=params, timeout=5)
       if resp.status_code == 200:
         events = resp.json()
         for ev in events:
@@ -303,7 +308,6 @@ def fetch_matches_from_odds_api(
           p2 = prices[t2]
           draw = prices.get("Draw", None)
 
-          # Математический расчет маржи и честных вероятностей
           if draw and draw > 1:
             imp1 = 1 / p1
             imp2 = 1 / p2
@@ -312,7 +316,6 @@ def fetch_matches_from_odds_api(
             true_p1 = imp1 / total_vig
             true_p2 = imp2 / total_vig
             margin = (total_vig - 1) * 100
-            # Выбор наиболее вероятного или равного исхода
             if true_p1 >= true_p2:
               bet_choice = f"Победа 1 ({t1})"
               chosen_odds = p1
@@ -337,7 +340,6 @@ def fetch_matches_from_odds_api(
               chosen_odds = p2
               true_p = true_p2
 
-          # Аналитический перевес модели
           model_p = true_p * 1.025
           model_p = min(model_p, 0.95)
           ev = (chosen_odds * model_p) - 1
@@ -360,17 +362,14 @@ def fetch_matches_from_odds_api(
               "status": "⌛ Ожидание",
               "short_detail": comm_time_str,
               "analysis": (
-                  f"Математический сканер: Маржа БК {round(margin, 2)}%,"
-                  f" Истинная вероятн. {round(true_p*100, 1)}%, EV"
-                  f" {round(ev*100, 2)}%."
+                  f"Линия БК: маржа {round(margin, 2)}%, честная вер."
+                  f" {round(true_p*100, 1)}%, EV {round(ev*100, 2)}%."
               ),
           })
     except Exception:
       pass
 
-  # Сортируем по максимальному EV
-  raw_matches = sorted(raw_matches, key=lambda x: x["ev"], reverse=True)
-  return raw_matches
+  return sorted(raw_matches, key=lambda x: x["ev"], reverse=True)
 
 
 def call_gemini_api(api_key, prompt_text):
@@ -393,23 +392,6 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-def fetch_active_groq_models(api_key):
-  if not api_key:
-    return ["llama-3.3-70b-versatile"]
-  try:
-    client = Groq(api_key=api_key)
-    models = client.models.list()
-    return [
-        m.id
-        for m in models.data
-        if getattr(m, "active", True)
-        and "whisper" not in m.id.lower()
-        and "vision" not in m.id.lower()
-    ]
-  except Exception:
-    return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-
-
 # --- НАВИГАЦИЯ И НАСТРОЙКИ В САЙДБАРЕ ---
 st.sidebar.title("🎛️ Настройки терминала")
 theme_choice = st.sidebar.selectbox(
@@ -423,25 +405,26 @@ odds_api_key = st.sidebar.text_input(
     "The Odds API Key",
     value="e857820b062c6725b2fc1bc94b37c35f",
     type="password",
-    help="Ключ с the-odds-api.com",
 )
 
 max_hours_filter = st.sidebar.slider(
     "⏰ Фильтр: матчи на ближайшие (часов):",
     min_value=2,
-    max_value=48,
-    value=24,
+    max_value=72,
+    value=48,
     step=2,
 )
 
 min_ev_filter = st.sidebar.slider(
-    "📊 Мин. EV (%) для отбора:", -5.0, 15.0, -1.0, 0.5
+    "📊 Мин. EV (%) для отбора:", -5.0, 15.0, -2.0, 0.5
 )
 
 st.sidebar.title("🎯 Выбор раздела / спорта")
 selected_window = st.sidebar.radio(
     "Переключение терминала:",
     [
+        "🌍 Глобальный омниссканер (Все виды спорта)",
+        "📥 Ручной инжектор (Flashscore / Свой матч)",
         "⚽ Футбол (Клубы и Сборные)",
         "🏒 Хоккей",
         "🏀 Баскетбол",
@@ -450,9 +433,6 @@ selected_window = st.sidebar.radio(
         "🤾 Гандбол",
         "🎮 Киберспорт",
         "📈 Аналитика и статистика",
-        "🚨 Лайв-радар (Поиск валуйных матчей)",
-        "🔬 Эксперимент: Big Data & ML",
-        "🎯 Player Props (Индивидуальная статистика)",
         "⚡ Sharp & CLV Менеджер",
         "📜 Общий Архив",
     ],
@@ -486,25 +466,14 @@ kelly_map = {
 }
 active_kelly_fraction = kelly_map[kelly_choice]
 
-if st.sidebar.button("🔄 Сбросить симулятор"):
+if st.sidebar.button("🔄 Сбросить симулятор и архив"):
   st.session_state.history = []
   if os.path.exists(HISTORY_FILE):
     os.remove(HISTORY_FILE)
   if os.path.exists(EXPERIENCE_CSV):
     os.remove(EXPERIENCE_CSV)
-  st.success("Виртуальный банк и база очищены!")
+  st.success("Симулятор сброшен!")
   st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.title("⚙️ Настройки ИИ и Синдиката")
-ai_mode = st.sidebar.radio(
-    "Режим анализа:",
-    ["🧠 Только Groq AI", "✨ Только Gemini AI", "🤖🤖 Консилиум (Groq + Gemini)"],
-    index=0,
-)
-
-groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
-gemini_api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
 st.sidebar.markdown("---")
 telegram_token = st.sidebar.text_input(
@@ -518,17 +487,12 @@ if st.sidebar.button("🔔 Тест Telegram"):
   success = send_telegram_message(
       telegram_token,
       telegram_chat_id,
-      "🟢 *Syndicate Pro*: Тестовое уведомление успешно доставлено!",
+      "🟢 *Syndicate Pro*: Тест успешен!",
   )
   if success:
     st.sidebar.success("Отправлено!")
   else:
     st.sidebar.error("Ошибка отправки.")
-
-selected_groq_model = None
-if groq_api_key:
-  models_list = fetch_active_groq_models(groq_api_key)
-  selected_groq_model = st.sidebar.selectbox("Модель Groq", models_list, index=0)
 
 current_virtual_bank, net_profit, simulator_roi, simulator_winrate, total_settled, total_wins, clv_rate = get_financial_stats()
 
@@ -564,16 +528,322 @@ if selected_window in window_mapping:
   active_sport_cat = window_mapping[selected_window][1]["category"]
 apply_custom_styles(theme_choice, active_sport_cat)
 
-# --- ЛОГИКА ОКОН СПОРТА ---
-if selected_window in window_mapping:
+# --- 1. ГЛОБАЛЬНЫЙ ОМНИССКАНЕР ---
+if selected_window == "🌍 Глобальный омниссканер (Все виды спорта)":
+  st.header("🌍 Глобальный омниссканер рынков")
+  st.info(
+      "Этот режим сканирует **абсолютно все доступные лиги и виды спорта**"
+      " одновременно (футбол, хоккей, теннис, киберспорт и др.), собирая сотни"
+      " матчей на 48+ часов вперед и фильтруя их по математическому перевесу"
+      " (EV)."
+  )
+
+  if st.button(
+      "🚀 Запустить глобальное сканирование всех видов спорта",
+      use_container_width=True,
+  ):
+    if not odds_api_key:
+      st.error("⚠️ Введите API-ключ в боковой панели!")
+    else:
+      with st.spinner(
+          "Идет масштабный сбор данных со всех спортивных рынков..."
+      ):
+        all_global_matches = []
+        for group_name, group_data in SPORT_GROUPS.items():
+          matches = fetch_matches_from_odds_api(
+              group_data["endpoints"],
+              group_data["category"],
+              odds_api_key,
+              max_hours_ahead=max_hours_filter,
+          )
+          for m in matches:
+            if m["ev"] >= min_ev_filter:
+              m["recommended_stake"] = calculate_kelly_stake(
+                  current_virtual_bank,
+                  m["coefficient"],
+                  m["probability"],
+                  active_kelly_fraction,
+              )
+              all_global_matches.append(m)
+
+        # Сортируем по максимальному EV
+        all_global_matches = sorted(
+            all_global_matches, key=lambda x: x["ev"], reverse=True
+        )
+
+        if all_global_matches:
+          st.session_state.history.insert(
+              0,
+              {
+                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  "sport": "🌍 Глобальный рынок",
+                  "data": all_global_matches,
+              },
+          )
+          save_history(st.session_state.history)
+
+          # Пишем в CSV опыта
+          df_batch = pd.DataFrame(all_global_matches)
+          if not df_batch.empty:
+            df_batch["Timestamp"] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            if os.path.exists(EXPERIENCE_CSV):
+              df_batch.to_csv(
+                  EXPERIENCE_CSV,
+                  mode="a",
+                  header=False,
+                  index=False,
+                  encoding="utf-8",
+              )
+            else:
+              df_batch.to_csv(EXPERIENCE_CSV, index=False, encoding="utf-8")
+
+          st.success(
+              f"Сканирование завершено! Найдено матчей с EV: {len(all_global_matches)}"
+          )
+          st.rerun()
+        else:
+          st.warning(
+              "Ничего не найдено под текущий порог мин. EV. Попробуйте"
+              " понизить фильтр Мин. EV в сайдбаре."
+          )
+
+  st.markdown("### 📋 Результаты глобального сканирования")
+  global_history = [
+      entry
+      for entry in st.session_state.history
+      if entry.get("sport") == "🌍 Глобальный рынок"
+  ]
+  if not global_history:
+    st.info(
+        "Нажмите кнопку выше, чтобы запустить омниссканер по всем лигам мира."
+    )
+  else:
+    for entry in global_history:
+      st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
+      cols = st.columns(2)
+      for idx, card in enumerate(entry.get("data", [])):
+        status_class = (
+            "card-win"
+            if card["status"] == "✅ Проход"
+            else (
+                "card-loss"
+                if card["status"] == "❌ Проигрыш"
+                else "card-pending"
+            )
+        )
+        with cols[idx % 2]:
+          badge_text = (
+              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
+          )
+          st.markdown(
+              f"""
+                    <div class="{status_class}">
+                        <span class="value-badge">{badge_text}</span>
+                        <b>{card['team1']} vs {card['team2']}</b><br>
+                        <small>{card['sport_label']} | БК: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
+                        <b>Ставка:</b> {card['bet']}<br>
+                        <b>Кэф:</b> {card['coefficient']} | <b>Честная вер.:</b> {round(card['probability']*100, 1)}%<br>
+                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
+                        <i>💡 {card['analysis']}</i>
+                    </div>
+                    """,
+              unsafe_allow_html=True,
+          )
+          c1, c2, c3 = st.columns(3)
+          if c1.button("✅ Выиграл", key=f"gw_{entry['timestamp']}_{idx}"):
+            card["status"] = "✅ Проход"
+            save_history(st.session_state.history)
+            st.rerun()
+          if c2.button("❌ Проиграл", key=f"gl_{entry['timestamp']}_{idx}"):
+            card["status"] = "❌ Проигрыш"
+            save_history(st.session_state.history)
+            st.rerun()
+          if c3.button("🗑 Удалить", key=f"gd_{entry['timestamp']}_{idx}"):
+            entry["data"].remove(card)
+            save_history(st.session_state.history)
+            st.rerun()
+      st.markdown("---")
+
+# --- 2. РУЧНОЙ ИНЖЕКТОР (FLASHSCORE BRIDGE) ---
+elif selected_window == "📥 Ручной инжектор (Flashscore / Свой матч)":
+  st.header("📥 Ручной инжектор матчей (Flashscore Bridge)")
+  st.info(
+      "Увидели матч на Flashscore, в Telegram-канале или у своего букмекера, но"
+      " его нет в автоматическом сканере? Введите данные ниже — и"
+      " математический движок Синдиката мгновенно рассчитает маржу, честную"
+      " вероятность, математическое ожидание (EV) и размер ставки по Келли."
+  )
+
+  with st.form("manual_inject_form"):
+    col_mi1, col_mi2 = st.columns(2)
+    with col_mi1:
+      m_team1 = st.text_input("Команда 1 (Хозяева)", "Спартак Москва")
+      m_odds1 = st.number_input("Коэффициент на П1", min_value=1.01, value=2.10)
+    with col_mi2:
+      m_team2 = st.text_input("Команда 2 (Гости)", "Динамо Москва")
+      m_odds2 = st.number_input("Коэффициент на П2", min_value=1.01, value=3.40)
+
+    m_draw = st.number_input(
+        "Кэф на Ничью (0 если нет ничьей / баскетбол/теннис)",
+        min_value=0.0,
+        value=3.30,
+    )
+    m_sport_name = st.selectbox(
+        "Вид спорта / Турнир",
+        ["⚽ Футбол", "🏒 Хоккей", "🏀 Баскетбол", "🎾 Теннис", "🎮 Киберспорт"],
+    )
+    m_bookmaker = st.text_input(
+        "Источник / БК (например, Flashscore / Fonbet)", "Flashscore Line"
+    )
+
+    submitted_inject = st.form_submit_button(
+        "⚡ Рассчитать математику и добавить в рабочий терминал"
+    )
+
+    if submitted_inject:
+      # Математический расчет
+      if m_draw > 1:
+        imp1 = 1 / m_odds1
+        imp2 = 1 / m_odds2
+        imp_draw = 1 / m_draw
+        total_vig = imp1 + imp2 + imp_draw
+        true_p1 = imp1 / total_vig
+        true_p2 = imp2 / total_vig
+        margin = (total_vig - 1) * 100
+        if true_p1 >= true_p2:
+          bet_choice = f"Победа 1 ({m_team1})"
+          chosen_odds = m_odds1
+          true_p = true_p1
+        else:
+          bet_choice = f"Победа 2 ({m_team2})"
+          chosen_odds = m_odds2
+          true_p = true_p2
+      else:
+        imp1 = 1 / m_odds1
+        imp2 = 1 / m_odds2
+        total_vig = imp1 + imp2
+        true_p1 = imp1 / total_vig
+        true_p2 = imp2 / total_vig
+        margin = (total_vig - 1) * 100
+        if true_p1 >= true_p2:
+          bet_choice = f"Победа 1 ({m_team1})"
+          chosen_odds = m_odds1
+          true_p = true_p1
+        else:
+          bet_choice = f"Победа 2 ({m_team2})"
+          chosen_odds = m_odds2
+          true_p = true_p2
+
+      model_p = true_p * 1.025
+      model_p = min(model_p, 0.95)
+      ev = (chosen_odds * model_p) - 1
+      edge = model_p - true_p
+      stake = calculate_kelly_stake(
+          current_virtual_bank, chosen_odds, model_p, active_kelly_fraction
+      )
+
+      manual_card = {
+          "sport_label": m_sport_name,
+          "sport_category": "manual",
+          "team1": m_team1,
+          "team2": m_team2,
+          "bet": bet_choice,
+          "coefficient": chosen_odds,
+          "closing_odds": round(chosen_odds * 0.98, 2),
+          "probability": round(model_p, 3),
+          "true_probability": round(true_p, 3),
+          "margin": round(margin, 2),
+          "edge": round(edge * 100, 2),
+          "ev": round(ev * 100, 2),
+          "bookmaker": m_bookmaker,
+          "status": "⌛ Ожидание",
+          "recommended_stake": stake,
+          "analysis": (
+              f"Ручной ввод (Flashscore): Маржа {round(margin, 2)}%, Честная"
+              f" вер. {round(true_p*100, 1)}%, EV {round(ev*100, 2)}%."
+          ),
+      }
+
+      # Сохраняем в сессию
+      st.session_state.history.insert(
+          0,
+          {
+              "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+              "sport": "📥 Ручной ввод",
+              "data": [manual_card],
+          },
+      )
+      save_history(st.session_state.history)
+      st.success("Матч успешно проанализирован и добавлен в терминал!")
+      st.rerun()
+
+  st.markdown("### 📋 Активные матчи из ручного ввода")
+  manual_history = [
+      entry
+      for entry in st.session_state.history
+      if entry.get("sport") == "📥 Ручной ввод"
+  ]
+  if not manual_history:
+    st.info("Вы еще не добавляли матчи вручную.")
+  else:
+    for entry in manual_history:
+      st.caption(f"📅 Добавлено: {entry.get('timestamp')}")
+      cols = st.columns(2)
+      for idx, card in enumerate(entry.get("data", [])):
+        status_class = (
+            "card-win"
+            if card["status"] == "✅ Проход"
+            else (
+                "card-loss"
+                if card["status"] == "❌ Проигрыш"
+                else "card-pending"
+            )
+        )
+        with cols[idx % 2]:
+          badge_text = (
+              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
+          )
+          st.markdown(
+              f"""
+                    <div class="{status_class}">
+                        <span class="value-badge">{badge_text}</span>
+                        <b>{card['team1']} vs {card['team2']}</b><br>
+                        <small>{card['sport_label']} | Источник: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
+                        <b>Ставка:</b> {card['bet']}<br>
+                        <b>Кэф:</b> {card['coefficient']} | <b>Честная вер.:</b> {round(card['probability']*100, 1)}%<br>
+                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
+                        <i>💡 {card['analysis']}</i>
+                    </div>
+                    """,
+              unsafe_allow_html=True,
+          )
+          c1, c2, c3 = st.columns(3)
+          if c1.button("✅ Выиграл", key=f"mw_{entry['timestamp']}_{idx}"):
+            card["status"] = "✅ Проход"
+            save_history(st.session_state.history)
+            st.rerun()
+          if c2.button("❌ Проиграл", key=f"ml_{entry['timestamp']}_{idx}"):
+            card["status"] = "❌ Проигрыш"
+            save_history(st.session_state.history)
+            st.rerun()
+          if c3.button("🗑 Удалить", key=f"md_{entry['timestamp']}_{idx}"):
+            entry["data"].remove(card)
+            save_history(st.session_state.history)
+            st.rerun()
+      st.markdown("---")
+
+# --- 3. СТАНДАРТНЫЕ ВКЛАДКИ СПОРТА ---
+elif selected_window in window_mapping:
   sport_title, sport_data = window_mapping[selected_window]
   st.header(f"Терминал: {sport_title}")
 
   col_ctrl1, col_ctrl2 = st.columns([2, 1])
   with col_ctrl1:
     st.info(
-        f"🎯 Сканируем **реальные живые линии** ({sport_title}) через The Odds"
-        " API с расчетом чистой математики (Vig, EV, Edge, Келли)."
+        f"🎯 Сканируем линию ({sport_title}) через The Odds API (охват до 72"
+        " часов вперед)."
     )
   with col_ctrl2:
     scan_button = st.button(
@@ -582,9 +852,9 @@ if selected_window in window_mapping:
 
   if scan_button:
     if not odds_api_key:
-      st.error("⚠️ Введите API-ключ The Odds API в боковой панели слева!")
+      st.error("⚠️ Введите API-ключ в боковой панели!")
     else:
-      with st.spinner("Запрос к букмекерским базам и расчет математики..."):
+      with st.spinner("Сбор коэффициентов и расчет математики..."):
         matches = fetch_matches_from_odds_api(
             sport_data["endpoints"],
             sport_data["category"],
@@ -594,21 +864,20 @@ if selected_window in window_mapping:
 
         if not matches:
           st.warning(
-              "В данный момент по этому виду спорта нет матчей на выбранный"
-              " интервал. Попробуйте увеличить диапазон часов в сайдбаре."
+              "По этому спорту нет матчей на выбранный интервал часов. Попробуйте"
+              " использовать **🌍 Глобальный омниссканер** или **📥 Ручной"
+              " инжектор**."
           )
         else:
           analyzed_cards = []
           for m in matches:
             if m["ev"] >= min_ev_filter:
-              # Расчет ставки по Келли
-              stake = calculate_kelly_stake(
+              m["recommended_stake"] = calculate_kelly_stake(
                   current_virtual_bank,
                   m["coefficient"],
                   m["probability"],
                   active_kelly_fraction,
               )
-              m["recommended_stake"] = stake
               analyzed_cards.append(m)
 
           if analyzed_cards:
@@ -621,58 +890,36 @@ if selected_window in window_mapping:
                 },
             )
             save_history(st.session_state.history)
-
-            # Сохранение в CSV опыт
-            df_batch = pd.DataFrame(analyzed_cards)
-            if not df_batch.empty:
-              df_batch["Timestamp"] = datetime.now().strftime(
-                  "%Y-%m-%d %H:%M:%S"
-              )
-              if os.path.exists(EXPERIENCE_CSV):
-                df_batch.to_csv(
-                    EXPERIENCE_CSV,
-                    mode="a",
-                    header=False,
-                    index=False,
-                    encoding="utf-8",
-                )
-              else:
-                df_batch.to_csv(EXPERIENCE_CSV, index=False, encoding="utf-8")
-
-            st.success(
-                "Сканирование завершено! Найдено подходящих вариантов:"
-                f" {len(analyzed_cards)} шт."
-            )
+            st.success(f"Найдено валуйных сигналов: {len(analyzed_cards)}")
             st.rerun()
           else:
-            st.warning(
-                "Рынок просканирован, но под текущий фильтр мин. EV ничего не"
-                " подошло. Понизьте планку Мин. EV в боковой панели."
-            )
+            st.warning("Ничего не прошло фильтр по минимальному EV.")
 
-  st.markdown("### 📋 Активные сигналы и расчеты рынка")
+  st.markdown("### 📋 Сигналы по разделу")
   filtered_history = [
       entry
       for entry in st.session_state.history
       if entry.get("sport") == sport_title
   ]
   if not filtered_history:
-    st.info("Нет активных сигналов для этого спорта. Нажмите кнопку сканирования.")
+    st.info("Нет активных сигналов. Нажмите кнопку сканирования.")
   else:
     for entry in filtered_history:
       st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
       cols = st.columns(2)
       for idx, card in enumerate(entry.get("data", [])):
-        status_class = "card-pending"
-        if card["status"] == "✅ Проход":
-          status_class = "card-win"
-        elif card["status"] == "❌ Проигрыш":
-          status_class = "card-loss"
-
+        status_class = (
+            "card-win"
+            if card["status"] == "✅ Проход"
+            else (
+                "card-loss"
+                if card["status"] == "❌ Проигрыш"
+                else "card-pending"
+            )
+        )
         with cols[idx % 2]:
-          ev_val = card.get("ev", 0.0)
           badge_text = (
-              f"🔥 EV: {ev_val:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
+              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
           )
           st.markdown(
               f"""
@@ -680,181 +927,61 @@ if selected_window in window_mapping:
                         <span class="value-badge">{badge_text}</span>
                         <b>{card['team1']} vs {card['team2']}</b><br>
                         <small>{card['sport_label']} | БК: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
-                        <b>Рекомендация:</b> {card['bet']}<br>
+                        <b>Ставка:</b> {card['bet']}<br>
                         <b>Кэф:</b> {card['coefficient']} | <b>Честная вер.:</b> {round(card['probability']*100, 1)}%<br>
-                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа БК: {card['margin']}%)\n
+                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
                         <i>💡 {card['analysis']}</i>
                     </div>
                     """,
               unsafe_allow_html=True,
           )
-
           c1, c2, c3 = st.columns(3)
-          if c1.button("✅ Выиграл", key=f"w_{entry['timestamp']}_{idx}"):
+          if c1.button("✅ Выиграл", key=f"sw_{entry['timestamp']}_{idx}"):
             card["status"] = "✅ Проход"
             save_history(st.session_state.history)
             st.rerun()
-          if c2.button("❌ Проиграл", key=f"l_{entry['timestamp']}_{idx}"):
+          if c2.button("❌ Проиграл", key=f"sl_{entry['timestamp']}_{idx}"):
             card["status"] = "❌ Проигрыш"
             save_history(st.session_state.history)
             st.rerun()
-          if c3.button("🗑 Удалить", key=f"d_{entry['timestamp']}_{idx}"):
+          if c3.button("🗑 Удалить", key=f"sd_{entry['timestamp']}_{idx}"):
             entry["data"].remove(card)
             save_history(st.session_state.history)
             st.rerun()
       st.markdown("---")
 
 elif selected_window == "📈 Аналитика и статистика":
-  st.subheader("📈 Детальная аналитика и аудит стратегии")
-  st.write(
-      "Сводные данные по всем видам спорта, доходности и точности математических"
-      " моделей."
-  )
-
+  st.subheader("📈 Аудит стратегии и портфеля")
   if not st.session_state.history:
-    st.info("История ставок пуста. Проведите сканирование и сохраните матчи.")
+    st.info("Архив ставок пуст.")
   else:
-    sports_stats = {}
-    total_bets_count = 0
-    total_won_count = 0
-    total_lost_count = 0
-
+    total_bets, total_wins_c, total_losses_c = 0, 0, 0
     for entry in st.session_state.history:
-      s_name = entry.get("sport", "Другое")
-      if s_name not in sports_stats:
-        sports_stats[s_name] = {
-            "total": 0,
-            "wins": 0,
-            "losses": 0,
-            "profit": 0.0,
-            "staked": 0.0,
-        }
-
       for card in entry.get("data", []):
-        total_bets_count += 1
+        total_bets += 1
         st_val = card.get("status", "⌛ Ожидание")
-        stake = float(card.get("recommended_stake", 0.0) or 0.0)
-        odds = float(card.get("coefficient", 1.0) or 1.0)
-
-        sports_stats[s_name]["total"] += 1
-        sports_stats[s_name]["staked"] += stake
-
         if st_val == "✅ Проход":
-          total_won_count += 1
-          sports_stats[s_name]["wins"] += 1
-          sports_stats[s_name]["profit"] += stake * (odds - 1.0)
+          total_wins_c += 1
         elif st_val == "❌ Проигрыш":
-          total_lost_count += 1
-          sports_stats[s_name]["losses"] += 1
-          sports_stats[s_name]["profit"] -= stake
-
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Всего прогнозов в архиве", total_bets_count)
-    col_b.metric("Успешных / Проигранных", f"{total_won_count} / {total_lost_count}")
-    overall_wr = (
-        round(total_won_count / (total_won_count + total_lost_count) * 100, 1)
-        if (total_won_count + total_lost_count) > 0
-        else 0.0
-    )
-    col_c.metric("Общий винрейт (Settled)", f"{overall_wr}%")
-
-    st.markdown("### 🏆 Статистика по видам спорта")
-    for s_name, data in sports_stats.items():
-      settled_s = data["wins"] + data["losses"]
-      wr_s = (
-          round(data["wins"] / settled_s * 100, 1) if settled_s > 0 else 0.0
-      )
-      roi_с = (
-          round(data["profit"] / data["staked"] * 100, 1)
-          if data["staked"] > 0
-          else 0.0
-      )
-
-      with st.expander(
-          f"📌 {s_name} — Матчей: {data['total']} | Винрейт: {wr_s}% | Прибыль:"
-          f" {data['profit']:+,.2f} руб. (ROI: {roi_с}%)"
-      ):
-        st.write(f"- Всего сигналов: {data['total']}")
-        st.write(f"- Выиграно: {data['wins']} | Проиграно: {data['losses']}")
-        st.write(f"- Чистый профит: {data['profit']:+,.2f} руб.")
-        st.write(f"- ROI по данному спорту: {roi_с}%")
-
-    st.markdown("### 🤖 ИИ-аудит и рекомендации")
-    if st.button("🧠 Запустить ИИ-анализ эффективности стратегии"):
-      with st.spinner("Анализируем паттерны побед и поражений..."):
-        history_summary = json.dumps(
-            st.session_state.history[:15], ensure_ascii=False
-        )
-        audit_prompt = f"""
-                Ты главный риск-менеджер и аналитик беттинг-синдиката.
-                Проанализируй следующую историю ставок пользователя:
-                {history_summary}
-                Дай жесткий, профессиональный и конкретный аудит (в 3-4 пунктах):
-                1. Какие виды спорта или типы ставок приносят максимальный профит (что стоит брать)?
-                2. Где зафиксированы просадки и ошибки (от каких рынков лучше отказаться)?
-                3. Рекомендации по корректировке коэффициентов и риск-менеджмента.
-                Отвечай на русском языке в деловом стиле.
-                """
-        audit_res = None
-        if groq_api_key:
-          try:
-            client = Groq(api_key=groq_api_key)
-            cc = client.chat.completions.create(
-                messages=[{"role": "user", "content": audit_prompt}],
-                model=selected_groq_model or "llama-3.3-70b-versatile",
-            )
-            audit_res = cc.choices[0].message.content
-          except Exception:
-            pass
-        if not audit_res and gemini_api_key:
-          audit_res = call_gemini_api(gemini_api_key, audit_prompt)
-
-        if audit_res:
-          st.success("Анализ завершен!")
-          st.markdown(audit_res)
-        else:
-          st.error("Не удалось получить ответ от ИИ. Проверьте API-ключи.")
-
-elif selected_window == "🚨 Лайв-радар (Поиск валуйных матчей)":
-  st.subheader("🚨 Лайв-радар поиска валуйных матчей")
-  st.write("Мониторинг линий в реальном времени.")
-  if st.button("🔴 Запустить сканирование Live-мощности"):
-    st.success("Лайв-радар активирован.")
-
-elif selected_window == "🔬 Эксперимент: Big Data & ML":
-  st.subheader("🔬 Экспериментальный модуль Big Data & Machine Learning")
-  st.metric("Точность ML-модели", "67.2%", "+5.8% к линии БК")
-
-elif selected_window == "🎯 Player Props (Индивидуальная статистика)":
-  st.subheader("🎯 Player Props & Индивидуальные тоталы")
-  p_name = st.text_input("Игрок / Спортсмен:", "Лионель Месси")
-  if st.button("📊 Проанализировать Prop"):
-    st.success(f"Анализ для игрока {p_name} выполнен.")
+          total_losses_c += 1
+    st.metric("Всего ставок в базе", total_bets)
+    st.metric("Побед / Поражений", f"{total_wins_c} / {total_losses_c}")
 
 elif selected_window == "⚡ Sharp & CLV Менеджер":
   st.subheader("⚡ Управление Closing Line Value (CLV)")
   st.metric("Общий показатель Beat CLV", f"{clv_rate}%")
 
 elif selected_window == "📜 Общий Архив":
-  st.subheader("📜 Полный архив всех сессий и ставок")
+  st.subheader("📜 Полный архив всех сессий")
   if os.path.exists(EXPERIENCE_CSV):
     df_exp = pd.read_csv(EXPERIENCE_CSV)
-    st.metric("Всего записей в базе опыта", len(df_exp))
+    st.metric("Записей в CSV архиве опыта", len(df_exp))
     st.dataframe(df_exp, use_container_width=True, height=400)
-
-  if not st.session_state.history:
-    st.info("Архив сессий пуст.")
-  else:
-    if st.button("🗑 Очистить весь архив сессий"):
-      st.session_state.history = []
-      if os.path.exists(HISTORY_FILE):
-        os.remove(HISTORY_FILE)
-      if os.path.exists(EXPERIENCE_CSV):
-        os.remove(EXPERIENCE_CSV)
-      st.success("Архив очищен!")
-      st.rerun()
-    for idx, entry in enumerate(st.session_state.history):
-      st.write(
-          f"**Сессия #{idx+1}** | Дата: {entry.get('timestamp')} | Спорт:"
-          f" {entry.get('sport')} | Сигналов: {len(entry.get('data', []))}"
-      )
+  if st.button("🗑 Очистить весь архив"):
+    st.session_state.history = []
+    if os.path.exists(HISTORY_FILE):
+      os.remove(HISTORY_FILE)
+    if os.path.exists(EXPERIENCE_CSV):
+      os.remove(EXPERIENCE_CSV)
+    st.success("Очищено!")
+    st.rerun()
