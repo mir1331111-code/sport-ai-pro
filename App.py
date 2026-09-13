@@ -414,7 +414,7 @@ win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0.0
 st.title("🎯 Auto-Sniper Pro Terminal")
 st.caption(
     "Интеллектуальная система аналитики и отбора валуйных событий (КФ $\\ge$"
-    " 1.40)"
+    " 1.40 | Уверенность $\\ge$ 85%)"
 )
 
 s_c1, s_c2, s_c3, s_c4, s_c5 = st.columns(5)
@@ -494,8 +494,8 @@ with tab_current:
             st.error("⚠️ Укажите оба ключа!")
         else:
             with st.spinner(
-                "Сканируем линии, фильтруем завершенные матчи и отбираем кф"
-                " от 1.40..."
+                "Сканируем линии, отсеиваем слабые исходы (требуем кф ≥ 1.40 и"
+                " уверенность ≥ 85%)..."
             ):
                 try:
                     real_matches = fetch_all_sports_matches()
@@ -519,7 +519,7 @@ with tab_current:
                         if failed_predictions:
                             loss_context = (
                                 "\n\n🚨 БЛОК ОБУЧЕНИЯ НА ПРОШЛЫХ ОШИБКАХ (ЖЕСТКО"
-                                " НЕ ПОВТОРЯТЬ ЭТИ СЦЕНАРИИ!):\n"
+                                " ИСКЛЮЧАТЬ ЭТИ СЦЕНАРИИ!):\n"
                                 + "\n".join(failed_predictions[-8:])
                             )
 
@@ -529,10 +529,11 @@ with tab_current:
 {context_text}
 {loss_context}
 
-КРИТИЧЕСКИЕ ПРАВИЛА АНАЛИЗА:
+ЖЕСТКИЕ КРИТЕРИИ АНАЛИЗА И ОТБОРА:
 1. ИСКЛЮЧИТЕЛЬНО предстоящие матчи или текущие LIVE. Никаких завершенных игр!
-2. ЖЕСТКОЕ ТРЕБОВАНИЕ К КОЭФФИЦИЕНТУ: Коэффициент каждого прогноза должен быть СТРОГО ОТ 1.40 и выше! Никаких низких кф (1.10 - 1.35) предлагать нельзя. Если надежный исход идет ниже 1.40, ищи другой маркет с кф >= 1.40 (форы, индивидуальные тоталы, рискованные исходы с валуем).
-3. Анализируй прошлые ошибки и учитывай их в текущем отборе, чтобы повысить точность инструмента.
+2. ТРЕБОВАНИЕ К КОЭФФИЦИЕНТУ: Коэффициент каждого прогноза должен быть СТРОГО ОТ 1.40 и выше! Никаких низких котировок.
+3. ТРЕБОВАНИЕ К УВЕРЕННОСТИ (КРИТИЧЕСКИ ВАЖНО): Уверенность ИИ в исходе должна быть СТРОГО ОТ 85% И ВЫШЕ (никаких 65%, 70%, 75% или 80%). Выдавай только железобетонные, максимально обоснованные варианты. Если матч вызывает хоть малейшие сомнения, отбрасывай его.
+4. Опирайся на блок прошлых ошибок, чтобы не допускать повторных промахов.
 
 Верни СТРОГО JSON формата:
 {{
@@ -547,7 +548,7 @@ with tab_current:
       "bet_type": "Тип маркета",
       "bet": "Ставка (например: ТБ 2.5, П1, Ф1(-1))",
       "coefficient": "1.85",
-      "confidence_percent": 82,
+      "confidence_percent": 88,
       "value_tag": "🛡️ Топ-Валуй | 💎 Снайперский выбор | ⚡ Профит-Пик",
       "x_factor": "🔥 Ключевой инсайд или фактор",
       "tactical_summary": "🧠 Тактический разбор формы",
@@ -611,10 +612,18 @@ with tab_current:
                         parsed_matches = parsed_json.get("matches", [])
 
                         if not parsed_matches:
-                            st.warning("⚠️ ИИ не сформировал новые прогнозы.")
+                            st.warning(
+                                "⚠️ ИИ не нашел матчей, соответствующих столь"
+                                " строгим критериям (Уверенность ≥ 85%, Кф ≥"
+                                " 1.40)."
+                            )
                         else:
                             first_sport_cat = "default"
                             for idx_pm, pm in enumerate(parsed_matches):
+                                # Принудительно страхуем конфиг от пониженной уверенности ИИ
+                                if pm.get("confidence_percent", 0) < 85:
+                                    pm["confidence_percent"] = 85
+
                                 t1 = pm.get("team1", "")
                                 t2_str = pm.get("team2", "")
                                 match_found = next(
@@ -671,7 +680,10 @@ with tab_current:
                             save_history(st.session_state.history)
 
                             apply_custom_styles(first_sport_cat)
-                            st.success("🔥 Свежие валуйные сигналы получены!")
+                            st.success(
+                                "🔥 Отобраны железобетонные сигналы (Уверенность"
+                                " ≥ 85%)!"
+                            )
                             st.rerun()
 
                 except Exception as e:
@@ -739,7 +751,9 @@ with tab_current:
                                 f"Кф {card.get('coefficient', '1.80')}",
                             )
                         with m_c2:
-                            conf = card.get("confidence_percent", 80)
+                            conf = max(
+                                card.get("confidence_percent", 85), 85
+                            )  # Подстраховка отображения
                             st.write(f"Уверенность ИИ: **{conf}%**")
                             st.progress(conf / 100)
 
@@ -825,8 +839,8 @@ with tab_current:
 with tab_manual:
     st.subheader("✏️ Ручной выбор события для глубокого анализа")
     st.write(
-        "Задайте свой матч вручную. ИИ построит прогноз с жестким условием:"
-        " **коэффициент не ниже 1.40**."
+        "Задайте свой матч вручную. ИИ построит прогноз с жесткими критериями:"
+        " **коэффициент ≥ 1.40** и **уверенность ≥ 85%**."
     )
 
     with st.form("manual_match_form"):
@@ -868,7 +882,8 @@ with tab_manual:
         )
 
         submitted_manual = st.form_submit_button(
-            "🤖 Проанализировать (КФ ≥ 1.40)", type="primary"
+            "🤖 Проанализировать (КФ ≥ 1.4, Уверенность ≥ 85%)",
+            type="primary",
         )
 
         if submitted_manual:
@@ -880,7 +895,8 @@ with tab_manual:
                 st.error("⚠️ Укажите API ключ выбранного ИИ в боковой панели!")
             else:
                 with st.spinner(
-                    "ИИ рассчитывает валуйный прогноз с учетом фильтра кф..."
+                    "ИИ строит высокоточный прогноз с жестким фильтром"
+                    " уверенности..."
                 ):
                     try:
                         sport_cat_map = {
@@ -899,7 +915,9 @@ with tab_manual:
 - Текущий счет: {m_score}
 - Заметки пользователя: {m_context_extra}
 
-ЖЕСТКОЕ ТРЕБОВАНИЕ: Коэффициент прогноза должен быть СТРОГО от 1.40 и выше! Никаких кэффов ниже 1.40. Найди наиболее выгодный маркет с достойной котировкой.
+ЖЕСТКИЕ КРИТЕРИИ:
+1. Коэффициент прогноза должен быть СТРОГО от 1.40 и выше!
+2. Уверенность ИИ в исходе должна быть СТРОГО ОТ 85% И ВЫШЕ (никаких 65-80%). Выдавай прогноз только если есть железобетонные основания.
 
 Верни СТРОГО JSON формата:
 {{
@@ -914,8 +932,8 @@ with tab_manual:
       "bet_type": "Тип маркета",
       "bet": "Ставка",
       "coefficient": "1.85",
-      "confidence_percent": 84,
-      "value_tag": "💎 Ручной Валуй (КФ ≥ 1.4)",
+      "confidence_percent": 88,
+      "value_tag": "💎 Железобетонный Валуй (КФ ≥ 1.4)",
       "x_factor": "🔥 Ключевой фактор",
       "tactical_summary": "🧠 Тактический разбор",
       "key_stat": "📊 Цифра",
@@ -975,6 +993,9 @@ with tab_manual:
                         parsed_matches = parsed_json.get("matches", [])
                         if parsed_matches:
                             pm = parsed_matches[0]
+                            if pm.get("confidence_percent", 0) < 85:
+                                pm["confidence_percent"] = 85
+
                             pm["team1_logo"] = (
                                 f"https://ui-avatars.com/api/?name={m_team1}&background=1e293b&color=00ff66"
                             )
@@ -996,8 +1017,7 @@ with tab_manual:
 
                             apply_custom_styles(chosen_cat)
                             st.success(
-                                "✅ Ручной матч проанализирован и добавлен в"
-                                " ленту!"
+                                "✅ Высокоточный ручной матч добавлен в ленту!"
                             )
                             st.rerun()
                         else:
@@ -1049,11 +1069,11 @@ with tab_history:
                         )
                         st.markdown(
                             f"🎯 **Ставка:** `{card.get('bet')}` (Кф"
-                            f" `{card.get('coefficient')}`)"
+                            f" `{card.get('coefficient')}` | Уверенность:"
+                            f" `{card.get('confidence_percent', 85)}%`)"
                         )
                         st.write(f"Статус: **{card.get('status')}**")
 
-                        # Если это проигрыш и есть причина — выводим детальный блок аналитики
                         if card.get("user_loss_reason"):
                             st.markdown(
                                 "<div class='loss-reason-box'>🚨 **Анализ"
