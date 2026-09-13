@@ -4,7 +4,7 @@ from google import genai
 import streamlit as st
 
 st.set_page_config(
-    page_title="Auto-Sniper: Точный авто-поиск",
+    page_title="Auto-Sniper: Авто-поиск матчей",
     page_icon="🤖",
     layout="centered",
 )
@@ -12,7 +12,7 @@ st.set_page_config(
 st.markdown(
     """
 <h1 style='text-align: center;'>🤖 Auto-Sniper: Автоматический поиск</h1>
-<p style='text-align: center; color: gray;'>Многоуровневый сканер интернета для поиска реальных матчей на сегодня.</p>
+<p style='text-align: center; color: gray;'>Автоматический сканер интернета и точные прогнозы на сегодня.</p>
 """,
     unsafe_allow_html=True,
 )
@@ -51,8 +51,8 @@ current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
 st.info(
-    "Нажми кнопку ниже — сканер соберет точное расписание матчей на сегодня"
-    " без путаницы."
+    "Нажми кнопку ниже — система автоматически соберет расписание и выдаст"
+    " прогноз."
 )
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
@@ -61,7 +61,7 @@ if st.button("🔍 Найти реальные матчи и сделать пр
   if not api_key:
     st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
   else:
-    with st.spinner("Многоуровневое сканирование спортивных баз данных..."):
+    with st.spinner("Сканируем спортивные базы данных..."):
       try:
         queries = [
             f"футбол матчи расписание сегодня 13 сентября 2026",
@@ -88,6 +88,7 @@ if st.button("🔍 Найти реальные матчи и сделать пр
               " воскресенье 13 сентября 2026"
           )
 
+        # Используем стабильную модель с высоким лимитом бесплатных запросов
         client = genai.Client(api_key=api_key)
 
         prompt = (
@@ -110,7 +111,7 @@ if st.button("🔍 Найти реальные матчи и сделать пр
         )
 
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
         )
 
@@ -171,3 +172,4 @@ else:
       st.rerun()
 
     st.markdown("---")
+      
