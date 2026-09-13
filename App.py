@@ -5,7 +5,7 @@ import time
 from google import genai
 import streamlit as st
 
-# Файл для постоянного хранения истории
+# Файл для постоянного хранения истории навека
 HISTORY_FILE = "match_history.json"
 
 
@@ -34,7 +34,7 @@ st.set_page_config(
 st.markdown(
     """
 <h1 style='text-align: center;'>⚽ Match-Analyst: Профессиональный разбор</h1>
-<p style='text-align: center; color: gray;'>Введите матч в боковой панели слева — ИИ выдаст глубокую аналитику. Данные сохраняются навсегда!</p>
+<p style='text-align: center; color: gray;'>Введите матч по центру, а история и результаты аккуратно собраны в боковой панели слева.</p>
 """,
     unsafe_allow_html=True,
 )
@@ -42,26 +42,95 @@ st.markdown(
 if "history" not in st.session_state:
   st.session_state.history = load_history()
 
-# --- БОКОВАЯ ПАНЕЛЬ (Настройки, ввод матча и статистика) ---
-st.sidebar.header("⚙️ Настройки и Ввод")
+# --- БОКОВАЯ ПАНЕЛЬ (История, статистика и трекер) ---
+st.sidebar.header("⚙️ Настройки и История")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
+# Подсчет статистики
+total_finished = 0
+total_wins = 0
+total_losses = 0
+
+for item in st.session_state.history:
+  if item["status"] == "✅ Проход":
+    total_wins += 1
+    total_finished += 1
+  elif item["status"] == "❌ Проигрыш":
+    total_losses += 1
+    total_finished += 1
+
+win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0
+
 st.sidebar.markdown("---")
-st.sidebar.subheader("📝 Новый матч")
-user_match = st.sidebar.text_input(
+st.sidebar.subheader("📊 Статистика")
+st.sidebar.write(f"🟢 Побед: **{total_wins}**")
+st.sidebar.write(f"🔴 Поражений: **{total_losses}**")
+st.sidebar.metric(
+    label="Проходимость (Win Rate)",
+    value=f"{win_rate:.1f}%" if total_finished > 0 else "0.0%",
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Архив прогнозов")
+
+if not st.session_state.history:
+  st.sidebar.info("История пуста.")
+else:
+  if st.sidebar.button("🗑 Очистить всю историю"):
+    st.session_state.history = []
+    save_history(st.session_state.history)
+    st.rerun()
+
+  for idx, item in enumerate(st.session_state.history):
+    item_id = item.get("id", str(idx))
+    status = item["status"]
+
+    if status == "✅ Проход":
+      badge = "🟢"
+    elif status == "❌ Проигрыш":
+      badge = "🔴"
+    else:
+      badge = "⏳"
+
+    signal_num = len(st.session_state.history) - idx
+    match_title = item.get("match", f"Матч #{signal_num}")
+
+    with st.sidebar.expander(f"{badge} #{signal_num} | {match_title}"):
+      st.write(f"**Дата:** {item['date']}")
+      st.write(f"**Статус:** {status}")
+      st.markdown("---")
+      st.write(item["content"])
+
+      col1, col2, col3 = st.columns(3)
+      if col1.button("🟢", key=f"win_{item_id}", help="Проход"):
+        item["status"] = "✅ Проход"
+        save_history(st.session_state.history)
+        st.rerun()
+      if col2.button("🔴", key=f"loss_{item_id}", help="Проигрыш"):
+        item["status"] = "❌ Проигрыш"
+        save_history(st.session_state.history)
+        st.rerun()
+      if col3.button("⏳", key=f"pend_{item_id}", help="Ожидание"):
+        item["status"] = "⌛ Ожидание"
+        save_history(st.session_state.history)
+        st.rerun()
+
+
+# --- ГЛАВНЫЙ ЭКРАН (Ввод матча и генерация анализа) ---
+st.subheader("📝 Введите матч для детального анализа")
+user_match = st.text_input(
     "Команды / Событие:",
-    placeholder="например: Арсенал - Челси",
-    key="sidebar_match_input",
+    placeholder="например: Арсенал - Челси или Спартак - Зенит",
 )
 
 today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
-if st.sidebar.button("📊 Сделать анализ матча", type="primary"):
+if st.button("📊 Сделать глубокий анализ матча", type="primary"):
   if not api_key:
-    st.sidebar.error("⚠️ Введите ключ Gemini API!")
+    st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
   elif not user_match.strip():
-    st.sidebar.error("⚠️ Введите название матча!")
+    st.error("⚠️ Пожалуйста, введите название матча!")
   else:
     with st.spinner("Анализируем статистику и форму команд..."):
       try:
@@ -95,94 +164,23 @@ if st.sidebar.button("📊 Сделать анализ матча", type="primar
         }
         st.session_state.history.insert(0, new_signal)
         save_history(st.session_state.history)  # Сохраняем на диск навека
-        st.sidebar.success("Анализ готов и сохранен!")
+        st.success("Анализ готов и успешно добавлен в историю слева!")
 
       except Exception as e:
         error_msg = str(e)
         if "429" in error_msg or "ResourceExhausted" in error_msg:
-          st.sidebar.error(
-              "⚠️ Исчерпан суточный лимит бесплатных запросов Gemini."
+          st.error(
+              "⚠️ Исчерпан суточный лимит бесплатных запросов для ключа"
+              " Gemini. Подождите немного."
           )
         else:
-          st.sidebar.error(f"Ошибка: {error_msg}")
+          st.error(f"Ошибка при обработке запроса: {error_msg}")
 
-# Подсчет статистики для боковой панели
-total_finished = 0
-total_wins = 0
-total_losses = 0
-
-for item in st.session_state.history:
-  if item["status"] == "✅ Проход":
-    total_wins += 1
-    total_finished += 1
-  elif item["status"] == "❌ Проигрыш":
-    total_losses += 1
-    total_finished += 1
-
-win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Ваша статистика")
-st.sidebar.write(f"🟢 Побед: **{total_wins}**")
-st.sidebar.write(f"🔴 Поражений: **{total_losses}**")
-st.sidebar.metric(
-    label="Проходимость (Win Rate)",
-    value=f"{win_rate:.1f}%" if total_finished > 0 else "0.0%",
-)
-
-
-# --- ГЛАВНЫЙ ЭКРАН (Только история, трекер и результаты) ---
-st.subheader("📊 Трекер исходов и история прогнозов")
-
-if not st.session_state.history:
-  st.info(
-      "История пуста. Введите название матча в боковой панели слева и нажмите"
-      " кнопку анализа."
-  )
-else:
-  if st.button("🗑 Очистить всю историю"):
-    st.session_state.history = []
-    save_history(st.session_state.history)  # Очищаем файл на диске
-    st.rerun()
-
-  for idx, item in enumerate(st.session_state.history):
-    item_id = item.get("id", str(idx))
-    status = item["status"]
-
-    if status == "✅ Проход":
-      bg_color, border_color, text_color = "#d4edda", "#28a745", "#155724"
-    elif status == "❌ Проигрыш":
-      bg_color, border_color, text_color = "#f8d7da", "#dc3545", "#721c24"
-    else:
-      bg_color, border_color, text_color = "#fff3cd", "#ffc107", "#856404"
-
-    signal_num = len(st.session_state.history) - idx
-    match_title = item.get("match", f"Матч #{signal_num}")
-
-    st.markdown(
-        f"""
-        <div style="background-color: {bg_color}; border-left: 6px solid {border_color}; padding: 12px; border-radius: 6px; margin-top: 15px; margin-bottom: 5px; color: {text_color};">
-            <b>#{signal_num} | {match_title}</b> (Запрошен: {item['date']}) &nbsp;|&nbsp; Статус: <b>{status}</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    with st.expander(f"📄 Показать детальный разбор #{signal_num}"):
-      st.write(item["content"])
-
-    col1, col2, col3 = st.columns(3)
-    if col1.button("🟢 Проход", key=f"win_{item_id}"):
-      item["status"] = "✅ Проход"
-      save_history(st.session_state.history)  # Обновляем статус в файле
-      st.rerun()
-    if col2.button("🔴 Проигрыш", key=f"loss_{item_id}"):
-      item["status"] = "❌ Проигрыш"
-      save_history(st.session_state.history)  # Обновляем статус в файле
-      st.rerun()
-    if col3.button("⏳ Ожидание", key=f"pend_{item_id}"):
-      item["status"] = "⌛ Ожидание"
-      save_history(st.session_state.history)  # Обновляем статус в файле
-      st.rerun()
-
-    st.markdown("---")
+# Отображение последнего свежего разбора по центру
+if st.session_state.history:
+  st.markdown("---")
+  st.subheader("🔥 Последний результат анализа")
+  latest = st.session_state.history[0]
+  st.info(f"Матч: **{latest['match']}** | Статус: **{latest['status']}**")
+  st.write(latest["content"])
+  
