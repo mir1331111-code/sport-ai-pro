@@ -204,20 +204,11 @@ def is_match_near_end(status_str, sport_cat):
     """Фильтрует матчи, у которых осталось 5-10 минут до конца"""
     s = status_str.lower()
     if sport_cat == "soccer":
-        # Проверяем минуты футбола (например, 85', 88', 90+')
         mins = re.findall(r"(\d+)'", s)
         if mins:
             current_min = int(mins[0])
-            if current_min >= 83:  # Отсекаем концовку
+            if current_min >= 83:
                 return True
-    # Для других видов спорта если идет финальный отрезок
-    if any(
-        end_marker in s
-        for end_marker in ["4th qtr", "3rd period", "final", "от", "ot"]
-    ):
-        if "4th" in s or "3rd period" in s:
-            # Если это баскетбол/хоккей близко к концу
-            pass
     return False
 
 
@@ -282,7 +273,6 @@ def fetch_all_sports_matches():
                     else:
                         status_str = f"⏰ {short_detail}"
 
-                    # Пропускаем матчи, где осталось 5-10 минут
                     if is_live and is_match_near_end(status_str, sport_cat):
                         continue
 
@@ -741,7 +731,6 @@ with tab_current:
                             f"Статус: **{card.get('status', '⌛ Ожидание')}**"
                         )
 
-                        # ПРЯМЫЕ КНОПКИ УПРАВЛЕНИЯ (Без лишних всплывающих окон)
                         b_c1, b_c2, b_c3 = st.columns(3)
                         if b_c1.button(
                             "🟢 Победа",
@@ -776,7 +765,6 @@ with tab_manual:
         "Выберите любую европейскую, американскую или российскую лигу / теннис, и система найдет актуальный матч."
     )
 
-    # Динамический список из всех доступных лиг
     all_league_labels = [item[2] for item in SPORTS_ENDPOINTS]
 
     with st.form("manual_sport_form"):
@@ -808,7 +796,7 @@ with tab_manual:
                         ]
 
                         if not filtered_matches:
-                            filtered_matches = all_matches  дженерик запас
+                            filtered_matches = all_matches  # исправлено
 
                         match_lines = [
                             f"- [{m['sport_label']}] {m['team1']} vs {m['team2']} (Счет: {m['score']}, Статус: {m['status']})"
