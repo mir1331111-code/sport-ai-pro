@@ -309,7 +309,6 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-# ИСПРАВЛЕНО: единое имя функции во избежание NameError
 def fetch_matches_from_odds_api(
     endpoints_list,
     sport_category,
@@ -386,7 +385,6 @@ def fetch_matches_from_odds_api(
             true_p2 = imp2 / total_vig
             margin = (total_vig - 1) * 100
 
-          # Пробуем подключить Groq ИИ для глубокого анализа матча
           ai_analysis_res = None
           if groq_key:
             ai_analysis_res = call_groq_deep_analyst(
@@ -692,29 +690,37 @@ if selected_window == "🌍 Глобальный омниссканер (Все 
       st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
       cols = st.columns(2)
       for idx, card in enumerate(entry.get("data", [])):
+        status_val = card.get("status", "⌛ Ожидание")
         status_class = (
             "card-win"
-            if card["status"] == "✅ Проход"
-            else (
-                "card-loss"
-                if card["status"] == "❌ Проигрыш"
-                else "card-pending"
-            )
+            if status_val == "✅ Проход"
+            else ("card-loss" if status_val == "❌ Проигрыш" else "card-pending")
         )
+        ev_val = card.get("ev", 0.0)
+        edge_val = card.get("edge", 0.0)
+        team1_val = card.get("team1", "Команда 1")
+        team2_val = card.get("team2", "Команда 2")
+        sport_lbl = card.get("sport_label", "")
+        bk_val = card.get("bookmaker", "БК")
+        bet_val = card.get("bet", "")
+        coef_val = card.get("coefficient", 1.0)
+        prob_val = round(card.get("probability", 0.5) * 100, 1)
+        stake_val = card.get("recommended_stake", 0.0)
+        margin_val = card.get("margin", 0.0)
+        analysis_val = card.get("analysis", "Нет анализа")
+
         with cols[idx % 2]:
-          badge_text = (
-              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
-          )
+          badge_text = f"🔥 EV: {ev_val:+.2f}% | EDGE: {edge_val}%"
           st.markdown(
               f"""
                     <div class="{status_class}">
                         <span class="value-badge">{badge_text}</span>
-                        <b>{card['team1']} vs {card['team2']}</b><br>
-                        <small>{card['sport_label']} | БК: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
-                        <b>Ставка:</b> {card['bet']}<br>
-                        <b>Кэф:</b> {card['coefficient']} | <b>ИИ Вероятность:</b> {round(card['probability']*100, 1)}%<br>
-                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
-                        <i>🤖 AI Анализ: {card['analysis']}</i>
+                        <b>{team1_val} vs {team2_val}</b><br>
+                        <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:4px 0;">
+                        <b>Ставка:</b> {bet_val}<br>
+                        <b>Кэф:</b> {coef_val} | <b>ИИ Вероятность:</b> {prob_val}%<br>
+                        <b>Стейк Келли:</b> {stake_val} руб. (Маржа: {margin_val}%)\n
+                        <i>🤖 AI Анализ: {analysis_val}</i>
                     </div>
                     """,
               unsafe_allow_html=True,
@@ -858,29 +864,37 @@ elif selected_window == "📥 Ручной инжектор (Flashscore / Сво
       st.caption(f"📅 Добавлено: {entry.get('timestamp')}")
       cols = st.columns(2)
       for idx, card in enumerate(entry.get("data", [])):
+        status_val = card.get("status", "⌛ Ожидание")
         status_class = (
             "card-win"
-            if card["status"] == "✅ Проход"
-            else (
-                "card-loss"
-                if card["status"] == "❌ Проигрыш"
-                else "card-pending"
-            )
+            if status_val == "✅ Проход"
+            else ("card-loss" if status_val == "❌ Проигрыш" else "card-pending")
         )
+        ev_val = card.get("ev", 0.0)
+        edge_val = card.get("edge", 0.0)
+        team1_val = card.get("team1", "Команда 1")
+        team2_val = card.get("team2", "Команда 2")
+        sport_lbl = card.get("sport_label", "")
+        bk_val = card.get("bookmaker", "БК")
+        bet_val = card.get("bet", "")
+        coef_val = card.get("coefficient", 1.0)
+        prob_val = round(card.get("probability", 0.5) * 100, 1)
+        stake_val = card.get("recommended_stake", 0.0)
+        margin_val = card.get("margin", 0.0)
+        analysis_val = card.get("analysis", "Нет анализа")
+
         with cols[idx % 2]:
-          badge_text = (
-              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
-          )
+          badge_text = f"🔥 EV: {ev_val:+.2f}% | EDGE: {edge_val}%"
           st.markdown(
               f"""
                     <div class="{status_class}">
                         <span class="value-badge">{badge_text}</span>
-                        <b>{card['team1']} vs {card['team2']}</b><br>
-                        <small>{card['sport_label']} | Источник: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
-                        <b>Ставка:</b> {card['bet']}<br>
-                        <b>Кэф:</b> {card['coefficient']} | <b>ИИ Вероятность:</b> {round(card['probability']*100, 1)}%<br>
-                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
-                        <i>🤖 AI: {card['analysis']}</i>
+                        <b>{team1_val} vs {team2_val}</b><br>
+                        <small>{sport_lbl} | Источник: `{bk_val}` | Статус: {status_val}</small><hr style="margin:4px 0;">
+                        <b>Ставка:</b> {bet_val}<br>
+                        <b>Кэф:</b> {coef_val} | <b>ИИ Вероятность:</b> {prob_val}%<br>
+                        <b>Стейк Келли:</b> {stake_val} руб. (Маржа: {margin_val}%)\n
+                        <i>🤖 AI: {analysis_val}</i>
                     </div>
                     """,
               unsafe_allow_html=True,
@@ -975,29 +989,37 @@ elif selected_window in window_mapping:
       st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
       cols = st.columns(2)
       for idx, card in enumerate(entry.get("data", [])):
+        status_val = card.get("status", "⌛ Ожидание")
         status_class = (
             "card-win"
-            if card["status"] == "✅ Проход"
-            else (
-                "card-loss"
-                if card["status"] == "❌ Проигрыш"
-                else "card-pending"
-            )
+            if status_val == "✅ Проход"
+            else ("card-loss" if status_val == "❌ Проигрыш" else "card-pending")
         )
+        ev_val = card.get("ev", 0.0)
+        edge_val = card.get("edge", 0.0)
+        team1_val = card.get("team1", "Команда 1")
+        team2_val = card.get("team2", "Команда 2")
+        sport_lbl = card.get("sport_label", "")
+        bk_val = card.get("bookmaker", "БК")
+        bet_val = card.get("bet", "")
+        coef_val = card.get("coefficient", 1.0)
+        prob_val = round(card.get("probability", 0.5) * 100, 1)
+        stake_val = card.get("recommended_stake", 0.0)
+        margin_val = card.get("margin", 0.0)
+        analysis_val = card.get("analysis", "Нет анализа")
+
         with cols[idx % 2]:
-          badge_text = (
-              f"🔥 EV: {card['ev']:+.2f}% | EDGE: {card.get('edge', 0.0)}%"
-          )
+          badge_text = f"🔥 EV: {ev_val:+.2f}% | EDGE: {edge_val}%"
           st.markdown(
               f"""
                     <div class="{status_class}">
                         <span class="value-badge">{badge_text}</span>
-                        <b>{card['team1']} vs {card['team2']}</b><br>
-                        <small>{card['sport_label']} | БК: `{card['bookmaker']}` | Статус: {card['status']}</small><hr style="margin:4px 0;">
-                        <b>Ставка:</b> {card['bet']}<br>
-                        <b>Кэф:</b> {card['coefficient']} | <b>ИИ Вероятность:</b> {round(card['probability']*100, 1)}%<br>
-                        <b>Стейк Келли:</b> {card['recommended_stake']} руб. (Маржа: {card['margin']}%)\n
-                        <i>🤖 AI: {card['analysis']}</i>
+                        <b>{team1_val} vs {team2_val}</b><br>
+                        <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:4px 0;">
+                        <b>Ставка:</b> {bet_val}<br>
+                        <b>Кэф:</b> {coef_val} | <b>ИИ Вероятность:</b> {prob_val}%<br>
+                        <b>Стейк Келли:</b> {stake_val} руб. (Маржа: {margin_val}%)\n
+                        <i>🤖 AI: {analysis_val}</i>
                     </div>
                     """,
               unsafe_allow_html=True,
