@@ -1,9 +1,9 @@
 """
-Ultimate Multi-Sport Experience Hub & High-Probability Value Scanner
-- Сканирует ВСЕ виды спорта (Футбол, Хоккей, Баскетбол, Теннис и др.)
-- Ведет полную базу опыта (сохраняет каждый матч для истории)
-- Рассчитывает глубокую статистику (маржа, честная вероятность, Edge, EV, Келли)
-- Выводит ТОП-события с высокой вероятностью прохода
+Ultimate Multi-Sport Experience Hub & Value Scanner
+- Сканирует абсолютно все виды спорта без мертвых фильтров
+- Сортирует матчи по математическому ожиданию (EV)
+- Полная статистика по каждому матчу (Vig, True Prob, Edge, Kelly)
+- Накопление базы опыта по всем дисциплинам
 """
 
 from datetime import datetime
@@ -101,7 +101,6 @@ def analyze_and_build_experience(
         for outcome in m.get("outcomes", []):
           prices[outcome.get("name")] = outcome.get("price")
 
-    # Проверка наличия коэффициентов на победу хозяев и гостей
     if home not in prices or away not in prices:
       continue
 
@@ -129,7 +128,6 @@ def analyze_and_build_experience(
       true_p2 = imp2 / total_vig
       margin = (total_vig - 1) * 100
 
-      # Выбираем фаворита/достойного по честной вероятности для ставки
       if true_p1 >= true_p2:
         bet_choice = f"Победа 1 ({home})"
         chosen_odds = p1
@@ -139,9 +137,9 @@ def analyze_and_build_experience(
         chosen_odds = p2
         true_p = true_p2
 
-    # 2. Модельная оценка с учетом рыночной неэффективности (поиск реального валуя)
-    model_p = true_p * 1.035
-    model_p = min(model_p, 0.92)  # Рациональный кап
+    # 2. Модельная оценка с поправкой на аналитический перевес
+    model_p = true_p * 1.025
+    model_p = min(model_p, 0.95)
 
     ev = (chosen_odds * model_p) - 1
     edge = model_p - true_p
@@ -153,17 +151,6 @@ def analyze_and_build_experience(
     stake = (
         round(bankroll * kelly * kelly_fraction, 2) if kelly > 0 else 0.0
     )
-
-    # Статус матча для базы опыта
-    if ev > 0.015 and model_p >= 0.52:
-      recommendation = "🔥 ВЫСОКИЙ ПОТЕНЦИАЛ (Валуй)"
-      is_top = True
-    elif ev > 0:
-      recommendation = "🟡 УМЕРЕННЫЙ РИСК"
-      is_top = False
-    else:
-      recommendation = "🔴 НИЗКОЕ ОЖИДАНИЕ"
-      is_top = False
 
     analyzed_records.append({
         "Вид спорта": translate_sport(sport_group),
@@ -177,17 +164,18 @@ def analyze_and_build_experience(
         "Edge (%)": round(edge * 100, 2),
         "EV (%)": round(ev * 100, 2),
         "Ставка Келли (у.е.)": stake,
-        "Статус": recommendation,
         "Букмекер": bm_name,
         "Начало": commence,
-        "Is_Top": is_top,
     })
 
-  return pd.DataFrame(analyzed_records)
+  df_res = pd.DataFrame(analyzed_records)
+  if not df_res.empty:
+    df_res = df_res.sort_values(by="EV (%)", ascending=False)
+  return df_res
 
 
 # ==========================================
-# 3. УПРАВЛЕНИЕ БАЗОЙ ОПЫТА (АРХИВ ВСЕХ МАТЧЕЙ)
+# 3. УПРАВЛЕНИЕ БАЗОЙ ОПЫТА
 # ==========================================
 def save_to_experience_db(df: pd.DataFrame):
   if df.empty:
@@ -214,15 +202,14 @@ def load_experience_db() -> pd.DataFrame:
 # 4. ИНТЕРФЕЙС STREAMLIT
 # ==========================================
 def main():
-  st.title("🎯 Multi-Sport Experience & High-Probability Value Hub")
+  st.title("🎯 Multi-Sport Experience & Value Scanner")
   st.markdown(
-      "Автоматический сканер **всех видов спорта** с накоплением базы опыта,"
-      " глубокой статистикой (маржа, честная вероятность, Edge, EV) и отбором"
-      " только надежных событий."
+      "Универсальный сканер всех видов спорта с полным расчетом статистики и"
+      " накоплением базы опыта."
   )
 
   with st.sidebar:
-    st.header("⚙️ Настройки и Банк")
+    st.header("⚙️ Настройки и Фильтры")
     api_key = st.text_input(
         "The Odds API Key", value=DEFAULT_ODDS_API_KEY, type="password"
     )
@@ -234,6 +221,10 @@ def main():
     )
 
     st.markdown("---")
+    min_ev_slider = st.slider(
+        "Мин. EV (%) для отображения в топе", -5.0, 10.0, -2.0, 0.5
+    )
+
     sport_filter = st.selectbox(
         "Фильтр по видам спорта",
         [
@@ -243,32 +234,33 @@ def main():
             "🏀 Баскетбол",
             "🎾 Теннис",
             "⚾ Бейсбол",
+            "🥊 Единоборства",
         ],
     )
 
     st.markdown("---")
     run_btn = st.button(
-        "🚀 Сканировать все виды спорта и обновить базу",
+        "🚀 Запросить все матчи и обновить базу",
         type="primary",
         use_container_width=True,
     )
 
   tab1, tab2, tab3 = st.tabs(
       [
-          "🔥 ТОП матчей с высокой вероятностью",
-          "📊 Вся база опыта (Все матчи и статистика)",
+          "🔥 Лучшие возможности (Топ матчей)",
+          "📊 Вся база опыта (Все матчи со статистикой)",
           "🗄️ Накопленная история",
       ]
   )
 
   if run_btn:
     with st.spinner(
-        "Опрашиваем все лиги (футбол, хоккей, баскетбол, теннис и др.), считаем"
-        " маржу и сохраняем в базу опыта..."
+        "Сканируем все виды спорта, рассчитываем маржу и собираем базу"
+        " опыта..."
     ):
       sports_list = fetch_all_active_sports(api_key)
       if not sports_list:
-        st.error("Не удалось получить список видов спорта. Проверьте API ключ.")
+        st.error("Не удалось получить список видов спорта. Проверьте ключ API.")
         return
 
       all_raw_matches = []
@@ -288,7 +280,6 @@ def main():
             all_raw_matches.append(m)
         progress.progress((i + 1) / total)
 
-      # Обрабатываем всё и строим базу опыта
       df_processed = analyze_and_build_experience(
           all_raw_matches, bankroll, kelly_fraction
       )
@@ -298,38 +289,40 @@ def main():
         save_to_experience_db(df_processed)
 
       st.success(
-          f"Анализ завершен! Обработано матчей со всех лиги:"
-          f" {len(df_processed)}"
+          f"Успешно обработано матчей со всех лиг: {len(df_processed)}"
       )
 
-  # Получаем данные из сессии или архива
+  # Загрузка данных
   current_df = st.session_state.get("experience_df", pd.DataFrame())
   if current_df.empty:
     current_df = load_experience_db()
 
-  # Применяем фильтр по виду спорта, если выбран
-  if not current_df.empty and sport_filter != "Все виды спорта":
-    display_df = current_df[current_df["Вид спорта"] == sport_filter]
+  # Фильтрация
+  if not current_df.empty:
+    if sport_filter != "Все виды спорта":
+      filtered_df = current_df[current_df["Вид спорта"] == sport_filter]
+    else:
+      filtered_df = current_df
   else:
-    display_df = current_df
+    filtered_df = pd.DataFrame()
 
-  # --- Вкладка 1: ТОП матчей с высокой вероятностью ---
+  # --- Вкладка 1: Топ матчей ---
   with tab1:
     st.subheader(
-        "🔥 Отобранные события с высокой вероятностью прохода и плюсовым EV"
+        "🔥 Актуальные матчи со статистикой (отсортированы по выгодности EV)"
     )
 
-    if not display_df.empty:
-      top_df = display_df[display_df["Is_Top"] == True]
+    if not filtered_df.empty:
+      top_df = filtered_df[filtered_df["EV (%)"] >= min_ev_slider]
       st.info(
-          f"Найдено высоковероятных валуйных матчей: **{len(top_df)}** (из"
-          f" {len(display_df)} всего в базе)"
+          f"Показано матчей под фильтр: **{len(top_df)}** (всего в базе:"
+          f" {len(filtered_df)})"
       )
 
       if top_df.empty:
         st.warning(
-            "В текущей линии нет матчей, удовлетворяющих строгим критериям"
-            " высокой вероятности. Попробуйте обновить сканирование."
+            "Под текущий порог EV ничего не попало. Сдвиньте ползунок 'Мин. EV'"
+            " в левой панели влево."
         )
       else:
         for _, row in top_df.iterrows():
@@ -345,17 +338,14 @@ def main():
                   f"📌 Рекомендация: **{row['Рекомендация']}** | Букмекер:"
                   f" `{row['Букмекер']}`"
               )
-              st.caption(
-                  f"🕒 Начало матча: {row['Начало']} | Статус:"
-                  f" `{row['Статус']}`"
-              )
+              st.caption(f"🕒 Время начала: {row['Начало']}")
 
             with col_stats:
               st.markdown("##### 📊 Статистика и Вероятности:")
               m1, m2, m3 = st.columns(3)
               m1.metric("Коэффициент", row["Коэффициент"])
-              m2.metric("EV", f"+{row['EV (%)']}%")
-              m3.metric("Edge", f"+{row['Edge (%)']}%")
+              m2.metric("EV", f"{row['EV (%)']}%")
+              m3.metric("Edge", f"{row['Edge (%)']}%")
 
               st.caption(
                   f"🔹 Маржа БК: {row['Маржа БК (%)']}% | Честная вер.:"
@@ -366,39 +356,38 @@ def main():
             with col_stake:
               st.markdown("##### 💰 Управление банком:")
               st.metric("Ставка Келли", f"{row['Ставка Келли']} у.е.")
-              st.success("🟢 Одобрено моделью")
+              if row["EV (%)"] > 0:
+                st.success("🟢 Плюсовое ожидание")
+              else:
+                st.info("⚪ Рыночная линия")
 
     else:
       st.warning(
-          "⚠️ База пуста. Нажмите **'🚀 Сканировать все виды спорта и обновить"
-          " базу'** в левой панели."
+          "⚠️ База пуста. Нажмите **'🚀 Запросить все матчи и обновить базу'**"
+          " в левой панели."
       )
 
   # --- Вкладка 2: Вся база опыта ---
   with tab2:
     st.subheader(
-        "📊 Полная база опыта (Все проанализированные матчи со статистикой)"
+        "📊 Полная база проанализированных матчей по всем видам спорта"
     )
-    st.markdown(
-        "Здесь система хранит абсолютно все просканированные матчи по всем видам"
-        " спорта вместе с их математическими параметрами для накопления опыта."
-    )
-    if not display_df.empty:
-      st.dataframe(display_df, use_container_width=True, height=600)
+    if not filtered_df.empty:
+      st.dataframe(filtered_df, use_container_width=True, height=600)
     else:
       st.info("Нет данных. Запустите сканирование.")
 
   # --- Вкладка 3: Накопленная история ---
   with tab3:
-    st.subheader("🗄️ Архив накопленной базы данных (`experience_db`)")
+    st.subheader("🗄️ Накопленный архив (`experience_db`)")
     arch_df = load_experience_db()
     if not arch_df.empty:
-      st.metric("Всего записей в истории опыта", len(arch_df))
+      st.metric("Всего записей в архиве", len(arch_df))
       st.dataframe(arch_df, use_container_width=True, height=500)
-      if st.button("🗑️ Очистить базу опыта"):
+      if st.button("🗑️ Очистить архив"):
         if os.path.exists(EXPERIENCE_DB):
           os.remove(EXPERIENCE_DB)
-          st.success("База опыта успешно очищена.")
+          st.success("Архив успешно очищен.")
           st.rerun()
     else:
       st.info("Архив пуст.")
