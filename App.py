@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import datetime
 
 st.set_page_config(page_title="Flashscore & SofaScore Auto-Sniper", page_icon="🤖", layout="centered")
@@ -14,9 +14,6 @@ if 'history' not in st.session_state:
 
 st.sidebar.header("⚙️ Настройки и Статистика")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
-
-if api_key:
-    genai.configure(api_key=api_key)
 
 total_finished = 0
 total_wins = 0
@@ -50,10 +47,10 @@ if st.button("🔍 Авто-поиск матчей и анализ экспер
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Анализируем матчи через gemini-1.5-flash..."):
+        with st.spinner("Анализируем матчи через современный Gemini API..."):
             try:
-                # Убран аргумент tools, вызывающий конфликт 404 на некоторых ключах
-                model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+                # Используем новый клиент google-genai
+                client = genai.Client(api_key=api_key)
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
@@ -70,7 +67,10 @@ if st.button("🔍 Авто-поиск матчей и анализ экспер
                     "- 💡 Аналитика и обоснование прогноза."
                 )
                 
-                response = model.generate_content(prompt)
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt,
+                )
                 
                 new_signal = {
                     "date": f"{today_date} в {current_time}",
