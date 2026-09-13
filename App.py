@@ -295,9 +295,9 @@ def call_gemini_api(api_key, prompt_text):
 # Инициализация стилей
 initial_bg_cat = "default"
 if st.session_state.history and st.session_state.history[0].get("data"):
-  initial_bg_cat = st.session_state.history[0]["data"][0].get(
-      "sport_category", "default"
-  )
+  first_item = st.session_state.history[0]["data"][0]
+  initial_bg_cat = first_item.get("sport_category", "default")
+
 apply_custom_styles(initial_bg_cat)
 
 st.sidebar.title("⚙️ Настройки ИИ")
@@ -605,4 +605,4 @@ with tab_current:
                     f"https://ui-avatars.com/api/?name={t2_str}&background=1e293b&color=00bfff"
                 )
                 pm["score"] = pm.get("score", "0:0")
-                pm["sport_catego
+               
