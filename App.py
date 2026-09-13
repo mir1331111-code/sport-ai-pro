@@ -74,8 +74,16 @@ SPORT_GROUPS = {
         "category": "volleyball",
         "endpoints": [
             ("volleyball", "volleyball", "Волейбол (Международный)"),
-            ("volleyball", "womens-college-volleyball", "NCAA Волейбол (Женщины)"),
-            ("volleyball", "mens-college-volleyball", "NCAA Волейбол (Мужчины)"),
+            (
+                "volleyball",
+                "womens-college-volleyball",
+                "NCAA Волейбол (Женщины)",
+            ),
+            (
+                "volleyball",
+                "mens-college-volleyball",
+                "NCAA Волейбол (Мужчины)",
+            ),
         ],
     },
     "🎾 Теннис": {
@@ -87,26 +95,56 @@ SPORT_GROUPS = {
     },
 }
 
-DEFAULT_STADIUM_BGS = {
-    "soccer": "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",
-    "basketball": "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",
-    "hockey": "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",
-    "volleyball": "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80",
-    "tennis": "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80",
-    "default": "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80",
+# ДИНАМИЧЕСКИЕ НАБОРЫ ФОНОВ (Стадион -> Игрок -> Мяч/Момент)
+SPORT_BACKGROUNDS = {
+    "soccer": [
+        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",  # Стадион
+        "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1920&q=80",  # Игрок
+        "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=1920&q=80",  # Мяч
+    ],
+    "basketball": [
+        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",  # Арена
+        "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?auto=format&fit=crop&w=1920&q=80",  # Игрок
+        "https://images.unsplash.com/photo-1574623452334-1e0ac2bbfccb?auto=format&fit=crop&w=1920&q=80",  # Мяч
+    ],
+    "hockey": [
+        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",  # Арена
+        "https://images.unsplash.com/photo-1515703407324-5f753ff420b8?auto=format&fit=crop&w=1920&q=80",  # Игрок
+        "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?auto=format&fit=crop&w=1920&q=80",  # Шайба/Клюшка
+    ],
+    "volleyball": [
+        "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1593341646782-e0b495cffc6d?auto=format&fit=crop&w=1920&q=80",
+    ],
+    "tennis": [
+        "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?auto=format&fit=crop&w=1920&q=80",
+    ],
+    "default": [
+        "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"
+    ],
 }
 
 
 def apply_custom_styles(sport_type="default"):
-    bg_url = DEFAULT_STADIUM_BGS.get(
-        sport_type, DEFAULT_STADIUM_BGS["default"]
-    )
+    bgs = SPORT_BACKGROUNDS.get(sport_type, SPORT_BACKGROUNDS["default"])
+    bg1 = bgs[0]
+    bg2 = bgs[1 % len(bgs)]
+    bg3 = bgs[2 % len(bgs)]
+
     css_code = f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
+        @keyframes slideShow {{
+            0% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}"); }}
+            38% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg2}"); }}
+            72% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg3}"); }}
+            100% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}"); }}
+        }}
+
         .stApp {{
-            background: linear-gradient(rgba(8, 12, 22, 0.94), rgba(8, 12, 22, 0.98)), url("{bg_url}");
+            animation: slideShow 25s infinite ease-in-out;
             background-size: cover;
             background-attachment: fixed;
             background-position: center;
@@ -157,6 +195,37 @@ def apply_custom_styles(sport_type="default"):
             margin: 6px 0;
             font-size: 0.8rem;
             color: #f1f5f9;
+        }}
+
+        /* КАРТОЧКИ ПО СТАТУСАМ */
+        .card-win {{
+            background: rgba(16, 185, 129, 0.12) !important;
+            border: 2px solid #00FF66 !important;
+            box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
+            border-radius: 12px;
+            padding: 4px;
+        }}
+        .card-loss {{
+            background: rgba(239, 68, 68, 0.12) !important;
+            border: 2px solid #EF4444 !important;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 4px;
+        }}
+        .card-pending {{
+            background: rgba(30, 41, 59, 0.75) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 12px;
+            padding: 4px;
+        }}
+
+        @keyframes goalPulse {{
+            0% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.8); }}
+            70% {{ transform: scale(1.01); box-shadow: 0 0 0 12px rgba(0, 255, 102, 0); }}
+            100% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 255, 102, 0); }}
+        }}
+        .goal-highlight {{
+            animation: goalPulse 1.5s infinite;
         }}
     </style>
     """
@@ -374,7 +443,7 @@ window_mapping = {
     "🎾 Теннис — Окно": ("🎾 Теннис", SPORT_GROUPS["🎾 Теннис"]),
 }
 
-if selected_window != "📜 Архив":
+if selected_window != "📜 Общий Архив":
     sport_title, sport_data = window_mapping[selected_window]
     current_cat = sport_data["category"]
     current_endpoints = sport_data["endpoints"]
@@ -660,7 +729,19 @@ if selected_window != "📜 Архив":
             for idx, card in enumerate(filtered_cards):
                 col_idx = idx % 3
                 with cols[col_idx]:
-                    with st.container(border=True):
+                    st_val = card.get("status", "⌛ Ожидание")
+                    
+                    # Выбираем визуальный стиль карточки в зависимости от результата
+                    if st_val == "✅ Проход":
+                        card_class = "card-win goal-highlight"
+                    elif st_val == "❌ Проигрыш":
+                        card_class = "card-loss"
+                    else:
+                        card_class = "card-pending"
+
+                    with st.container():
+                        st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                        
                         st.markdown(
                             f"<div class='value-badge'>{card.get('value_tag', '💎 Валуй')}</div>",
                             unsafe_allow_html=True,
@@ -709,7 +790,7 @@ if selected_window != "📜 Архив":
                             )
 
                         st.write(
-                            f"Статус: **{card.get('status', '⌛ Ожидание')}**"
+                            f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
                         )
 
                         bc1, bc2, bc3 = st.columns(3)
@@ -731,6 +812,8 @@ if selected_window != "📜 Архив":
                             card["status"] = "⌛ Ожидание"
                             save_history(st.session_state.history)
                             st.rerun()
+                            
+                        st.markdown("</div>", unsafe_allow_html=True)
 
 else:
     # ОКНО ОБЩЕГО АРХИВА
@@ -757,34 +840,38 @@ else:
             for idx, card in enumerate(h_matches):
                 col_idx = idx % 3
                 with cols[col_idx]:
-                    with st.container(border=True):
-                        st.markdown(
-                            f"**{card.get('team1')} vs {card.get('team2')}**",
-                            unsafe_allow_html=True,
-                        )
-                        st.markdown(
-                            f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`"
-                            f" | `{card.get('confidence_percent', 85)}%`)"
-                        )
-                        st.write(f"Статус: **{card.get('status')}**")
+                    st_val = card.get("status", "⌛ Ожидание")
+                    card_class = "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
+                    
+                    st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"**{card.get('team1')} vs {card.get('team2')}**",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`"
+                        f" | `{card.get('confidence_percent', 85)}%`)"
+                    )
+                    st.write(f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)")
 
-                        hc1, hc2, hc3 = st.columns(3)
-                        if hc1.button(
-                            "🟢", key=f"arch_win_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "✅ Проход"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if hc2.button(
-                            "🔴", key=f"arch_loss_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "❌ Проигрыш"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if hc3.button(
-                            "⏳", key=f"arch_pend_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "⌛ Ожидание"
-                            save_history(st.session_state.history)
-                            st.rerun()
+                    hc1, hc2, hc3 = st.columns(3)
+                    if hc1.button(
+                        "🟢", key=f"arch_win_{entry['id']}_{idx}", use_container_width=True
+                    ):
+                        card["status"] = "✅ Проход"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if hc2.button(
+                        "🔴", key=f"arch_loss_{entry['id']}_{idx}", use_container_width=True
+                    ):
+                        card["status"] = "❌ Проигрыш"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if hc3.button(
+                        "⏳", key=f"arch_pend_{entry['id']}_{idx}", use_container_width=True
+                    ):
+                        card["status"] = "⌛ Ожидание"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("---")
