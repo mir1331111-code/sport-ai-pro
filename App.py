@@ -114,7 +114,7 @@ if "initial_bankroll" not in st.session_state:
     st.session_state.initial_bankroll = 10000.0
 
 SPORT_GROUPS = {
-    "⚽ Футбол": {
+    "⚽ Футбол — Окно": {
         "category": "soccer",
         "endpoints": [
             ("soccer", "eng.1", "АПЛ (Англия)"),
@@ -126,7 +126,7 @@ SPORT_GROUPS = {
             ("soccer", "uefa.champions", "Лига Чемпионов УЕФА"),
         ],
     },
-    "🏒 Хоккей": {
+    "🏒 Хоккей — Окно": {
         "category": "hockey",
         "endpoints": [
             ("hockey", "nhl", "НХЛ (США/Канада)"),
@@ -134,7 +134,7 @@ SPORT_GROUPS = {
             ("hockey", "vhl", "ВХЛ (Россия)"),
         ],
     },
-    "🏀 Баскетбол": {
+    "🏀 Баскетбол — Окно": {
         "category": "basketball",
         "endpoints": [
             ("basketball", "nba", "НБА (США)"),
@@ -142,20 +142,20 @@ SPORT_GROUPS = {
             ("basketball", "russia.1", "Единая лига ВТБ (Россия)"),
         ],
     },
-    "🏐 Волейбол": {
+    "🏐 Волейбол — Окно": {
         "category": "volleyball",
         "endpoints": [
             ("volleyball", "volleyball", "Волейбол (Международный)"),
         ],
     },
-    "🎾 Теннис": {
+    "🎾 Теннис — Окно (Улучшенный фид)": {
         "category": "tennis",
         "endpoints": [
             ("tennis", "atp", "ATP Теннис (Мужчины)"),
             ("tennis", "wta", "WTA Теннис (Женщины)"),
         ],
     },
-    "🎮 Киберспорт": {
+    "🎮 Киберспорт — Окно": {
         "category": "esports",
         "endpoints": [
             ("esports", "counter-strike", "Counter-Strike 2"),
@@ -274,31 +274,6 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
         except Exception:
             pass
     return raw_matches
-
-
-def auto_evaluate_bet(card, score_str, is_finished):
-    if not is_finished or card.get("status") not in ["⌛ Ожидание", "🔴 ЛАЙВ-СИГНАЛ"]:
-        return card.get("status", "⌛ Ожидание")
-    try:
-        parts = score_str.split(":")
-        sh, sa = int(parts[0]), int(parts[1])
-        total = sh + sa
-        bet = str(card.get("bet", "")).upper()
-        if "ТБ" in bet:
-            val = float(re.findall(r"\d+\.?\d*", bet)[0])
-            return "✅ Проход" if total > val else "❌ Проигрыш"
-        elif "ТМ" in bet:
-            val = float(re.findall(r"\d+\.?\d*", bet)[0])
-            return "✅ Проход" if total < val else "❌ Проигрыш"
-        elif bet in ["П1", "Ф1(0)", "ПОБЕДА 1"]:
-            return "✅ Проход" if sh > sa else "❌ Проигрыш"
-        elif bet in ["П2", "Ф2(0)", "ПОБЕДА 2"]:
-            return "✅ Проход" if sa > sh else "❌ Проигрыш"
-        elif bet in ["Х", "НИЧЬЯ"]:
-            return "✅ Проход" if sh == sa else "❌ Проигрыш"
-    except Exception:
-        pass
-    return "⌛ Ожидание"
 
 
 def call_groq_api(api_key, model_name, prompt):
@@ -554,11 +529,10 @@ elif selected_window == "📜 Общий Архив":
 
 # ==================== 6. СПОРТИВНЫЕ ТЕРМИНАЛЫ ====================
 elif selected_window in SPORT_GROUPS:
-    label_name, group_info = SPORT_GROUPS[selected_window]
-    st.markdown(f"## Терминал: {selected_window}")
+    group_info = SPORT_GROUPS[selected_window]
+    st.markdown(## Терминал: {selected_window})
     
-    # Кнопка сканирования матчей
-    if st.button(f"🔍 Найти матчи и просканировать линии ({selected_window})"):
+    if st.button(f"🔍 Найти матчи и просканировать линии"):
         with st.spinner("Запрос к API и анализ ИИ..."):
             matches = fetch_matches_for_endpoints(group_info["endpoints"], group_info["category"])
             st.session_state[f"scanned_{selected_window}"] = matches
@@ -568,7 +542,6 @@ elif selected_window in SPORT_GROUPS:
     if not matches:
         st.info("Нажмите кнопку выше, чтобы подгрузить актуальные матчи и запустить сканер.")
     else:
-        scan_results = []
         for idx, m in enumerate(matches):
             col1, col2, col3 = st.columns([3, 2, 2])
             with col1:
@@ -578,7 +551,6 @@ elif selected_window in SPORT_GROUPS:
             with col2:
                 st.markdown(f"Счет: **{m['score']}**")
             with col3:
-                # Генерация примерных коэффициентов для симуляции ставки
                 coef1 = round(random.uniform(1.70, 2.40), 2)
                 coef2 = round(random.uniform(1.70, 2.40), 2)
                 f1, f2 = calculate_devigged_probability(coef1, coef2)
@@ -593,7 +565,6 @@ elif selected_window in SPORT_GROUPS:
                         "status": "⌛ Ожидание",
                         "closing_odds": coef1
                     }
-                    # Добавляем в историю
                     st.session_state.history.append({
                         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "data": [card]
