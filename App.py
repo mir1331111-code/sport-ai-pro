@@ -2,7 +2,8 @@ import datetime
 import json
 import os
 import time
-from google import genai
+from duckduckgo_search import DDGS
+from groq import Groq
 import streamlit as st
 
 # Файл для постоянного хранения истории навека
@@ -28,13 +29,15 @@ def save_history(history_data):
 
 
 st.set_page_config(
-    page_title="Match-Analyst: Анализ матча", page_icon="⚽", layout="centered"
+    page_title="Auto-Sniper Groq: Авто-поиск матчей",
+    page_icon="🤖",
+    layout="centered",
 )
 
 st.markdown(
     """
-<h1 style='text-align: center;'>⚽ Match-Analyst: Профессиональный разбор</h1>
-<p style='text-align: center; color: gray;'>Введите матч по центру, а история и результаты аккуратно собраны в боковой панели слева.</p>
+<h1 style='text-align: center;'>🤖 Auto-Sniper (Groq AI)</h1>
+<p style='text-align: center; color: gray;'>Автоматический поиск реальных матчей в интернете и глубокая аналитика.</p>
 """,
     unsafe_allow_html=True,
 )
@@ -42,9 +45,9 @@ st.markdown(
 if "history" not in st.session_state:
   st.session_state.history = load_history()
 
-# --- БОКОВАЯ ПАНЕЛЬ (История, статистика и трекер) ---
-st.sidebar.header("⚙️ Настройки и История")
-api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
+# --- БОКОВАЯ ПАНЕЛЬ (Ключ, Статистика и Архив) ---
+st.sidebar.header("⚙️ Настройки и Архив")
+groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 
 # Подсчет статистики
 total_finished = 0
@@ -71,7 +74,7 @@ st.sidebar.metric(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Архив прогнозов")
+st.sidebar.subheader("📂 История прогнозов")
 
 if not st.session_state.history:
   st.sidebar.info("История пуста.")
@@ -84,16 +87,13 @@ else:
   for idx, item in enumerate(st.session_state.history):
     item_id = item.get("id", str(idx))
     status = item["status"]
-
-    if status == "✅ Проход":
-      badge = "🟢"
-    elif status == "❌ Проигрыш":
-      badge = "🔴"
-    else:
-      badge = "⏳"
-
+    badge = (
+        "🟢"
+        if status == "✅ Проход"
+        else ("🔴" if status == "❌ Проигрыш" else "⏳")
+    )
     signal_num = len(st.session_state.history) - idx
-    match_title = item.get("match", f"Матч #{signal_num}")
+    match_title = item.get("match", f"Сигнал #{signal_num}")
 
     with st.sidebar.expander(f"{badge} #{signal_num} | {match_title}"):
       st.write(f"**Дата:** {item['date']}")
@@ -102,85 +102,109 @@ else:
       st.write(item["content"])
 
       col1, col2, col3 = st.columns(3)
-      if col1.button("🟢", key=f"win_{item_id}", help="Проход"):
+      if col1.button("🟢", key=f"win_{item_id}"):
         item["status"] = "✅ Проход"
         save_history(st.session_state.history)
         st.rerun()
-      if col2.button("🔴", key=f"loss_{item_id}", help="Проигрыш"):
+      if col2.button("🔴", key=f"loss_{item_id}"):
         item["status"] = "❌ Проигрыш"
         save_history(st.session_state.history)
         st.rerun()
-      if col3.button("⏳", key=f"pend_{item_id}", help="Ожидание"):
+      if col3.button("⏳", key=f"pend_{item_id}"):
         item["status"] = "⌛ Ожидание"
         save_history(st.session_state.history)
         st.rerun()
 
 
-# --- ГЛАВНЫЙ ЭКРАН (Ввод матча и генерация анализа) ---
-st.subheader("📝 Введите матч для детального анализа")
-user_match = st.text_input(
-    "Команды / Событие:",
-    placeholder="например: Арсенал - Челси или Спартак - Зенит",
-)
-
+# --- ГЛАВНЫЙ ЭКРАН (Авто-поиск матчей онлайн) ---
 today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
-if st.button("📊 Сделать глубокий анализ матча", type="primary"):
-  if not api_key:
-    st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
-  elif not user_match.strip():
-    st.error("⚠️ Пожалуйста, введите название матча!")
+st.subheader("🔍 Автоматический поиск матчей на сегодня")
+st.info(
+    "Нажмите кнопку ниже — система сама найдет актуальные матчи в сети и"
+    " выдаст готовые прогнозы."
+)
+
+num_signals = st.slider("Количество сигналов для поиска", 1, 3, 2)
+
+if st.button("🚀 Найти матчи и сделать прогноз через Groq", type="primary"):
+  if not groq_api_key:
+    st.error("⚠️ Введите ключ Groq API в боковой панели слева!")
   else:
-    with st.spinner("Анализируем статистику и форму команд..."):
+    with st.spinner("Сканируем спортивные сайты и анализируем матчи..."):
       try:
-        client = genai.Client(api_key=api_key)
+        # Автоматический сбор свежих матчей из интернета
+        queries = [
+            f"футбол матчи расписание сегодня {today_date}",
+            f"апл ла лига сериал а бундеслига матчи {today_date}",
+            f"flashscore футбол матчи на сегодня",
+        ]
+
+        search_results = []
+        with DDGS() as ddgs:
+          for q in queries:
+            try:
+              results = ddgs.text(q, max_results=3)
+              for r in results:
+                body = r.get("body", "")
+                if body:
+                  search_results.append(body)
+            except Exception:
+              continue
+
+        search_context = "\n".join(search_results)
+        if len(search_context) < 50:
+          search_context = (
+              f"Топ матчи европейских чемпионатов на сегодня ({today_date})"
+          )
+
+        # Обработка через Groq API (модель Llama 3.3)
+        client = Groq(api_key=groq_api_key)
 
         prompt = (
-            f"Сегодня {today_date}. Пользователь запросил детальный спортивный"
-            f" анализ и прогноз на матч: {user_match}.\n\n"
-            "Ты профессиональный спортивный аналитик, скаут и каппер. "
-            "Сделай глубокий профессиональный разбор этого конкретного матча. "
-            "Для анализа укажи строго по пунктам: "
+            f"Сегодня {today_date}, текущее время {current_time} МСК."
+            " Вот данные, найденные в интернете по сегодняшним матчам:\n"
+            f"{search_context}\n\n"
+            "Ты профессиональный спортивный аналитик и каппер. "
+            f"Выбери ровно {num_signals} реальных матча из найденных данных, "
+            "которые играются сегодня. Запрещено выдумывать команды. "
+            "Для каждого сигнала укажи строго по пунктам: "
+            "- ⏱ Время начала (МСК). "
             "- 🌐 Турнир / Лига. "
-            "- ⚠️ Уровень риска (🟢 Ультра-надежный, 🟡 Стандартный или 🟠 Рискованный). "
-            f"- 🏆 Событие: {user_match}. "
-            "- 🎯 Сигнал для ставки (Конкретный исход, тотал/фора и примерный коэффициент). "
+            "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
+            "- 🏆 Событие (Команда 1 - Команда 2). "
+            "- 🎯 Ставка и коэффициент. "
             "- 📈 Вероятность прохода (в %). "
-            "- 💡 Развернутое обоснование прогноза (текущая форма, мотивация, статистика личных встреч, кадровые потери)."
+            "- 💡 Обоснование прогноза."
         )
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
         )
+
+        response_text = completion.choices[0].message.content
 
         new_signal = {
             "id": str(time.time()),
-            "match": user_match,
+            "match": f"Авто-подбор от {today_date}",
             "date": f"{today_date} в {current_time}",
-            "content": response.text,
+            "content": response_text,
             "status": "⌛ Ожидание",
         }
         st.session_state.history.insert(0, new_signal)
-        save_history(st.session_state.history)  # Сохраняем на диск навека
-        st.success("Анализ готов и успешно добавлен в историю слева!")
+        save_history(st.session_state.history)
+        st.success("Матчи успешно найдены и проанализированы!")
 
       except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "ResourceExhausted" in error_msg:
-          st.error(
-              "⚠️ Исчерпан суточный лимит бесплатных запросов для ключа"
-              " Gemini. Подождите немного."
-          )
-        else:
-          st.error(f"Ошибка при обработке запроса: {error_msg}")
+        st.error(f"Ошибка при обработке: {e}")
 
-# Отображение последнего свежего разбора по центру
+# Отображение последнего результата на главном экране
 if st.session_state.history:
   st.markdown("---")
-  st.subheader("🔥 Последний результат анализа")
+  st.subheader("🔥 Последний свежий прогноз")
   latest = st.session_state.history[0]
-  st.info(f"Матч: **{latest['match']}** | Статус: **{latest['status']}**")
+  st.info(f"Дата запроса: {latest['date']} | Статус: **{latest['status']}**")
   st.write(latest["content"])
-  
