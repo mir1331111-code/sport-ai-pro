@@ -62,33 +62,23 @@ def apply_custom_styles(sport_type="default"):
   bg_url = DEFAULT_STADIUM_BGS.get(
       sport_type, DEFAULT_STADIUM_BGS["default"]
   )
-  css_code = """
+  css_code = f"""
     <style>
-        .stApp {
-            background: linear-gradient(rgba(10, 15, 29, 0.90), rgba(10, 15, 29, 0.94)), url("__BG_URL__");
+        .stApp {{
+            background: linear-gradient(rgba(10, 15, 29, 0.90), rgba(10, 15, 29, 0.94)), url("{bg_url}");
             background-size: cover;
             background-attachment: fixed;
             background-position: center;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        }
-        .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+        }}
+        .block-container {{ padding-top: 1rem; padding-bottom: 2rem; }}
         
-        /* Стилизация метрик сверху */
-        div[data-testid="stMetricValue"] { font-size: 1.3rem; color: #00FF66; font-weight: 800; }
-        div[data-testid="stMetricLabel"] { font-size: 0.78rem; opacity: 0.85; }
+        /* Метрики */
+        div[data-testid="stMetricValue"] {{ font-size: 1.3rem; color: #00FF66; font-weight: 800; }}
+        div[data-testid="stMetricLabel"] {{ font-size: 0.78rem; opacity: 0.85; }}
         
-        /* Карточки событий */
-        .match-card {
-            background: rgba(30, 41, 59, 0.65);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 14px;
-            margin-bottom: 12px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        }
-        
-        .value-badge {
+        /* Блоки и плашки */
+        .value-badge {{
             background: linear-gradient(135deg, #059669 0%, #10b981 100%);
             color: #ffffff;
             padding: 3px 8px;
@@ -97,9 +87,9 @@ def apply_custom_styles(sport_type="default"):
             font-size: 0.75rem;
             display: inline-block;
             margin-bottom: 6px;
-        }
+        }}
         
-        .score-badge-live {
+        .score-badge-live {{
             background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
             color: white;
             padding: 2px 8px;
@@ -107,9 +97,9 @@ def apply_custom_styles(sport_type="default"):
             font-weight: bold;
             font-size: 0.8rem;
             animation: pulse 2s infinite;
-        }
+        }}
         
-        .stat-box {
+        .stat-box {{
             background: rgba(15, 23, 42, 0.6);
             border-left: 3px solid #00FF66;
             padding: 8px 10px;
@@ -117,9 +107,9 @@ def apply_custom_styles(sport_type="default"):
             margin: 6px 0;
             font-size: 0.82rem;
             color: #e2e8f0;
-        }
+        }}
         
-        .loss-reason-box {
+        .loss-reason-box {{
             background: rgba(220, 38, 38, 0.15);
             border-left: 3px solid #ef4444;
             padding: 6px 10px;
@@ -127,15 +117,15 @@ def apply_custom_styles(sport_type="default"):
             margin: 4px 0;
             font-size: 0.8rem;
             color: #fca5a5;
-        }
+        }}
         
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.6; }
-            100% { opacity: 1; }
-        }
+        @keyframes pulse {{
+            0% {{ opacity: 1; }}
+            50% {{ opacity: 0.6; }}
+            100% {{ opacity: 1; }}
+        }}
     </style>
-    """.replace("__BG_URL__", bg_url)
+    """
   st.markdown(css_code, unsafe_allow_html=True)
 
 
@@ -302,7 +292,7 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-# Инициализация темы
+# Инициализация стилей
 initial_bg_cat = "default"
 if st.session_state.history and st.session_state.history[0].get("data"):
   initial_bg_cat = st.session_state.history[0]["data"][0].get(
@@ -349,7 +339,6 @@ if groq_api_key:
       "Модель Groq", models_list, index=0
   )
 
-# Подсчет статистики и сбор заметок об ошибках
 total_wins, total_losses = 0, 0
 failed_predictions = []
 
@@ -469,7 +458,6 @@ with tab_current:
             pair_key = f"{t1_k}_vs_{t2_k}"
             phase = rm["game_phase"]
 
-            # Если матч в этой фазе еще не разбирался
             if (
                 pair_key not in seen_in_batch
                 and (pair_key, phase) not in analyzed_phases
@@ -477,7 +465,6 @@ with tab_current:
               seen_in_batch.add(pair_key)
               filtered_matches.append(rm)
 
-          # ФОЛБЭК: Если все матчи фазы уже в базе, разрешаем повтор для анализа
           is_fallback_mode = False
           if not filtered_matches and real_matches:
             filtered_matches = real_matches[:6]
@@ -587,14 +574,12 @@ with tab_current:
           parsed_matches = parsed_json.get("matches", [])
 
           if not parsed_matches:
-            st.warning(
-                "⚠️ ИИ не сформировал новые прогнозы. Попробуйте выбрать другой"
-                " режим ИИ или обновить линию."
-            )
+            st.warning("⚠️ ИИ не сформировал новые прогнозы.")
           else:
             first_sport_cat = "default"
             for idx_pm, pm in enumerate(parsed_matches):
               t1 = pm.get("team1", "")
+              t2_str = pm.get("team2", "")
               match_found = next(
                   (
                       rm
@@ -608,4 +593,16 @@ with tab_current:
                 pm["team1_logo"] = match_found["team1_logo"]
                 pm["team2_logo"] = match_found["team2_logo"]
                 pm["league"] = match_found["sport_label"]
-                pm["sport_category"] =
+                pm["sport_category"] = match_found["sport_category"]
+                pm["time_status"] = match_found["status"]
+                pm["score"] = match_found["score"]
+                pm["game_phase"] = match_found["game_phase"]
+              else:
+                pm["team1_logo"] = (
+                    f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
+                )
+                pm["team2_logo"] = (
+                    f"https://ui-avatars.com/api/?name={t2_str}&background=1e293b&color=00bfff"
+                )
+                pm["score"] = pm.get("score", "0:0")
+                pm["sport_catego
