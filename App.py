@@ -15,10 +15,10 @@ if 'history' not in st.session_state:
 st.sidebar.header("⚙️ Настройки и Статистика")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
-# Выбор модели прямо в интерфейсе на случай ограничений ключа
+# Оставляем только рабочие актуальные модели 1.5 с поддержкой поиска
 selected_model = st.sidebar.selectbox(
     "Модель Gemini",
-    ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    ["gemini-1.5-flash", "gemini-1.5-pro"]
 )
 
 if api_key:
@@ -58,14 +58,10 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
     else:
         with st.spinner(f"Ищем матчи через модель {selected_model} (Flashscore/SofaScore)..."):
             try:
-                # Подключаем поиск, если модель поддерживает инструменты
-                if "1.5" in selected_model:
-                    model = genai.GenerativeModel(
-                        model_name=selected_model,
-                        tools='google_search_retrieval'
-                    )
-                else:
-                    model = genai.GenerativeModel(model_name=selected_model)
+                model = genai.GenerativeModel(
+                    model_name=selected_model,
+                    tools='google_search_retrieval'
+                )
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
@@ -94,7 +90,7 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
                 st.success("Сигналы успешно найдены и проанализированы!")
                 
             except Exception as e:
-                st.error(f"Ошибка при запросе к Gemini API: {e}\n\n💡 Попробуй переключить модель на `gemini-1.5-pro` или `gemini-pro` в боковой панели слева.")
+                st.error(f"Ошибка при запросе к Gemini API: {e}")
 
 st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
@@ -139,3 +135,4 @@ else:
             st.rerun()
         
         st.markdown("---")
+        
