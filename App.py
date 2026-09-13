@@ -309,7 +309,8 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-def fetch_matches_from_odds_ai(
+# ИСПРАВЛЕНО: единое имя функции во избежание NameError
+def fetch_matches_from_odds_api(
     endpoints_list,
     sport_category,
     api_key,
@@ -787,7 +788,9 @@ elif selected_window == "📥 Ручной инжектор (Flashscore / Сво
             "recommended_bet",
             f"Победа 1 ({m_team1})" if true_p1 >= true_p2 else f"Победа 2 ({m_team2})",
         )
-        chosen_odds = m_odds1 if "1" in bet_choice or m_team1 in bet_choice else m_odds2
+        chosen_odds = (
+            m_odds1 if "1" in bet_choice or m_team1 in bet_choice else m_odds2
+        )
         true_p = float(ai_res.get("expert_probability", true_p1))
         analysis_text = ai_res.get("analysis_text", "Ручной ИИ-анализ.")
       else:
