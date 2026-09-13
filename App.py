@@ -95,22 +95,22 @@ SPORT_GROUPS = {
     },
 }
 
-# ДИНАМИЧЕСКИЕ НАБОРЫ ФОНОВ (Стадион -> Игрок -> Мяч/Момент)
+# ДИНАМИЧЕСКИЕ НАБОРЫ ФОНОВ
 SPORT_BACKGROUNDS = {
     "soccer": [
-        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",  # Стадион
-        "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1920&q=80",  # Игрок
-        "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=1920&q=80",  # Мяч
+        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=1920&q=80",
     ],
     "basketball": [
-        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",  # Арена
-        "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?auto=format&fit=crop&w=1920&q=80",  # Игрок
-        "https://images.unsplash.com/photo-1574623452334-1e0ac2bbfccb?auto=format&fit=crop&w=1920&q=80",  # Мяч
+        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1574623452334-1e0ac2bbfccb?auto=format&fit=crop&w=1920&q=80",
     ],
     "hockey": [
-        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",  # Арена
-        "https://images.unsplash.com/photo-1515703407324-5f753ff420b8?auto=format&fit=crop&w=1920&q=80",  # Игрок
-        "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?auto=format&fit=crop&w=1920&q=80",  # Шайба/Клюшка
+        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1515703407324-5f753ff420b8?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?auto=format&fit=crop&w=1920&q=80",
     ],
     "volleyball": [
         "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80",
@@ -128,9 +128,7 @@ SPORT_BACKGROUNDS = {
 
 def apply_custom_styles(sport_type="default"):
     bgs = SPORT_BACKGROUNDS.get(sport_type, SPORT_BACKGROUNDS["default"])
-    bg1 = bgs[0]
-    bg2 = bgs[1 % len(bgs)]
-    bg3 = bgs[2 % len(bgs)]
+    bg1, bg2, bg3 = bgs[0], bgs[1 % len(bgs)], bgs[2 % len(bgs)]
 
     css_code = f"""
     <style>
@@ -151,17 +149,6 @@ def apply_custom_styles(sport_type="default"):
             font-family: 'Plus Jakarta Sans', sans-serif;
         }}
         .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
-        
-        div[data-testid="stMetric"] {{
-            background: rgba(15, 23, 42, 0.85);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 12px 16px;
-            border-radius: 12px;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        }}
-        div[data-testid="stMetricValue"] {{ font-size: 1.4rem; color: #00FF66; font-weight: 800; text-shadow: 0 0 10px rgba(0,255,102,0.3); }}
-        div[data-testid="stMetricLabel"] {{ font-size: 0.75rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.5px; }}
 
         .stButton>button {{
             border-radius: 8px;
@@ -197,26 +184,25 @@ def apply_custom_styles(sport_type="default"):
             color: #f1f5f9;
         }}
 
-        /* КАРТОЧКИ ПО СТАТУСАМ */
         .card-win {{
             background: rgba(16, 185, 129, 0.12) !important;
             border: 2px solid #00FF66 !important;
             box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
             border-radius: 12px;
-            padding: 4px;
+            padding: 10px;
         }}
         .card-loss {{
             background: rgba(239, 68, 68, 0.12) !important;
             border: 2px solid #EF4444 !important;
             box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
             border-radius: 12px;
-            padding: 4px;
+            padding: 10px;
         }}
         .card-pending {{
             background: rgba(30, 41, 59, 0.75) !important;
             border: 1px solid rgba(255, 255, 255, 0.1) !important;
             border-radius: 12px;
-            padding: 4px;
+            padding: 10px;
         }}
 
         @keyframes goalPulse {{
@@ -397,7 +383,7 @@ def fetch_active_groq_models(api_key):
         return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
-# БОКОВАЯ ПАНЕЛЬ НАВИГАЦИИ ПО ОКНАМ
+# НАВИГАЦИЯ ПО ОКНАМ
 st.sidebar.title("🎛️ Выбор окна спорта")
 selected_window = st.sidebar.radio(
     "Переключение терминала:",
@@ -434,7 +420,6 @@ if groq_api_key:
         "Модель Groq", models_list, index=0
     )
 
-# ОПРЕДЕЛЕНИЕ ТЕКУЩЕГО КАТЕГОРИЙНОГО ОКНА
 window_mapping = {
     "⚽ Футбол — Окно": ("⚽ Футбол", SPORT_GROUPS["⚽ Футбол"]),
     "🏒 Хоккей — Окно": ("🏒 Хоккей", SPORT_GROUPS["🏒 Хоккей"]),
@@ -449,7 +434,10 @@ if selected_window != "📜 Общий Архив":
     current_endpoints = sport_data["endpoints"]
     apply_custom_styles(current_cat)
 
-    # СВОЯ СТАТИСТИКА ДЛЯ ДАННОГО ОКНА СПОРТА
+    filter_key = f"filter_{current_cat}"
+    if filter_key not in st.session_state:
+        st.session_state[filter_key] = "Все"
+
     sport_wins, sport_losses = 0, 0
     for entry in st.session_state.history:
         for card in entry.get("data", []):
@@ -471,53 +459,76 @@ if selected_window != "📜 Общий Архив":
         " $\\ge$ 85% | До 1 часа до матча)"
     )
 
-    # МЕТРИКИ ЭТОГО ОКНА
-    m_c1, m_c2, m_c3, m_c4 = st.columns(4)
-    m_c1.metric("📊 Win Rate в окне", f"{sport_win_rate:.1f}%")
-    m_c2.metric("🟢 Победы", f"{sport_wins}")
-    m_c3.metric("🔴 Поражения", f"{sport_losses}")
+    # ИНТЕРАКТИВНЫЕ МЕТРИКИ-ФИЛЬТРЫ
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    with mc1:
+        if st.button(
+            f"📊 Win Rate\n{sport_win_rate:.1f}%",
+            use_container_width=True,
+            key=f"btn_f_all_{current_cat}",
+        ):
+            st.session_state[filter_key] = "Все"
+    with mc2:
+        if st.button(
+            f"🟢 Победы\n{sport_wins}",
+            use_container_width=True,
+            key=f"btn_f_win_{current_cat}",
+        ):
+            st.session_state[filter_key] = "✅ Проход"
+    with mc3:
+        if st.button(
+            f"🔴 Поражения\n{sport_losses}",
+            use_container_width=True,
+            key=f"btn_f_loss_{current_cat}",
+        ):
+            st.session_state[filter_key] = "❌ Проигрыш"
+    with mc4:
+        if st.button(
+            "🔄 Проверить итоги окна",
+            use_container_width=True,
+            key=f"check_btn_{current_cat}",
+        ):
+            with st.spinner(f"Проверяем результаты матчей в категории {sport_title}..."):
+                finished_matches = fetch_matches_for_endpoints(
+                    current_endpoints, current_cat, only_prematch=False
+                )
+                settled_count = 0
 
-    if m_c4.button(
-        "🔄 Проверить итоги окна",
-        key=f"check_btn_{current_cat}",
-        use_container_width=True,
-    ):
-        with st.spinner(f"Проверяем результаты матчей в категории {sport_title}..."):
-            finished_matches = fetch_matches_for_endpoints(
-                current_endpoints, current_cat, only_prematch=False
-            )
-            settled_count = 0
-
-            for entry in st.session_state.history:
-                for card in entry.get("data", []):
-                    if card.get("sport_category") == current_cat:
-                        t1 = card.get("team1", "").lower()
-                        found = next(
-                            (
-                                m
-                                for m in finished_matches
-                                if t1 in m["team1"].lower() and m["is_finished"]
-                            ),
-                            None,
-                        )
-                        if found:
-                            card["score"] = found["score"]
-                            card["time_status"] = found["status"]
-                            old_status = card.get("status", "⌛ Ожидание")
-                            new_status = auto_evaluate_bet(
-                                card, found["score"], found["is_finished"]
+                for entry in st.session_state.history:
+                    for card in entry.get("data", []):
+                        if card.get("sport_category") == current_cat:
+                            t1 = card.get("team1", "").lower()
+                            found = next(
+                                (
+                                    m
+                                    for m in finished_matches
+                                    if t1 in m["team1"].lower() and m["is_finished"]
+                                ),
+                                None,
                             )
-                            if old_status != new_status:
-                                card["status"] = new_status
-                                settled_count += 1
+                            if found:
+                                card["score"] = found["score"]
+                                card["time_status"] = found["status"]
+                                old_status = card.get("status", "⌛ Ожидание")
+                                new_status = auto_evaluate_bet(
+                                    card, found["score"], found["is_finished"]
+                                )
+                                if old_status != new_status:
+                                    card["status"] = new_status
+                                    settled_count += 1
 
-            save_history(st.session_state.history)
-            st.success(f"Обновлено статусов в окне: {settled_count}")
-            st.rerun()
+                save_history(st.session_state.history)
+                st.success(f"Обновлено статусов в окне: {settled_count}")
+                st.rerun()
+
+    active_f = st.session_state[filter_key]
+    if active_f != "Все":
+        st.info(
+            f"🔍 Активен фильтр: показаны только события со статусом **{active_f}**. Нажмите на «Win Rate» выше, чтобы сбросить."
+        )
 
     st.markdown("---")
 
-    # СКАНИРОВАНИЕ И РУЧНОЙ ВЫБОР ДЛЯ ЭТОГО СПОРТА
     today_date = datetime.date.today().strftime("%d.%m.%Y")
     current_time = datetime.datetime.now().strftime("%H:%M")
 
@@ -541,7 +552,7 @@ if selected_window != "📜 Общий Архив":
             st.error("⚠️ Укажите API ключ Gemini!")
         else:
             with st.spinner(
-                f"Сканируем линию прематча ({sport_title}) на 1 час вперед..."
+                f"Сканируем линию прематча ({sport_title}) с учетом анализа прошлых минусов..."
             ):
                 try:
                     real_matches = fetch_matches_for_endpoints(
@@ -561,14 +572,38 @@ if selected_window != "📜 Общий Архив":
                             + "\n".join(match_lines)
                         )
 
+                        # --- АВТОМАТИЧЕСКИЙ СБОР МИНУСОВ ДЛЯ ОБУЧЕНИЯ ИИ ---
+                        past_losses_list = []
+                        for entry in st.session_state.history:
+                            for card in entry.get("data", []):
+                                if (
+                                    card.get("sport_category") == current_cat
+                                    and card.get("status") == "❌ Проигрыш"
+                                ):
+                                    past_losses_list.append(
+                                        f"- Матч: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')}) | Счет: {card.get('score')} | Обоснование прошлой ошибки: {card.get('reason', 'Нет данных')}"
+                                    )
+
+                        feedback_section = ""
+                        if past_losses_list:
+                            # Берем последние 5 ошибок для контекста
+                            losses_str = "\n".join(past_losses_list[-5:])
+                            feedback_section = f"""
+                            ⚠️ РЕФЛЕКСИЯ И РАБОТА НАД ОШИБКАМИ (ПРОШЛЫЕ МИНУСЫ):
+                            Ниже приведены прошлые неверные прогнозы по этому спорту. Проанализируй их и НЕ ДОПУСКАЙ аналогичных ошибок (избегай ложных маркеров, переоценки фаворитов или ошибочного чтения формы команд):
+                            {losses_str}
+                            """
+
                         base_prompt = f"""
 Сегодня {today_date}, время {current_time} МСК.
 Вид спорта: {sport_title}
 {context_text}
 
+{feedback_section}
+
 КРИТЕРИИ ПРЕМАТЧ-АНАЛИЗА:
 1. Выбирай только из предложенного списка матчей для {sport_title}.
-2. Проанализируй мотивацию, форму и статистику.
+2. Проанализируй мотивацию, форму и статистику, учитывая прошлые ошибки.
 3. КОЭФФИЦИЕНТ: строго от 1.40 и выше.
 4. УВЕРЕННОСТЬ ИИ: строго от 85% и выше.
 
@@ -587,7 +622,7 @@ if selected_window != "📜 Общий Архив":
       "coefficient": "1.85",
       "confidence_percent": 88,
       "value_tag": "💎 Валуй",
-      "x_factor": "🔥 Ключевой фактор",
+      "x_factor": "🔥 Ключевой фактор (с учетом работы над ошибками)",
       "tactical_summary": "🧠 Анализ",
       "reason": "Обоснование"
     }}
@@ -616,7 +651,7 @@ if selected_window != "📜 Общий Архив":
                             )
                             consensus_prompt = (
                                 base_prompt
-                                + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй финальный JSON!"
+                                + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй финальный JSON с учетом работы над ошибками!"
                             )
                             client = Groq(api_key=groq_api_key)
                             comp = client.chat.completions.create(
@@ -686,7 +721,7 @@ if selected_window != "📜 Общий Архив":
                             st.session_state.history.insert(0, new_entry)
                             save_history(st.session_state.history)
                             st.success(
-                                f"✅ Сканирование для {sport_title} завершено!"
+                                f"✅ Сканирование с обучением по {sport_title} завершено!"
                             )
                             st.rerun()
                         else:
@@ -696,32 +731,26 @@ if selected_window != "📜 Общий Архив":
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
 
-    st.markdown("### 📋 Активные прематч-прогнозы в окне")
+    st.markdown("### 📋 Прематч-прогнозы в окне")
 
-    # ФИЛЬТРУЕМ И ПОКАЗЫВАЕМ ПРОГНОЗЫ ТОЛЬКО ДЛЯ ЭТОГО ВИДА СПОРТА
-    window_history = [
-        entry
-        for entry in st.session_state.history
-        if any(
-            c.get("sport_category") == current_cat
-            for c in entry.get("data", [])
-        )
-    ]
+    window_history = []
+    for entry in st.session_state.history:
+        filtered_cards = [
+            c for c in entry.get("data", [])
+            if c.get("sport_category") == current_cat and (active_f == "Все" or c.get("status") == active_f)
+        ]
+        if filtered_cards:
+            entry_copy = entry.copy()
+            entry_copy["data"] = filtered_cards
+            window_history.append(entry_copy)
 
     if not window_history:
         st.info(
-            f"В окне '{sport_title}' пока нет прогнозов. Нажмите кнопку «Сканировать» выше."
+            f"Нет прогнозов по выбранному фильтру ('{active_f}') в окне '{sport_title}'."
         )
     else:
         for entry in window_history:
-            filtered_cards = [
-                c
-                for c in entry.get("data", [])
-                if c.get("sport_category") == current_cat
-            ]
-            if not filtered_cards:
-                continue
-
+            filtered_cards = entry.get("data", [])
             st.caption(
                 f"Сессия от {entry.get('date')} [{entry.get('ai_source')}]"
             )
@@ -731,7 +760,6 @@ if selected_window != "📜 Общий Архив":
                 with cols[col_idx]:
                     st_val = card.get("status", "⌛ Ожидание")
                     
-                    # Выбираем визуальный стиль карточки в зависимости от результата
                     if st_val == "✅ Проход":
                         card_class = "card-win goal-highlight"
                     elif st_val == "❌ Проигрыш":
@@ -781,13 +809,11 @@ if selected_window != "📜 Общий Архив":
                                 unsafe_allow_html=True,
                             )
 
-                        with st.expander("🧠 Анализ"):
-                            st.write(
-                                f"**Разбор:** {card.get('tactical_summary', '—')}"
-                            )
-                            st.write(
-                                f"**Вердикт:** {card.get('reason', '—')}"
-                            )
+                        with st.expander("🧠 Как событие попало сюда и что произошло"):
+                            st.write(f"**Статус итога:** {st_val} (Счет: `{card.get('score', '0:0')}`)")
+                            st.write(f"**Ключевой фактор:** {card.get('x_factor', '—')}")
+                            st.write(f"**Разбор ИИ:** {card.get('tactical_summary', '—')}")
+                            st.write(f"**Обоснование отбора:** {card.get('reason', '—')}")
 
                         st.write(
                             f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
@@ -816,7 +842,6 @@ if selected_window != "📜 Общий Архив":
                         st.markdown("</div>", unsafe_allow_html=True)
 
 else:
-    # ОКНО ОБЩЕГО АРХИВА
     apply_custom_styles("default")
     st.title("📜 Общий архив всех прогнозов")
     st.write(
