@@ -159,7 +159,6 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
               f"Топ матчи европейских чемпионатов на сегодня ({today_date})"
           )
 
-        # Обработка через Groq API с исправленной моделью
         client = Groq(api_key=groq_api_key)
 
         prompt = (
@@ -179,8 +178,9 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
             "- 💡 Обоснование прогноза."
         )
 
+        # ИСПРАВЛЕННАЯ МОДЕЛЬ ЗДЕСЬ
         completion = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",  # Исправлено на стабильную модель
+            model="llama3-70b-8192", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )
