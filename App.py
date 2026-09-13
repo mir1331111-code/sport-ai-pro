@@ -47,9 +47,8 @@ if st.button("🔍 Авто-поиск матчей и анализ экспер
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Анализируем матчи через современный Gemini API..."):
+        with st.spinner("Анализируем матчи через gemini-3.6-flash..."):
             try:
-                # Используем новый клиент google-genai
                 client = genai.Client(api_key=api_key)
                 
                 prompt = (
@@ -68,7 +67,7 @@ if st.button("🔍 Авто-поиск матчей и анализ экспер
                 )
                 
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model='gemini-3.6-flash',
                     contents=prompt,
                 )
                 
@@ -126,3 +125,4 @@ else:
             st.rerun()
         
         st.markdown("---")
+        
