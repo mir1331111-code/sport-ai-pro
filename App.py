@@ -52,12 +52,41 @@ def calculate_kelly_stake(bankroll, odds, probability, fraction=0.25):
         return 0.0
 
 
+def get_financial_stats():
+    initial = st.session_state.get("initial_bankroll", 10000.0)
+    total_profit = 0.0
+    total_staked = 0.0
+    settled = 0
+    wins = 0
+    for entry in st.session_state.history:
+        for card in entry.get("data", []):
+            st_val = card.get("status", "⌛ Ожидание")
+            stake = float(card.get("recommended_stake", 0.0) or 0.0)
+            odds = float(card.get("coefficient", 1.0) or 1.0)
+            if st_val == "✅ Проход":
+                total_profit += stake * (odds - 1.0)
+                total_staked += stake
+                settled += 1
+                wins += 1
+            elif st_val == "❌ Проигрыш":
+                total_profit -= stake
+                total_staked += stake
+                settled += 1
+    current_bank = initial + total_profit
+    roi = (total_profit / total_staked * 100) if total_staked > 0 else 0.0
+    win_rate = (wins / settled * 100) if settled > 0 else 0.0
+    return round(current_bank, 2), round(total_profit, 2), round(roi, 2), round(win_rate, 1), settled, wins
+
+
 st.set_page_config(
-    page_title="Auto-Sniper: Global Terminals", page_icon="🎯", layout="wide"
+    page_title="Auto-Sniper: Virtual Simulator", page_icon="🎯", layout="wide"
 )
 
 if "history" not in st.session_state:
     st.session_state.history = load_history()
+
+if "initial_bankroll" not in st.session_state:
+    st.session_state.initial_bankroll = 10000.0
 
 if "last_scan_timestamp" not in st.session_state:
     st.session_state.last_scan_timestamp = 0
@@ -366,7 +395,6 @@ def run_background_global_scan(
     groq_model_name,
     tg_token,
     tg_chat_id,
-    bankroll,
     kelly_fraction,
 ):
     current_time_ts = time.time()
@@ -376,6 +404,7 @@ def run_background_global_scan(
     st.session_state.last_scan_timestamp = current_time_ts
     today_date = datetime.date.today().strftime("%d.%m.%Y")
     current_time_str = datetime.datetime.now().strftime("%H:%M")
+    current_bank, _, _, _, _, _ = get_financial_stats()
 
     for sport_name, sport_info in SPORT_GROUPS.items():
         cat = sport_info["category"]
@@ -490,19 +519,19 @@ def run_background_global_scan(
 
                 odds_val = float(pm.get("coefficient", 1.85))
                 prob_val = float(pm.get("confidence_percent", 90)) / 100.0
-                rec_stake = calculate_kelly_stake(bankroll, odds_val, prob_val, kelly_fraction)
-                stake_pct = round((rec_stake / bankroll) * 100, 1) if bankroll > 0 else 0
+                rec_stake = calculate_kelly_stake(current_bank, odds_val, prob_val, kelly_fraction)
+                stake_pct = round((rec_stake / current_bank) * 100, 1) if current_bank > 0 else 0
                 pm["recommended_stake"] = rec_stake
                 pm["stake_percentage"] = stake_pct
 
                 if tg_token and tg_chat_id:
                     tg_text = (
-                        f"💎 *ФОНОВЫЙ СИГНАЛ: {sport_name}*\n\n"
+                        f"💎 *ВИРТУАЛЬНЫЙ СИГНАЛ: {sport_name}*\n\n"
                         f"🏆 {pm.get('league')}\n"
                         f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
                         f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
                         f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
-                        f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
+                        f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
                         f"💡 Обоснование: {pm.get('x_factor')}"
                     )
                     send_telegram_message(tg_token, tg_chat_id, tg_text)
@@ -548,8 +577,11 @@ selected_window = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.title("💰 Управление банкроллом")
-bankroll_input = st.sidebar.number_input("Текущий банк (руб.):", min_value=10.0, value=10000.0, step=500.0)
+st.sidebar.title("💰 Виртуальный симулятор банка")
+initial_bank_input = st.sidebar.number_input("Стартовый виртуальный банк (руб.):", min_value=10.0, value=st.session_state.initial_bankroll, step=500.0)
+if initial_bank_input != st.session_state.initial_bankroll:
+    st.session_state.initial_bankroll = initial_bank_input
+
 kelly_choice = st.sidebar.selectbox(
     "Риск-менеджмент (Критерий Келли):",
     [
@@ -565,6 +597,14 @@ kelly_map = {
     "Полный Келли (1.0 - агрессивный)": 1.0,
 }
 active_kelly_fraction = kelly_map[kelly_choice]
+
+# Кнопка сброса симулятора
+if st.sidebar.button("🔄 Сбросить симулятор"):
+    st.session_state.history = []
+    if os.path.exists(HISTORY_FILE):
+        os.remove(HISTORY_FILE)
+    st.success("Виртуальный банк и архив очищены!")
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.title("⚙️ Настройки ИИ и Telegram")
@@ -607,7 +647,10 @@ if groq_api_key:
         "Модель Groq", models_list, index=0
     )
 
-# Автоматический запуск глобального фонового сканирования по всем вкладкам
+# Получаем текущие фин. показатели симулятора
+current_virtual_bank, net_profit, simulator_roi, simulator_winrate, total_settled, total_wins = get_financial_stats()
+
+# Автоматический запуск глобального фонового сканирования
 if groq_api_key or gemini_api_key:
     run_background_global_scan(
         groq_api_key,
@@ -616,7 +659,6 @@ if groq_api_key or gemini_api_key:
         selected_groq_model,
         telegram_token,
         telegram_chat_id,
-        bankroll_input,
         active_kelly_fraction,
     )
 
@@ -629,10 +671,19 @@ window_mapping = {
     "🎮 Киберспорт — Окно": ("🎮 Киберспорт", SPORT_GROUPS["🎮 Киберспорт"]),
 }
 
+# --- ВИРТУАЛЬНЫЙ ФИНАНСОВЫЙ ДАШБОРД (ВСЕГДА ВИДЕН) ---
+st.markdown("### 📊 Виртуальный финансовый дашборд симулятора")
+fc1, fc2, fc3, fc4 = st.columns(4)
+fc1.metric("💳 Виртуальный банк", f"{current_virtual_bank:,.2f} руб.", f"{net_profit:+,.2f} руб.")
+fc2.metric("📈 Чистая прибыль", f"{net_profit:+,.2f} руб.")
+fc3.metric("🎯 ROI (Окупаемость)", f"{simulator_roi}%")
+fc4.metric("🏆 Проходимость", f"{simulator_winrate}% ({total_wins}/{total_settled})")
+st.markdown("---")
+
 if selected_window == "🚨 Лайв-радар (Камбэки)":
     apply_custom_styles(theme_choice, "default")
     st.title("🚨 Лайв-радар: Поиск камбэков фаворитов")
-    st.caption("Сканирование матчей в реальном времени: отслеживание фаворитов, проигрывающих по ходу встречи (тайм, сет, период)")
+    st.caption("Сканирование матчей в реальном времени: отслеживание фаворитов, проигрывающих по ходу встречи")
 
     if st.button("🚀 Запустить сканирование Live-радара", type="primary", use_container_width=True):
         if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
@@ -725,8 +776,8 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                                     pm["status"] = "🔴 ЛАЙВ-СИГНАЛ"
                                     odds_val = float(pm.get("coefficient", 1.85))
                                     prob_val = float(pm.get("confidence_percent", 85)) / 100.0
-                                    rec_stake = calculate_kelly_stake(bankroll_input, odds_val, prob_val, active_kelly_fraction)
-                                    stake_pct = round((rec_stake / bankroll_input) * 100, 1) if bankroll_input > 0 else 0
+                                    rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
+                                    stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
                                     pm["recommended_stake"] = rec_stake
                                     pm["stake_percentage"] = stake_pct
 
@@ -737,7 +788,7 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                                             f"⚽ *{pm.get('team1')} vs {pm.get('team2')}* (Счет: `{pm.get('score')}`)\n"
                                             f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
                                             f"🔥 Уверенность: `{pm.get('confidence_percent')}%`\n"
-                                            f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
+                                            f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
                                             f"💡 Анализ: {pm.get('x_factor')}"
                                         )
                                         send_telegram_message(telegram_token, telegram_chat_id, tg_text)
@@ -788,7 +839,7 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                 rec_s = card.get("recommended_stake")
                 s_pct = card.get("stake_percentage")
                 if rec_s is not None and s_pct is not None:
-                    st.markdown(f"<div class='stat-box'>💰 <b>Реком. ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
 
                 if card.get("x_factor"):
                     st.markdown(f"<div class='stat-box'>{card.get('x_factor')}</div>", unsafe_allow_html=True)
@@ -1086,19 +1137,19 @@ elif selected_window != "📜 Общий Архив":
 
                                 odds_val = float(pm.get("coefficient", 1.85))
                                 prob_val = float(pm.get("confidence_percent", 90)) / 100.0
-                                rec_stake = calculate_kelly_stake(bankroll_input, odds_val, prob_val, active_kelly_fraction)
-                                stake_pct = round((rec_stake / bankroll_input) * 100, 1) if bankroll_input > 0 else 0
+                                rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
+                                stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
                                 pm["recommended_stake"] = rec_stake
                                 pm["stake_percentage"] = stake_pct
 
                                 if telegram_token and telegram_chat_id:
                                     tg_text = (
-                                        f"💎 *ЭЛИТНЫЙ СИГНАЛ: {sport_title}*\n\n"
+                                        f"💎 *ВИРТУАЛЬНЫЙ СИГНАЛ: {sport_title}*\n\n"
                                         f"🏆 {pm.get('league')}\n"
                                         f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
                                         f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
                                         f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
-                                        f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
+                                        f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
                                         f"💡 Обоснование: {pm.get('x_factor')}"
                                     )
                                     if send_telegram_message(
@@ -1192,7 +1243,7 @@ elif selected_window != "📜 Общий Архив":
                         s_pct = card.get("stake_percentage")
                         if rec_s is not None and s_pct is not None:
                             st.markdown(
-                                f"<div class='stat-box'>💰 <b>Реком. ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>",
+                                f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>",
                                 unsafe_allow_html=True,
                             )
 
@@ -1272,7 +1323,7 @@ elif selected_window == "📜 Общий Архив":
                         f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`)"
                     )
                     if card.get("recommended_stake"):
-                        st.markdown(f"💰 Ставка: `{card.get('recommended_stake')} руб.`")
+                        st.markdown(f"💰 Вирт. ставка: `{card.get('recommended_stake')} руб.`")
                     st.write(
                         f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
                     )
