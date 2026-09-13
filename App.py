@@ -10,22 +10,28 @@ st.set_page_config(
 
 HISTORY_FILE = "match_history_pro.json"
 
-# --- Функции для работы с локальным хранилищем (банк и история) ---
 
-
+# --- Функция загрузки истории с защитой от старого формата (исправляет TypeError) ---
 def load_history():
   if os.path.exists(HISTORY_FILE):
     try:
       with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+        # Если в файле старый формат (список), автоматически конвертируем в словарь
+        if isinstance(data, list):
+          return {"bankroll": 1000.0, "bets": []}
+        return data
     except Exception:
       pass
   return {"bankroll": 1000.0, "bets": []}
 
 
 def save_history(data):
-  with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=4)
+  try:
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+      json.dump(data, f, ensure_ascii=False, indent=4)
+  except Exception:
+    pass
 
 
 # --- Боковая панель: Настройки ---
@@ -138,7 +144,7 @@ with col_m2:
 
 st.markdown("---")
 
-# Кнопка запуска сканирования
+# Кнопка запуска сканирования в сайдбаре
 if st.sidebar.button("🔍 Загрузить линию БК", type="primary"):
   with st.spinner("Запрос актуальных коэффициентов у букмекеров..."):
     matches = fetch_real_bookmaker_matches(selected_sport_key, odds_api_key)
@@ -174,7 +180,6 @@ if "matches" in st.session_state and st.session_state["matches"]:
               f"Запущен расчет валуйности для: {match['team1']} —"
               f" {match['team2']}"
           )
-          # Сюда можно подключить вызов ИИ-модели для детального разбора
 
       st.markdown("---")
 else:
