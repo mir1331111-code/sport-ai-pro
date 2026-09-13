@@ -10,7 +10,6 @@ from groq import Groq
 from streamlit_autorefresh import st_autorefresh
 
 # --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ---
-# 3600000 миллисекунд = 1 час. Вкладка обновляется и запускает сканирование всех видов спорта.
 count = st_autorefresh(interval=3600000, key="auto_sniper_refresh")
 
 HISTORY_FILE = "match_history.json"
@@ -32,6 +31,25 @@ def save_history(history_data):
             json.dump(history_data, f, ensure_ascii=False, indent=4)
     except Exception:
         pass
+
+
+def calculate_kelly_stake(bankroll, odds, probability, fraction=0.25):
+    """
+    Рассчитывает оптимальный размер ставки по критерию Келли.
+    """
+    try:
+        odds = float(odds)
+        if odds <= 1.0 or probability <= 0:
+            return 0.0
+        b = odds - 1.0
+        q = 1.0 - probability
+        kelly_pct = (probability * b - q) / b
+        if kelly_pct <= 0:
+            return 0.0
+        adjusted_pct = min(kelly_pct * fraction, 0.10)  # Ограничение 10% банка
+        return round(bankroll * adjusted_pct, 2)
+    except Exception:
+        return 0.0
 
 
 st.set_page_config(
@@ -332,6 +350,8 @@ def run_background_global_scan(
     groq_model_name,
     tg_token,
     tg_chat_id,
+    bankroll,
+    kelly_fraction,
 ):
     current_time_ts = time.time()
     if current_time_ts - st.session_state.last_scan_timestamp < 3300:
@@ -452,6 +472,14 @@ def run_background_global_scan(
                 pm["score"] = "0:0"
                 pm["status"] = "⌛ Ожидание"
 
+                # Расчет по Келли
+                odds_val = float(pm.get("coefficient", 1.85))
+                prob_val = float(pm.get("confidence_percent", 90)) / 100.0
+                rec_stake = calculate_kelly_stake(bankroll, odds_val, prob_val, kelly_fraction)
+                stake_pct = round((rec_stake / bankroll) * 100, 1) if bankroll > 0 else 0
+                pm["recommended_stake"] = rec_stake
+                pm["stake_percentage"] = stake_pct
+
                 if tg_token and tg_chat_id:
                     tg_text = (
                         f"💎 *ФОНОВЫЙ СИГНАЛ: {sport_name}*\n\n"
@@ -459,6 +487,7 @@ def run_background_global_scan(
                         f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
                         f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
                         f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
+                        f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
                         f"💡 Обоснование: {pm.get('x_factor')}"
                     )
                     send_telegram_message(tg_token, tg_chat_id, tg_text)
@@ -500,6 +529,25 @@ selected_window = st.sidebar.radio(
     ],
     index=0,
 )
+
+st.sidebar.markdown("---")
+st.sidebar.title("💰 Управление банкроллом")
+bankroll_input = st.sidebar.number_input("Текущий банк (руб.):", min_value=10.0, value=10000.0, step=500.0)
+kelly_choice = st.sidebar.selectbox(
+    "Риск-менеджмент (Критерий Келли):",
+    [
+        "Четверть Келли (0.25 - безопасный)",
+        "Полукелли (0.5 - средний)",
+        "Полный Келли (1.0 - агрессивный)",
+    ],
+    index=0,
+)
+kelly_map = {
+    "Четверть Келли (0.25 - безопасный)": 0.25,
+    "Полукелли (0.5 - средний)": 0.5,
+    "Полный Келли (1.0 - агрессивный)": 1.0,
+}
+active_kelly_fraction = kelly_map[kelly_choice]
 
 st.sidebar.markdown("---")
 st.sidebar.title("⚙️ Настройки ИИ и Telegram")
@@ -551,6 +599,8 @@ if groq_api_key or gemini_api_key:
         selected_groq_model,
         telegram_token,
         telegram_chat_id,
+        bankroll_input,
+        active_kelly_fraction,
     )
 
 window_mapping = {
@@ -836,6 +886,14 @@ if selected_window != "📜 Общий Архив":
                                 pm["score"] = "0:0"
                                 pm["status"] = "⌛ Ожидание"
 
+                                # Расчет по критерию Келли
+                                odds_val = float(pm.get("coefficient", 1.85))
+                                prob_val = float(pm.get("confidence_percent", 90)) / 100.0
+                                rec_stake = calculate_kelly_stake(bankroll_input, odds_val, prob_val, active_kelly_fraction)
+                                stake_pct = round((rec_stake / bankroll_input) * 100, 1) if bankroll_input > 0 else 0
+                                pm["recommended_stake"] = rec_stake
+                                pm["stake_percentage"] = stake_pct
+
                                 if telegram_token and telegram_chat_id:
                                     tg_text = (
                                         f"💎 *ЭЛИТНЫЙ СИГНАЛ: {sport_title}*\n\n"
@@ -843,6 +901,7 @@ if selected_window != "📜 Общий Архив":
                                         f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
                                         f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
                                         f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
+                                        f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
                                         f"💡 Обоснование: {pm.get('x_factor')}"
                                     )
                                     if send_telegram_message(
@@ -932,6 +991,15 @@ if selected_window != "📜 Общий Архив":
                         st.write(f"Уверенность: **{conf}%**")
                         st.progress(conf / 100)
 
+                        # Отображение расчета по Келли в интерфейсе
+                        rec_s = card.get("recommended_stake")
+                        s_pct = card.get("stake_percentage")
+                        if rec_s is not None and s_pct is not None:
+                            st.markdown(
+                                f"<div class='stat-box'>💰 <b>Реком. ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>",
+                                unsafe_allow_html=True,
+                            )
+
                         if card.get("x_factor"):
                             st.markdown(
                                 f"<div class='stat-box'>{card.get('x_factor')}</div>",
@@ -1007,6 +1075,8 @@ else:
                     st.markdown(
                         f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`)"
                     )
+                    if card.get("recommended_stake"):
+                        st.markdown(f"💰 Ставка: `{card.get('recommended_stake')} руб.`")
                     st.write(
                         f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
                     )
