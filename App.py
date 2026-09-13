@@ -1,12 +1,13 @@
 import streamlit as st
 from google import genai
+from google.genai import types
 import datetime
 
 st.set_page_config(page_title="Flashscore & SofaScore Auto-Sniper", page_icon="🤖", layout="centered")
 
 st.markdown("""
-<h1 style='text-align: center;'>🤖 Auto-Sniper: Авто-поиск матчей</h1>
-<p style='text-align: center; color: gray;'>ИИ анализирует текущие матчи и дает экспертные прогнозы.</p>
+<h1 style='text-align: center;'>🤖 Auto-Sniper: Живой поиск матчей</h1>
+<p style='text-align: center; color: gray;'>ИИ ищет актуальные матчи через реальный поиск в интернете.</p>
 """, unsafe_allow_html=True)
 
 if 'history' not in st.session_state:
@@ -39,36 +40,40 @@ today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
-st.info("Нажми кнопку ниже — ИИ сформирует экспертные прогнозы на актуальные матчи.")
+st.info("Нажми кнопку ниже — ИИ подключит живой поиск Google, найдет реальные матчи на Flashscore/SofaScore на сегодня и выдаст точный прогноз.")
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
 
-if st.button("🔍 Авто-поиск матчей и анализ экспертов", type="primary"):
+if st.button("🔍 Живой поиск матчей с Flashscore/SofaScore", type="primary"):
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Анализируем матчи через gemini-3.6-flash..."):
+        with st.spinner("Ищем реальные матчи в интернете через поиск..."):
             try:
                 client = genai.Client(api_key=api_key)
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
-                    "Ты профессиональный спортивный аналитик и беттор. "
-                    "Сформируй прогноз на актуальные матчи (футбол, теннис, баскетбол, волейбол и др.), которые идут или планируются сегодня. "
-                    f"Выбери {num_signals} надежных матча. "
+                    "Ты профессиональный спортивный аналитик и скаут. "
+                    "Используй инструмент поиска Google, чтобы найти реальные спортивные матчи (футбол, хоккей, теннис, баскетбол и др.), которые проходят ПРЯМО СЕЙЧАС в лайве или запланированы на сегодня на спортивных сайтах Flashscore и SofaScore. "
+                    f"Выбери {num_signals} самых надежных матча из актуальной поисковой выдачи на сегодня. "
                     "Для каждого сигнала укажи: "
-                    "- ⏱ Статус матча / Время. "
-                    "- 🌐 Турнир. "
+                    "- ⏱ Статус матча / Время начала. "
+                    "- 🌐 Турнир / Источник (данные с Flashscore/SofaScore). "
                     "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
-                    "- 🏆 Событие (Команды/игроки). "
-                    "- 🎯 Сигнал для ставки (Исход и коэффициент). "
+                    "- 🏆 Событие (Команды или игроки). "
+                    "- 🎯 Сигнал для ставки (Конкретный исход и коэффициент). "
                     "- 📈 Вероятность прохода (в %). "
                     "- 💡 Аналитика и обоснование прогноза."
                 )
                 
+                # Включаем живой поиск Google через конфиг нового SDK
                 response = client.models.generate_content(
                     model='gemini-3.6-flash',
                     contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                    )
                 )
                 
                 new_signal = {
@@ -77,7 +82,7 @@ if st.button("🔍 Авто-поиск матчей и анализ экспер
                     "status": "⌛ Ожидание"
                 }
                 st.session_state.history.insert(0, new_signal)
-                st.success("Сигналы успешно созданы!")
+                st.success("Живые матчи успешно найдены и проанализированы!")
                 
             except Exception as e:
                 st.error(f"Ошибка при запросе к Gemini API: {e}")
