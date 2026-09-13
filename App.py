@@ -218,9 +218,9 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             .stApp { background-color: #f8fafc !important; color: #0f172a; font-family: 'Plus Jakarta Sans', sans-serif; }
             .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }
             .value-badge { color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.75rem; display: inline-block; margin-bottom: 6px; }
-            .card-green { background: #ecfdf5 !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 12px; }
+            .card-green, .card-win { background: #ecfdf5 !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 12px; }
             .card-blue { background: #eff6ff !important; border: 2px solid #3b82f6 !important; border-radius: 12px; padding: 12px; }
-            .card-red { background: #fef2f2 !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 12px; }
+            .card-red, .card-loss { background: #fef2f2 !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 12px; }
             .card-pending { background: #ffffff !important; border: 1px solid #cbd5e1 !important; border-radius: 12px; padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
         </style>
         """
@@ -235,9 +235,9 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             }}
             .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
             .value-badge {{ color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.75rem; display: inline-block; margin-bottom: 6px; }}
-            .card-green {{ background: rgba(16, 185, 129, 0.15) !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 12px; }}
+            .card-green, .card-win {{ background: rgba(16, 185, 129, 0.15) !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 12px; }}
             .card-blue {{ background: rgba(59, 130, 246, 0.15) !important; border: 2px solid #3b82f6 !important; border-radius: 12px; padding: 12px; }}
-            .card-red {{ background: rgba(239, 68, 68, 0.15) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 12px; }}
+            .card-red, .card-loss {{ background: rgba(239, 68, 68, 0.15) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 12px; }}
             .card-pending {{ background: rgba(15, 23, 42, 0.85) !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; border-radius: 12px; padding: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }}
         </style>
         """
@@ -372,10 +372,6 @@ def fetch_single_endpoint(sport_key, label, sport_category, api_key, max_hours_a
         ev = (chosen_odds * model_p) - 1
         edge = model_p - true_p
 
-        # Определение статуса рекомендации для цветовой подсветки
-        # Зеленый: EV >= 2% (Рекомендуем)
-        # Синий: -1% <= EV < 2% (50 на 50 / Спорный)
-        # Красный: EV < -1% (Не рекомендуем)
         if ev >= 2.0:
           rec_status = "green"
         elif ev >= -1.0:
@@ -418,7 +414,6 @@ def fetch_matches_from_odds_api(
   if not api_key:
     return []
 
-  # Многопоточный запуск на 2 ядра (max_workers=2) для параллельного поиска по источникам (Flashscore/API)
   with ThreadPoolExecutor(max_workers=2) as executor:
     futures = [
         executor.submit(fetch_single_endpoint, sport_key, label, sport_category, api_key, max_hours_ahead, groq_key)
