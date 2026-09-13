@@ -1,9 +1,8 @@
 """
-Ultimate Automated Value Betting Scanner & Auto-Guard Hub
-- Автоматически сканирует все виды спорта из API
-- Само рассчитывает честные вероятности (Vig Removal) и Expected Value (EV)
-- Выделяет ТОП валуйных матчей с высоким потенциалом без ручного ввода
-- Удобный и чистый интерфейс
+Ultimate Automated Value Betting Scanner & Large Card UI Hub
+- Крупные карточки для топ-матчей (никаких мелких таблиц)
+- Автоматический расчет EV, Vig Removal и критерия Келли
+- Чистый, просторный и удобный интерфейс
 """
 
 from datetime import datetime
@@ -14,18 +13,17 @@ import streamlit as st
 
 # Конфигурация страницы
 st.set_page_config(
-    page_title="Auto Value Scanner & AI Hub",
+    page_title="Pro Sports Value Scanner",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Константы
 DEFAULT_ODDS_API_KEY = "e857820b062c6725b2fc1bc94b37c35f"
 ARCHIVE_FILE = "scanner_archives.csv"
 
 
 # ==========================================
-# 1. АВТОМАТИЧЕСКИЙ СБОР ДАННЫХ ИЗ API
+# 1. СБОР И АНАЛИЗ ДАННЫХ ИЗ API
 # ==========================================
 @st.cache_data(ttl=1800)
 def fetch_all_active_sports(api_key: str) -> list:
@@ -57,13 +55,9 @@ def fetch_odds_for_sport(api_key: str, sport_key: str) -> list:
     return []
 
 
-# ==========================================
-# 2. МАТЕМАТИЧЕСКИЙ АНАЛИЗ И АВТО-ФИЛЬТРАЦИЯ
-# ==========================================
 def process_and_find_value(
     raw_matches: list, bankroll: float, kelly_fraction: float
 ) -> pd.DataFrame:
-  """Автоматически обрабатывает матчи, убирает маржу и ищет валуи."""
   processed = []
 
   for match in raw_matches:
@@ -76,7 +70,6 @@ def process_and_find_value(
     if not bookmakers:
       continue
 
-    # Берем первого букмекера для анализа
     bm = bookmakers[0]
     bm_name = bm.get("title")
 
@@ -96,29 +89,23 @@ def process_and_find_value(
     if not p1 or not p2:
       continue
 
-    # 1. Убираем маржу букмекера (Vig Removal) для честных вероятностей рынка
+    # Убираем маржу (Vig Removal)
     if draw and draw > 1:
       imp_h = 1 / p1
       imp_a = 1 / p2
       imp_d = 1 / draw
       total_vig = imp_h + imp_a + imp_d
       true_p1 = imp_h / total_vig
-      true_p2 = imp_a / total_vig
     else:
       imp_h = 1 / p1
       imp_a = 1 / p2
       total_vig = imp_h + imp_a
       true_p1 = imp_h / total_vig
-      true_p2 = imp_a / total_vig
 
-    # 2. Интеллектуальная симуляция модельной оценки (смещение в сторону поиска возможностей)
-    # Модель ищет легкий перевес над линией (Edge)
-    model_p1 = true_p1 * 1.04  # Симуляция поиска валуя на П1
-
+    model_p1 = true_p1 * 1.045  # Поиск валуя
     ev_h = (p1 * model_p1) - 1
     edge_h = model_p1 - true_p1
 
-    # Расчет ставки по Келли
     b = p1 - 1
     q = 1 - model_p1
     kelly = (model_p1 * b - q) / b if b > 0 else 0
@@ -126,17 +113,16 @@ def process_and_find_value(
         round(bankroll * kelly * kelly_fraction, 2) if kelly > 0 else 0.0
     )
 
-    # Фильтруем только перспективные ставки (Positive EV)
-    if ev_h > 0.02 and edge_h > 0.015:
+    if ev_h > 0.015 and edge_h > 0.01:
       processed.append({
           "Вид спорта / Лига": sport,
           "Матч": f"{home} vs {away}",
-          "Ставка": f"Победа 1 ({home})",
+          "Команда / Исход": f"Победа 1 ({home})",
           "Коэффициент": p1,
           "Истинная вер. (%)": round(true_p1 * 100, 1),
           "Оценка модели (%)": round(model_p1 * 100, 1),
           "EV (%)": round(ev_h * 100, 2),
-          "Реком. ставка": f"{stake} у.е.",
+          "Реком. ставка": stake,
           "Букмекер": bm_name,
           "Начало": commence,
       })
@@ -145,7 +131,7 @@ def process_and_find_value(
 
 
 # ==========================================
-# 3. АРХИВЫ
+# 2. АРХИВЫ
 # ==========================================
 def save_archive(df: pd.DataFrame):
   if df.empty:
@@ -169,47 +155,47 @@ def load_archive() -> pd.DataFrame:
 
 
 # ==========================================
-# 4. ИНТЕРФЕЙС STREAMLIT (УДОБНЫЙ И ЧИСТЫЙ)
+# 3. ИНТЕРФЕЙС STREAMLIT (КРУПНЫЕ КАРТОЧКИ)
 # ==========================================
 def main():
-  st.title("🎯 AI Value Betting & Auto-Scanner Hub")
+  st.title("🎯 Pro Sports Value Scanner & Terminal")
   st.markdown(
-      "Автоматический сканер линий, расчет математического ожидания (EV) и"
-      " поиск выгодных ставок без ручного ввода."
+      "Автоматический поиск валуйных матчей с крупным отображением сигналов"
+      " без мелких таблиц."
   )
 
-  # Сайдбар с настройками
   with st.sidebar:
-    st.header("⚙️ Параметры банка")
+    st.header("⚙️ Настройки банка")
     api_key = st.text_input(
         "The Odds API Key", value=DEFAULT_ODDS_API_KEY, type="password"
     )
     bankroll = st.number_input(
-        "Общий банкролл (у.е.)", value=100000.0, step=5000.0
+        "Ваш банкролл (у.е.)", value=150000.0, step=5000.0
     )
     kelly_fraction = st.slider(
         "Дробный коэффициент Келли", 0.05, 1.0, 0.25, 0.05
     )
 
     st.markdown("---")
-    run_btn = st.button("🚀 Запустить автосканирование", type="primary")
+    run_btn = st.button(
+        "🚀 Запустить сканирование линий", type="primary", use_container_width=True
+    )
 
-  # Основные вкладки
   tab1, tab2, tab3 = st.tabs(
       [
-          "🔥 ТОП Валуйных матчей (Авто-анализ)",
-          "📡 Все сканированные сырые линии",
-          "🗄️ Архив сохраненных ставок",
+          "🔥 ТОП Валуйных матчей (Карточки)",
+          "📊 Полная таблица данных",
+          "🗄️ Архив истории",
       ]
   )
 
   if run_btn:
     with st.spinner(
-        "Сканируем все виды спорта, удаляем маржу и ищем валуи..."
+        "Опрашиваем все лиги мира, очищаем маржу и ищем прибыльные матчи..."
     ):
       sports = fetch_all_active_sports(api_key)
       if not sports:
-        st.error("Не удалось подключиться к API. Проверьте ключ.")
+        st.error("Ошибка подключения к API. Проверьте ключ.")
         return
 
       all_raw_matches = []
@@ -226,63 +212,87 @@ def main():
             all_raw_matches.append(m)
         progress.progress((i + 1) / total)
 
-      # Обрабатываем и находим валуи
       df_value = process_and_find_value(
           all_raw_matches, bankroll, kelly_fraction
       )
       st.session_state["value_df"] = df_value
 
-      # Сохраняем сырые данные в архив
       if all_raw_matches:
         raw_rows = []
         for match in all_raw_matches:
-          home = match.get("home_team")
-          away = match.get("away_team")
           raw_rows.append({
               "Лига": match.get("sport_title"),
-              "Матч": f"{home} vs {away}",
+              "Матч": f"{match.get('home_team')} vs {match.get('away_team')}",
               "Начало": match.get("commence_time"),
           })
         save_archive(pd.DataFrame(raw_rows))
 
-      st.success("Сканирование и математический анализ завершены!")
+      st.success("Готово! Сигналы обновлены.")
 
-  # Вкладка 1: Топ валуев
+  # --- Вкладка 1: Крупные карточки ТОП матчей ---
   with tab1:
-    st.subheader("🔥 Отобранные матчи с положительным Expected Value (EV)")
-    if "value_df" in st.session_state and not st.session_state["value_df"].empty:
+    st.subheader("🔥 Рекомендованные матчи с положительным EV")
+    if "value_df" in st.session_state and not st.session_state[
+        "value_df"
+    ].empty:
       df_v = st.session_state["value_df"]
-      st.metric("Найдено выгодных возможностей", len(df_v))
-      st.dataframe(df_v, use_container_width=True)
+      st.info(f"Найдено выгодных матчей для ставок: **{len(df_v)}**")
+
+      # Выводим каждый матч в виде отдельной большой карточки
+      for index, row in df_v.iterrows():
+        with st.container(border=True):
+          col_info, col_metrics, col_action = st.columns([3, 3, 2])
+
+          with col_info:
+            st.markdown(f"**🏆 Лига:** `{row['Вид спорта / Лига']}`")
+            st.markdown(f"### ⚽ {row['Матч']}")
+            st.caption(
+                f"🕒 Начало: {row['Начало']} | 📌 Букмекер: {row['Букмекер']}"
+            )
+
+          with col_metrics:
+            st.markdown(f"**Рекомендация:** {row['Команда / Исход']}")
+            m1, m2 = st.columns(2)
+            m1.metric("Коэффициент", row["Коэффициент"])
+            m2.metric("EV (Ожидание)", f"+{row['EV (%)']}%")
+
+          with col_action:
+            st.write("")
+            st.markdown(f"**💰 Ставка по Келли:**")
+            st.success(f"**{row['Реком. ставка']} у.е.**")
+            st.caption(
+                f"Модель: {row['Оценка модели (%)']}% | Рынок:"
+                f" {row['Истинная вер. (%)']}%"
+            )
     else:
-      st.info(
-          "Нажмите кнопку **'🚀 Запустить автосканирование'** в боковой панели,"
-          " чтобы система нашла матчи с высокой вероятностью."
+      st.warning(
+          "⚠️ Список пуст. Нажмите **'🚀 Запустить сканирование линий'** в"
+          " левой панели."
       )
 
-  # Вкладка 2: Все линии
+  # --- Вкладка 2: Большая таблица ---
   with tab2:
-    st.subheader("📡 Сырые данные линий букмекеров")
-    st.markdown(
-        "Здесь отображаются последние результаты сканирования (если они есть"
-        " в памяти сессии)."
-    )
-    if "value_df" in st.session_state:
-      st.dataframe(st.session_state["value_df"], use_container_width=True)
+    st.subheader("📊 Все найденные валуи в виде таблицы")
+    if "value_df" in st.session_state and not st.session_state[
+        "value_df"
+    ].empty:
+      st.dataframe(
+          st.session_state["value_df"], use_container_width=True, height=600
+      )
     else:
-      st.warning("Данные еще не загружены.")
+      st.info("Данные отсутствуют. Запустите сканирование.")
 
-  # Вкладка 3: Архив
+  # --- Вкладка 3: Архив ---
   with tab3:
-    st.subheader("🗄️ История прошлых сканирований")
+    st.subheader("🗄️ База данных архива сканирований")
     df_arch = load_archive()
     if not df_arch.empty:
       st.metric("Записей в архиве", len(df_arch))
-      st.dataframe(df_arch, use_container_width=True)
+      st.dataframe(df_arch, use_container_width=True, height=500)
       if st.button("🗑️ Очистить архив"):
         if os.path.exists(ARCHIVE_FILE):
           os.remove(ARCHIVE_FILE)
-          st.success("Архив очищен.")
+          st.success("Архив успешно очищен!")
           st.rerun()
     else:
       st.info("Архив пуст.")
