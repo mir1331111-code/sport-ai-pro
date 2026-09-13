@@ -159,7 +159,7 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
               f"Топ матчи европейских чемпионатов на сегодня ({today_date})"
           )
 
-        # Обработка через Groq API (модель Llama 3.3)
+        # Обработка через Groq API с исправленной моделью
         client = Groq(api_key=groq_api_key)
 
         prompt = (
@@ -180,7 +180,7 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
         )
 
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-70b-versatile",  # Исправлено на стабильную модель
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )
@@ -208,3 +208,4 @@ if st.session_state.history:
   latest = st.session_state.history[0]
   st.info(f"Дата запроса: {latest['date']} | Статус: **{latest['status']}**")
   st.write(latest["content"])
+  
