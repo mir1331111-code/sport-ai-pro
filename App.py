@@ -12,7 +12,7 @@ from streamlit_autorefresh import st_autorefresh
 # --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ (КАЖДЫЕ 15 МИНУТ) ---
 count = st_autorefresh(interval=900000, key="auto_sniper_refresh")
 
-HISTORY_FILE = "match_history.json"
+HISTORY_FILE = "match_history_pro.json"
 
 
 def load_history():
@@ -33,9 +33,29 @@ def save_history(history_data):
         pass
 
 
+def calculate_devigged_probability(odds1, odds2):
+    """
+    Рассчитывает истинную вероятность исхода без учета букмекерской маржи (De-vigging).
+    Использует мультипликативный метод (proportional method).
+    """
+    try:
+        o1 = float(odds1)
+        o2 = float(odds2)
+        if o1 <= 1.0 or o2 <= 1.0:
+            return 0.5, 0.5
+        implied1 = 1.0 / o1
+        implied2 = 1.0 / o2
+        total_margin = implied1 + implied2
+        fair1 = implied1 / total_margin
+        fair2 = implied2 / total_margin
+        return round(fair1, 4), round(fair2, 4)
+    except Exception:
+        return 0.5, 0.5
+
+
 def calculate_kelly_stake(bankroll, odds, probability, fraction=0.25):
     """
-    Рассчитывает оптимальный размер ставки по критерию Келли.
+    Рассчитывает оптимальный размер ставки по критерию Келли с учетом де-виггинг вероятности.
     """
     try:
         odds = float(odds)
@@ -58,11 +78,21 @@ def get_financial_stats():
     total_staked = 0.0
     settled = 0
     wins = 0
+    clv_beats = 0
+    clv_total = 0
+
     for entry in st.session_state.history:
         for card in entry.get("data", []):
             st_val = card.get("status", "⌛ Ожидание")
             stake = float(card.get("recommended_stake", 0.0) or 0.0)
             odds = float(card.get("coefficient", 1.0) or 1.0)
+            closing_odds = float(card.get("closing_odds", odds) or odds)
+
+            if st_val in ["✅ Проход", "❌ Проигрыш"]:
+                clv_total += 1
+                if odds <= closing_odds:  # Биение закрывающей линии (Beat CLV)
+                    clv_beats += 1
+
             if st_val == "✅ Проход":
                 total_profit += stake * (odds - 1.0)
                 total_staked += stake
@@ -72,14 +102,16 @@ def get_financial_stats():
                 total_profit -= stake
                 total_staked += stake
                 settled += 1
+
     current_bank = initial + total_profit
     roi = (total_profit / total_staked * 100) if total_staked > 0 else 0.0
     win_rate = (wins / settled * 100) if settled > 0 else 0.0
-    return round(current_bank, 2), round(total_profit, 2), round(roi, 2), round(win_rate, 1), settled, wins
+    clv_rate = (clv_beats / clv_total * 100) if clv_total > 0 else 0.0
+    return round(current_bank, 2), round(total_profit, 2), round(roi, 2), round(win_rate, 1), settled, wins, round(clv_rate, 1)
 
 
 st.set_page_config(
-    page_title="Auto-Sniper: Virtual Simulator", page_icon="🎯", layout="wide"
+    page_title="Syndicate Pro: Advanced Betting Terminal", page_icon="⚡", layout="wide"
 )
 
 if "history" not in st.session_state:
@@ -91,7 +123,7 @@ if "initial_bankroll" not in st.session_state:
 if "last_scan_timestamp" not in st.session_state:
     st.session_state.last_scan_timestamp = 0
 
-# БАЗА ДАННЫХ ЛИГ ПО КАТЕГОРИЯМ
+# БАЗА ДАННЫХ ЛИГ ПО КАТЕГОРИЯМ (ВКЛЮЧАЯ СПЕЦИФИКУ ТЕННИСА)
 SPORT_GROUPS = {
     "⚽ Футбол": {
         "category": "soccer",
@@ -130,8 +162,8 @@ SPORT_GROUPS = {
     "🎾 Теннис": {
         "category": "tennis",
         "endpoints": [
-            ("tennis", "atp", "ATP Теннис"),
-            ("tennis", "wta", "WTA Теннис"),
+            ("tennis", "atp", "ATP Теннис (Мужчины)"),
+            ("tennis", "wta", "WTA Теннис (Женщины)"),
         ],
     },
     "🎮 Киберспорт": {
@@ -145,27 +177,13 @@ SPORT_GROUPS = {
 }
 
 SPORT_BACKGROUNDS = {
-    "soccer": [
-        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "basketball": [
-        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "hockey": [
-        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "volleyball": [
-        "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "tennis": [
-        "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "esports": [
-        "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1920&q=80"
-    ],
-    "default": [
-        "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"
-    ],
+    "soccer": ["https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80"],
+    "basketball": ["https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80"],
+    "hockey": ["https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80"],
+    "volleyball": ["https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80"],
+    "tennis": ["https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80"],
+    "esports": ["https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1920&q=80"],
+    "default": ["https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"],
 }
 
 
@@ -183,19 +201,6 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             .card-pending { background: #ffffff !important; border: 1px solid #cbd5e1 !important; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
         </style>
         """
-    elif theme_mode == "🌙 Строгая темная":
-        css_code = """
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-            .stApp { background-color: #0b0f19 !important; color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif; }
-            .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }
-            .value-badge { background: #2563eb; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.7rem; display: inline-block; margin-bottom: 6px; }
-            .stat-box { background: #1e293b; border-left: 3px solid #00ff66; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #f1f5f9; }
-            .card-win { background: rgba(16, 185, 129, 0.12) !important; border: 2px solid #00ff66 !important; border-radius: 12px; padding: 10px; }
-            .card-loss { background: rgba(239, 68, 68, 0.12) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 10px; }
-            .card-pending { background: #1e293b !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px; padding: 10px; }
-        </style>
-        """
     else:
         bgs = SPORT_BACKGROUNDS.get(sport_type, SPORT_BACKGROUNDS["default"])
         bg1 = bgs[0]
@@ -203,16 +208,16 @@ def apply_custom_styles(theme_mode, sport_type="default"):
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
             .stApp {{
-                background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}");
+                background-image: linear-gradient(rgba(8, 12, 22, 0.93), rgba(8, 12, 22, 0.97)), url("{bg1}");
                 background-size: cover; background-attachment: fixed; background-position: center;
                 color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif;
             }}
             .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
             .value-badge {{ background: #2563eb; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.7rem; display: inline-block; margin-bottom: 6px; }}
-            .stat-box {{ background: rgba(30, 41, 59, 0.6); border-left: 3px solid #00FF66; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #f1f5f9; }}
+            .stat-box {{ background: rgba(30, 41, 59, 0.7); border-left: 3px solid #00FF66; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #f1f5f9; }}
             .card-win {{ background: rgba(16, 185, 129, 0.12) !important; border: 2px solid #00FF66 !important; border-radius: 12px; padding: 10px; }}
             .card-loss {{ background: rgba(239, 68, 68, 0.12) !important; border: 2px solid #EF4444 !important; border-radius: 12px; padding: 10px; }}
-            .card-pending {{ background: rgba(30, 41, 59, 0.75) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px; padding: 10px; }}
+            .card-pending {{ background: rgba(30, 41, 59, 0.8) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px; padding: 10px; }}
         </style>
         """
     st.markdown(css_code, unsafe_allow_html=True)
@@ -253,13 +258,10 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                                 match_time = datetime.datetime.fromisoformat(
                                     match_date_str.replace("Z", "+00:00")
                                 )
-                                now_utc = datetime.datetime.now(
-                                    datetime.timezone.utc
-                                )
-                                diff_hours = (
-                                    match_time - now_utc
-                                ).total_seconds() / 3600.0
-                                if diff_hours < -0.1 or diff_hours > 2.0:
+                                now_utc = datetime.datetime.now(datetime.timezone.utc)
+                                diff_hours = (match_time - now_utc).total_seconds() / 3600.0
+                                # Для тенниса и общих видов расширяем окно до 12 часов, чтобы не пропускать матчи
+                                if diff_hours < -0.5 or diff_hours > 12.0:
                                     continue
                             except Exception:
                                 pass
@@ -274,28 +276,12 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     competitors = comp.get("competitors", [])
                     if len(competitors) < 2:
                         continue
-                    home = next(
-                        (c for c in competitors if c.get("homeAway") == "home"),
-                        competitors[0],
-                    )
-                    away = next(
-                        (c for c in competitors if c.get("homeAway") == "away"),
-                        competitors[1],
-                    )
-                    t1_name = home.get("team", {}).get(
-                        "displayName", "Команда 1"
-                    )
-                    t2_name = away.get("team", {}).get(
-                        "displayName", "Команда 2"
-                    )
-                    t1_logo = home.get("team", {}).get(
-                        "logo",
-                        f"https://ui-avatars.com/api/?name={t1_name}&background=1e293b&color=00ff66",
-                    )
-                    t2_logo = away.get("team", {}).get(
-                        "logo",
-                        f"https://ui-avatars.com/api/?name={t2_name}&background=1e293b&color=00bfff",
-                    )
+                    home = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
+                    away = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
+                    t1_name = home.get("team", {}).get("displayName", "Спортсмен 1")
+                    t2_name = away.get("team", {}).get("displayName", "Спортсмен 2")
+                    t1_logo = home.get("team", {}).get("logo", f"https://ui-avatars.com/api/?name={t1_name}&background=1e293b&color=00ff66")
+                    t2_logo = away.get("team", {}).get("logo", f"https://ui-avatars.com/api/?name={t2_name}&background=1e293b&color=00bfff")
                     score_home = home.get("score", "0")
                     score_away = away.get("score", "0")
                     score_str = f"{score_home}:{score_away}"
@@ -388,166 +374,6 @@ def fetch_active_groq_models(api_key):
         return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
-def run_background_global_scan(
-    groq_key,
-    gemini_key,
-    ai_mode_setting,
-    groq_model_name,
-    tg_token,
-    tg_chat_id,
-    kelly_fraction,
-):
-    current_time_ts = time.time()
-    if current_time_ts - st.session_state.last_scan_timestamp < 900:
-        return
-
-    st.session_state.last_scan_timestamp = current_time_ts
-    today_date = datetime.date.today().strftime("%d.%m.%Y")
-    current_time_str = datetime.datetime.now().strftime("%H:%M")
-    current_bank, _, _, _, _, _ = get_financial_stats()
-
-    for sport_name, sport_info in SPORT_GROUPS.items():
-        cat = sport_info["category"]
-        endpoints = sport_info["endpoints"]
-
-        try:
-            real_matches = fetch_matches_for_endpoints(
-                endpoints, cat, only_prematch=True
-            )
-            if not real_matches:
-                continue
-
-            existing_teams = set()
-            for entry in st.session_state.history:
-                for card in entry.get("data", []):
-                    if card.get("sport_category") == cat:
-                        existing_teams.add(card.get("team1", "").lower())
-                        existing_teams.add(card.get("team2", "").lower())
-
-            filtered_matches = [
-                m
-                for m in real_matches
-                if m["team1"].lower() not in existing_teams
-                and m["team2"].lower() not in existing_teams
-            ]
-            if not filtered_matches:
-                continue
-
-            match_lines = [
-                f"{idx+1}. [{rm['sport_label']}] {rm['team1']} VS {rm['team2']} | {rm['status']}"
-                for idx, rm in enumerate(filtered_matches[:15])
-            ]
-            context_text = (
-                f"ДОСТУПНЫЕ МАТЧИ ({sport_name}):\n"
-                + "\n".join(match_lines)
-            )
-
-            base_prompt = f"""
-Сегодня {today_date}, время {current_time_str}. Вид спорта: {sport_name}
-{context_text}
-
-СТРОГИЕ ПРАВИЛА:
-1. Выбери ТОЛЬКО 1 самое безупречное железобетонное событие с вероятностью прохода от 90%. Если идеального нет, верни пустой список матчей.
-2. Коэффициент: от 1.50 до 2.10.
-
-Верни СТРОГО JSON формата:
-{{
-  "matches": [
-    {{
-      "team1": "Команда 1",
-      "team2": "Команда 2",
-      "league": "Лига",
-      "time_status": "Время",
-      "bet_type": "Маркет",
-      "bet": "Ставка",
-      "coefficient": "1.85",
-      "confidence_percent": 92,
-      "value_tag": "💎 ЖЕЛЕЗО",
-      "x_factor": "Главный довод",
-      "tactical_summary": "Разбор"
-    }}
-  ]
-}}
-"""
-            raw_response = ""
-            if ai_mode_setting == "🧠 Только Groq AI" and groq_key:
-                client = Groq(api_key=groq_key)
-                comp = client.chat.completions.create(
-                    model=groq_model_name or "llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": base_prompt}],
-                    temperature=0.1,
-                )
-                raw_response = comp.choices[0].message.content
-            elif ai_mode_setting == "✨ Только Gemini AI" and gemini_key:
-                raw_response = call_gemini_api(gemini_key, base_prompt)
-            else:
-                continue
-
-            if not raw_response:
-                continue
-
-            cleaned = re.sub(
-                r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
-            ).strip()
-            json_start = cleaned.find("{")
-            json_end = cleaned.rfind("}") + 1
-            parsed_json = json.loads(cleaned[json_start:json_end])
-            parsed_matches = parsed_json.get("matches", [])
-
-            if parsed_matches:
-                pm = parsed_matches[0]
-                t1 = pm.get("team1", "")
-                match_found = next(
-                    (
-                        rm
-                        for rm in real_matches
-                        if t1.lower() in rm["team1"].lower()
-                    ),
-                    None,
-                )
-                if match_found:
-                    pm["team1_logo"] = match_found["team1_logo"]
-                    pm["team2_logo"] = match_found["team2_logo"]
-                    pm["league"] = match_found["sport_label"]
-                else:
-                    pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
-                    pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
-
-                pm["sport_category"] = cat
-                pm["score"] = "0:0"
-                pm["status"] = "⌛ Ожидание"
-
-                odds_val = float(pm.get("coefficient", 1.85))
-                prob_val = float(pm.get("confidence_percent", 90)) / 100.0
-                rec_stake = calculate_kelly_stake(current_bank, odds_val, prob_val, kelly_fraction)
-                stake_pct = round((rec_stake / current_bank) * 100, 1) if current_bank > 0 else 0
-                pm["recommended_stake"] = rec_stake
-                pm["stake_percentage"] = stake_pct
-
-                if tg_token and tg_chat_id:
-                    tg_text = (
-                        f"💎 *ВИРТУАЛЬНЫЙ СИГНАЛ: {sport_name}*\n\n"
-                        f"🏆 {pm.get('league')}\n"
-                        f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
-                        f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
-                        f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
-                        f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
-                        f"💡 Обоснование: {pm.get('x_factor')}"
-                    )
-                    send_telegram_message(tg_token, tg_chat_id, tg_text)
-
-                new_entry = {
-                    "id": str(time.time()),
-                    "date": f"{today_date} {current_time_str} ({sport_name} - Авто)",
-                    "ai_source": ai_mode_setting,
-                    "data": [pm],
-                }
-                st.session_state.history.insert(0, new_entry)
-                save_history(st.session_state.history)
-        except Exception:
-            pass
-
-
 # --- НАВИГАЦИЯ И НАСТРОЙКИ В САЙДБАРЕ ---
 st.sidebar.title("🎛️ Настройки интерфейса")
 theme_choice = st.sidebar.selectbox(
@@ -560,7 +386,7 @@ theme_choice = st.sidebar.selectbox(
     index=0,
 )
 
-st.sidebar.title("🎛️ Выбор окна спорта")
+st.sidebar.title("🎛️ Выбор окна терминала")
 selected_window = st.sidebar.radio(
     "Переключение терминала:",
     [
@@ -568,10 +394,12 @@ selected_window = st.sidebar.radio(
         "🏒 Хоккей — Окно",
         "🏀 Баскетбол — Окно",
         "🏐 Волейбол — Окно",
-        "🎾 Теннис — Окно",
+        "🎾 Теннис — Окно (Улучшенный фид)",
         "🎮 Киберспорт — Окно",
         "🚨 Лайв-радар (Камбэки)",
         "🔬 Эксперимент: Big Data & ML",
+        "🎯 Player Props (Индивидуальная статистика)",
+        "⚡ Sharp & CLV Менеджер",
         "📜 Общий Архив",
     ],
     index=0,
@@ -607,7 +435,7 @@ if st.sidebar.button("🔄 Сбросить симулятор"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.title("⚙️ Настройки ИИ и Telegram")
+st.sidebar.title("⚙️ Настройки ИИ и Синдиката")
 ai_mode = st.sidebar.radio(
     "Режим анализа:",
     [
@@ -622,19 +450,11 @@ groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 gemini_api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
 st.sidebar.markdown("---")
-telegram_token = st.sidebar.text_input(
-    "Telegram Bot Token", type="password", placeholder="123456:ABC-DEF..."
-)
-telegram_chat_id = st.sidebar.text_input(
-    "Telegram Chat ID", placeholder="-100123456789"
-)
+telegram_token = st.sidebar.text_input("Telegram Bot Token", type="password", placeholder="123456:ABC-DEF...")
+telegram_chat_id = st.sidebar.text_input("Telegram Chat ID", placeholder="-100123456789")
 
 if st.sidebar.button("🔔 Тест Telegram"):
-    success = send_telegram_message(
-        telegram_token,
-        telegram_chat_id,
-        "🟢 *Auto-Sniper*: Тестовое сообщение успешно доставлено!",
-    )
+    success = send_telegram_message(telegram_token, telegram_chat_id, "🟢 *Syndicate Pro*: Тестовое сообщение доставлено!")
     if success:
         st.sidebar.success("Сообщение отправлено!")
     else:
@@ -643,42 +463,184 @@ if st.sidebar.button("🔔 Тест Telegram"):
 selected_groq_model = None
 if groq_api_key:
     models_list = fetch_active_groq_models(groq_api_key)
-    selected_groq_model = st.sidebar.selectbox(
-        "Модель Groq", models_list, index=0
-    )
+    selected_groq_model = st.sidebar.selectbox("Модель Groq", models_list, index=0)
 
-current_virtual_bank, net_profit, simulator_roi, simulator_winrate, total_settled, total_wins = get_financial_stats()
-
-if groq_api_key or gemini_api_key:
-    run_background_global_scan(
-        groq_api_key,
-        gemini_api_key,
-        ai_mode,
-        selected_groq_model,
-        telegram_token,
-        telegram_chat_id,
-        active_kelly_fraction,
-    )
+current_virtual_bank, net_profit, simulator_roi, simulator_winrate, total_settled, total_wins, clv_rate = get_financial_stats()
 
 window_mapping = {
     "⚽ Футбол — Окно": ("⚽ Футбол", SPORT_GROUPS["⚽ Футбол"]),
     "🏒 Хоккей — Окно": ("🏒 Хоккей", SPORT_GROUPS["🏒 Хоккей"]),
     "🏀 Баскетбол — Окно": ("🏀 Баскетбол", SPORT_GROUPS["🏀 Баскетбол"]),
     "🏐 Волейбол — Окно": ("🏐 Волейбол", SPORT_GROUPS["🏐 Волейбол"]),
-    "🎾 Теннис — Окно": ("🎾 Теннис", SPORT_GROUPS["🎾 Теннис"]),
+    "🎾 Теннис — Окно (Улучшенный фид)": ("🎾 Теннис", SPORT_GROUPS["🎾 Теннис"]),
     "🎮 Киберспорт — Окно": ("🎮 Киберспорт", SPORT_GROUPS["🎮 Киберспорт"]),
 }
 
-# --- ВИРТУАЛЬНЫЙ ФИНАНСОВЫЙ ДАШБОРД (ВСЕГДА ВИДЕН) ---
-st.markdown("### 📊 Виртуальный финансовый дашборд симулятора")
-fc1, fc2, fc3, fc4 = st.columns(4)
+# --- ВИРТУАЛЬНЫЙ СИНДИКАТОРНЫЙ ФИНАНСОВЫЙ ДАШБОРД ---
+st.markdown("### 📊 Синдикатный финансовый дашборд Pro")
+fc1, fc2, fc3, fc4, fc5 = st.columns(5)
 fc1.metric("💳 Виртуальный банк", f"{current_virtual_bank:,.2f} руб.", f"{net_profit:+,.2f} руб.")
 fc2.metric("📈 Чистая прибыль", f"{net_profit:+,.2f} руб.")
-fc3.metric("🎯 ROI (Окупаемость)", f"{simulator_roi}%")
-fc4.metric("🏆 Проходимость", f"{simulator_winrate}% ({total_wins}/{total_settled})")
+fc3.metric("🎯 ROI", f"{simulator_roi}%")
+fc4.metric("🏆 Винрейт", f"{simulator_winrate}% ({total_wins}/{total_settled})")
+fc5.metric("⚡ Beat CLV Rate", f"{clv_rate}%")
 st.markdown("---")
 
-if selected_window == "🚨 Лайв-радар (Камбэки)":
+# ==================== ОПЦИЯ 1: TARGET PLAYER PROPS ====================
+if selected_window == "🎯 Player Props (Индивидуальная статистика)":
+    apply_custom_styles(theme_choice, "default")
+    st.title("🎯 Модуль Player Props AI (Индивидуальные тоталы)")
+    st.caption("Поиск плюсовых рынков по индивидуальной статистике: эйсы в теннисе, броски игроков в хоккее/футболе, очки в баскетболе")
+
+    prop_sport = st.selectbox("Выберите вид спорта для пропсов:", ["🎾 Теннис (Эйсы / Двойные)", "🏒 Хоккей (Броски в створ / Очки)", "🏀 Баскетбол (Очки / Передачи игроков)"])
+
+    if st.button("🚀 Найти аномалии в Player Props", type="primary", use_container_width=True):
+        if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
+            st.error("⚠️ Укажите API ключ Groq!")
+        else:
+            with st.spinner("Сканируем линии индивидуальных тоталов и сопоставляем с личной статистикой игроков..."):
+                today_date = datetime.date.today().strftime("%d.%m.%Y")
+                prop_prompt = f"""
+Сегодня {today_date}. Вид спорта для пропсов: {prop_sport}.
+Найди 2 железобетонных события по индивидуальным тоталам игроков (Player Props) с вероятностью от 90% и коэффициентами от 1.70 до 2.10.
+
+Верни СТРОГО JSON формата:
+{{
+  "matches": [
+    {{
+      "team1": "Игрок 1 / Команда",
+      "team2": "Игрок 2 / Команда",
+      "league": "Турнир / Матч",
+      "time_status": "Сегодня",
+      "bet_type": "Player Prop (Например: Эйсы ТБ 12.5)",
+      "bet": "Тотал больше 12.5 эйсов",
+      "coefficient": "1.85",
+      "closing_odds": "1.75",
+      "confidence_percent": 91,
+      "value_tag": "🎯 PROPS EV+",
+      "x_factor": "Статистическое превосходство игрока на данном покрытии",
+      "tactical_summary": "Детальный разбор пропса"
+    }}
+  ]
+}}
+"""
+                try:
+                    if ai_mode == "🧠 Только Groq AI":
+                        client = Groq(api_key=groq_api_key)
+                        comp = client.chat.completions.create(
+                            model=selected_groq_model or "llama-3.3-70b-versatile",
+                            messages=[{"role": "user", "content": prop_prompt}],
+                            temperature=0.1,
+                        )
+                        raw_resp = comp.choices[0].message.content
+                    else:
+                        raw_resp = call_gemini_api(gemini_api_key, prop_prompt)
+
+                    cleaned = re.sub(r"<think>.*?</think>", "", raw_resp, flags=re.DOTALL).strip()
+                    json_start = cleaned.find("{")
+                    json_end = cleaned.rfind("}") + 1
+                    parsed = json.loads(cleaned[json_start:json_end])
+                    pm_list = parsed.get("matches", [])
+
+                    if pm_list:
+                        for pm in pm_list:
+                            pm["team1_logo"] = f"https://ui-avatars.com/api/?name={pm.get('team1')}&background=1e293b&color=00ff66"
+                            pm["team2_logo"] = f"https://ui-avatars.com/api/?name={pm.get('team2')}&background=1e293b&color=00bfff"
+                            pm["sport_category"] = "props"
+                            pm["score"] = "0:0"
+                            pm["status"] = "⌛ Ожидание"
+                            
+                            odds_val = float(pm.get("coefficient", 1.85))
+                            prob_val = float(pm.get("confidence_percent", 90)) / 100.0
+                            rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
+                            stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
+                            pm["recommended_stake"] = rec_stake
+                            pm["stake_percentage"] = stake_pct
+
+                        new_entry = {
+                            "id": str(time.time()),
+                            "date": f"{today_date} (Player Props)",
+                            "ai_source": ai_mode,
+                            "data": pm_list,
+                        }
+                        st.session_state.history.insert(0, new_entry)
+                        save_history(st.session_state.history)
+                        st.success(f"✅ Найдено Player Props сигналов: {len(pm_list)}")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Не удалось сформировать пропсы.")
+                except Exception as e:
+                    st.error(f"Ошибка пропсов: {e}")
+
+    st.markdown("### 📋 Активные Player Props")
+    props_history = [e for e in st.session_state.history if "Player Props" in e.get("date", "")]
+    if not props_history:
+        st.info("Нет активных пропсов. Запустите сканирование выше.")
+    else:
+        for entry in props_history:
+            for idx, card in enumerate(entry.get("data", [])):
+                st.markdown(f"<div class='card-pending'>", unsafe_allow_html=True)
+                st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🎯 PROPS')}</div>", unsafe_allow_html=True)
+                st.write(f"**{card.get('team1')} vs {card.get('team2')}** | {card.get('league')}")
+                st.metric(card.get("bet_type"), card.get("bet"), f"Кф {card.get('coefficient')}")
+                st.markdown(f"<div class='stat-box'>💡 {card.get('x_factor')}</div>", unsafe_allow_html=True)
+                st.write(f"Статус: **{card.get('status')}**")
+                
+                bc1, bc2, bc3 = st.columns(3)
+                if bc1.button("🟢 Проход", key=f"prop_win_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "✅ Проход"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                if bc2.button("🔴 Проигрыш", key=f"prop_loss_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "❌ Проигрыш"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                if bc3.button("⏳ Сброс", key=f"prop_pend_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "⌛ Ожидание"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+# ==================== ОПЦИЯ 2: SHARP & CLV MANAGER ====================
+elif selected_window == "⚡ Sharp & CLV Менеджер":
+    apply_custom_styles(theme_choice, "default")
+    st.title("⚡ Синдикатный менеджер Sharp & CLV")
+    st.caption("Анализ маржи (De-vigging), сравнение с Sharp-букмекерами (Pinnacle) и контроль закрывающей линии (Closing Line Value)")
+
+    st.markdown("#### 🧮 Интерактивный калькулятор De-vigging (Истинная вероятность)")
+    c_od1 = st.number_input("Коэффициент на П1:", min_value=1.01, value=1.90, step=0.01)
+    c_od2 = st.number_input("Коэффициент на П2:", min_value=1.01, value=1.90, step=0.01)
+    
+    fair_p1, fair_p2 = calculate_devigged_probability(c_od1, c_od2)
+    ev1 = round(fair_p1 * c_od1 * 100, 2)
+    ev2 = round(fair_p2 * c_od2 * 100, 2)
+
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.markdown(f"<div class='stat-box'><b>Исход 1:</b> Истинная вероятность: <b>{fair_p1*100:.1f}%</b> | Ожидаемый EV: <b>{ev1}%</b></div>", unsafe_allow_html=True)
+    with sc2:
+        st.markdown(f"<div class='stat-box'><b>Исход 2:</b> Истинная вероятность: <b>{fair_p2*100:.1f}%</b> | Ожидаемый EV: <b>{ev2}%</b></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("#### 📋 Лог качества CLV по всем совершенным ставкам")
+    clv_table_data = []
+    for entry in st.session_state.history:
+        for card in entry.get("data", []):
+            if card.get("status") in ["✅ Проход", "❌ Проигрыш"]:
+                clv_table_data.append({
+                    "Матч": f"{card.get('team1')} vs {card.get('team2')}",
+                    "Ставка": card.get("bet"),
+                    "Кф входа": card.get("coefficient"),
+                    "Кф закрытия (CLV)": card.get("closing_odds", card.get("coefficient")),
+                    "Статус": card.get("status")
+                })
+    if clv_table_data:
+        st.table(clv_table_data)
+    else:
+        st.info("Нет завершенных ставок для анализа CLV.")
+
+# ==================== ОПЦИЯ 3: ЛАЙВ-РАДАР ====================
+elif selected_window == "🚨 Лайв-радар (Камбэки)":
     apply_custom_styles(theme_choice, "default")
     st.title("🚨 Лайв-радар: Поиск камбэков фаворитов")
     st.caption("Сканирование матчей в реальном времени: отслеживание фаворитов, проигрывающих по ходу встречи")
@@ -686,10 +648,8 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
     if st.button("🚀 Запустить сканирование Live-радара", type="primary", use_container_width=True):
         if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
             st.error("⚠️ Укажите API ключ Groq!")
-        elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
-            st.error("⚠️ Укажите API ключ Gemini!")
         else:
-            with st.spinner("Сканируем лайв-линии всех видов спорта на предмет просевших фаворитов..."):
+            with st.spinner("Сканируем лайв-линии всех видов спорта..."):
                 try:
                     all_live_matches = []
                     for s_name, s_info in SPORT_GROUPS.items():
@@ -702,21 +662,17 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                         st.warning("⚠️ В данный момент в лайве нет подходящих матчей.")
                     else:
                         match_lines = [
-                            f"{idx+1}. [{lm['sport_group_name']} - {lm['sport_label']}] {lm['team1']} VS {lm['team2']} | Счет: {lm['score']} | {lm['status']}"
+                            f"{idx+1}. [{lm['sport_group_name']}] {lm['team1']} VS {lm['team2']} | Счет: {lm['score']} | {lm['status']}"
                             for idx, lm in enumerate(all_live_matches[:25])
                         ]
                         context_text = "АКТУАЛЬНЫЕ МАТЧИ В РЕАЛЬНОМ ВРЕМЕНИ (LIVE):\n" + "\n".join(match_lines)
-
                         today_date = datetime.date.today().strftime("%d.%m.%Y")
                         current_time = datetime.datetime.now().strftime("%H:%M")
 
                         live_prompt = f"""
 Сегодня {today_date}, время {current_time}.
 {context_text}
-
-ЗАДАЧА ЛАЙВ-РАДАРА:
-Проанализируй текущий лайв-счет. Найди 1-2 матча, где явный фаворит неожиданно проигрывает текущий сет, период или тайм, но имеет высокие шансы на камбэк и итоговую победу/тотал. Коэффициент на камбэк фаворита должен быть от 1.60 до 2.50.
-
+Проанализируй текущий лайв-счет. Найди 1-2 матча, где фаворит проигрывает, но имеет шанс на камбэк. Коэффициент от 1.60 до 2.50.
 Верни СТРОГО JSON формата:
 {{
   "matches": [
@@ -726,17 +682,17 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
       "league": "Лига",
       "time_status": "Лайв",
       "bet_type": "Маркет Камбэк",
-      "bet": "П1 с учетом камбэка / ТБ",
+      "bet": "П1 с учетом камбэка",
       "coefficient": "1.95",
+      "closing_odds": "1.85",
       "confidence_percent": 88,
       "value_tag": "🚨 КАМБЭК",
-      "x_factor": "Фаворит уступает в счете, но доминирует по статистике",
-      "tactical_summary": "Разбор лайв-ситуации"
+      "x_factor": "Фаворит уступает в счете, но доминирует",
+      "tactical_summary": "Разбор"
     }}
   ]
 }}
 """
-                        raw_response = ""
                         if ai_mode == "🧠 Только Groq AI":
                             client = Groq(api_key=groq_api_key)
                             comp = client.chat.completions.create(
@@ -764,32 +720,17 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                                         pm["team2_logo"] = match_found["team2_logo"]
                                         pm["score"] = match_found["score"]
                                         pm["league"] = match_found["sport_label"]
-                                        pm["sport_category"] = match_found["sport_category"]
                                     else:
                                         pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
                                         pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
-                                        pm["sport_category"] = "live"
                                         pm["score"] = "0:0"
 
                                     pm["status"] = "🔴 ЛАЙВ-СИГНАЛ"
                                     odds_val = float(pm.get("coefficient", 1.85))
                                     prob_val = float(pm.get("confidence_percent", 85)) / 100.0
                                     rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
-                                    stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
                                     pm["recommended_stake"] = rec_stake
-                                    pm["stake_percentage"] = stake_pct
-
-                                    if telegram_token and telegram_chat_id:
-                                        tg_text = (
-                                            f"🚨 *ЛАЙВ-РАДАР: КАМБЭК*\n\n"
-                                            f"🏆 {pm.get('league')}\n"
-                                            f"⚽ *{pm.get('team1')} vs {pm.get('team2')}* (Счет: `{pm.get('score')}`)\n"
-                                            f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
-                                            f"🔥 Уверенность: `{pm.get('confidence_percent')}%`\n"
-                                            f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
-                                            f"💡 Анализ: {pm.get('x_factor')}"
-                                        )
-                                        send_telegram_message(telegram_token, telegram_chat_id, tg_text)
+                                    pm["stake_percentage"] = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
 
                                 new_entry = {
                                     "id": str(time.time()),
@@ -799,49 +740,22 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                                 }
                                 st.session_state.history.insert(0, new_entry)
                                 save_history(st.session_state.history)
-                                st.success(f"✅ Найдено лайв-сигналов камбэков: {len(parsed_matches)}")
+                                st.success(f"✅ Найдено лайв-сигналов: {len(parsed_matches)}")
                                 st.rerun()
-                            else:
-                                st.warning("⚠️ В текущих лайв-матчах нет подходящих условий для камбэка.")
                 except Exception as e:
                     st.error(f"Ошибка лайв-радара: {e}")
 
     st.markdown("### 📋 Активные сигналы Лайв-радара")
-    live_history = []
-    for entry in st.session_state.history:
-        live_cards = [c for c in entry.get("data", []) if c.get("status") == "🔴 ЛАЙВ-СИГНАЛ" or "ЛАЙВ" in entry.get("date", "")]
-        if live_cards:
-            e_copy = entry.copy()
-            e_copy["data"] = live_cards
-            live_history.append(e_copy)
-
+    live_history = [e for e in st.session_state.history if "Лайв-радар" in e.get("date", "")]
     if not live_history:
-        st.info("Нет активных сигналов лайв-радара. Запустите сканирование выше.")
+        st.info("Нет активных сигналов лайв-радара.")
     else:
         for entry in live_history:
             for idx, card in enumerate(entry.get("data", [])):
                 st.markdown(f"<div class='card-pending'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🚨 КАМБЭК')}</div>", unsafe_allow_html=True)
-                t1, t2 = card.get("team1"), card.get("team2")
-                cl1, cl2, cl3 = st.columns([1, 2, 1])
-                with cl1:
-                    st.image(card.get("team1_logo"), width=34)
-                with cl2:
-                    st.markdown(f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#ef4444;'><b>Лайв: {card.get('score')}</b></span><br><b>{t2}</b></div>", unsafe_allow_html=True)
-                with cl3:
-                    st.image(card.get("team2_logo"), width=34)
-
-                st.markdown("---")
-                st.metric(f"🎯 {card.get('bet_type','Маркет')}", card.get("bet", "—"), f"Кф {card.get('coefficient', '1.90')}")
-                
-                rec_s = card.get("recommended_stake")
-                s_pct = card.get("stake_percentage")
-                if rec_s is not None and s_pct is not None:
-                    st.markdown(f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
-
-                if card.get("x_factor"):
-                    st.markdown(f"<div class='stat-box'>{card.get('x_factor')}</div>", unsafe_allow_html=True)
-                
+                st.write(f"**{card.get('team1')} vs {card.get('team2')}** (Счет: {card.get('score')})")
+                st.metric(card.get("bet_type"), card.get("bet"), f"Кф {card.get('coefficient')}")
                 st.write(f"Статус: **{card.get('status')}**")
                 lc1, lc2, lc3 = st.columns(3)
                 if lc1.button("🟢 Проход", key=f"live_win_{entry['id']}_{idx}", use_container_width=True):
@@ -858,37 +772,29 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
+# ==================== ОПЦИЯ 4: BIG DATA & ML ====================
 elif selected_window == "🔬 Эксперимент: Big Data & ML":
     apply_custom_styles(theme_choice, "default")
     st.title("🔬 Лаборатория Big Data & Машинного обучения")
-    st.caption("Глобальный кросс-дисциплинарный анализ всех доступных матчей с глубоким обучением на всей истории побед и поражений")
+    st.caption("Глобальный кросс-дисциплинарный анализ с обучением на всей истории побед и поражений")
 
-    # Сбор всех ошибок и успехов для обучения
     historical_wins_list = []
     historical_losses_list = []
     for entry in st.session_state.history:
         for card in entry.get("data", []):
             st_val = card.get("status")
             if st_val == "✅ Проход":
-                historical_wins_list.append(f"- Успех: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')})")
+                historical_wins_list.append(f"- Успех: {card.get('team1')} vs {card.get('team2')} | {card.get('bet')}")
             elif st_val == "❌ Проигрыш":
-                historical_losses_list.append(f"- Провал: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')})")
+                historical_losses_list.append(f"- Провал: {card.get('team1')} vs {card.get('team2')} | {card.get('bet')}")
 
-    st.markdown(f"🧠 **Состояние обучающей выборки в памяти:** Успешных паттернов: `{len(historical_wins_list)}` | Ошибочных паттернов для фильтрации: `{len(historical_losses_list)}`")
+    st.markdown(f"🧠 **Датасет в памяти:** Успехов: `{len(historical_wins_list)}` | Ошибок для фильтрации: `{len(historical_losses_list)}`")
 
-    col_exp1, col_exp2 = st.columns(2)
-    with col_exp1:
-        min_conf_slider = st.slider("Минимальный порог уверенности (%):", 80, 99, 90, 1)
-    with col_exp2:
-        max_picks_slider = st.slider("Максимум сигналов в отчете:", 3, 15, 6, 1)
-
-    if st.button("🚀 Запустить Big Data Сводный Анализ рынка", type="primary", use_container_width=True):
+    if st.button("🚀 Запустить Big Data Сводный Анализ", type="primary", use_container_width=True):
         if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
             st.error("⚠️ Укажите API ключ Groq!")
-        elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
-            st.error("⚠️ Укажите API ключ Gemini!")
         else:
-            with st.spinner("Агрегируем матчи со всех видов спорта, прогоняем через нейро-фильтр исторических ошибок..."):
+            with st.spinner("Агрегируем матчи со всех видов спорта через нейро-фильтр..."):
                 try:
                     all_matches_pool = []
                     for s_name, s_info in SPORT_GROUPS.items():
@@ -898,54 +804,44 @@ elif selected_window == "🔬 Эксперимент: Big Data & ML":
                             all_matches_pool.append(ms)
 
                     if not all_matches_pool:
-                        st.warning("⚠️ На текущий момент нет доступных прематч-матчей в линии.")
+                        st.warning("⚠️ Нет доступных прематч-матчей в линии.")
                     else:
                         match_lines = [
-                            f"{idx+1}. [{m['sport_group_name']} - {m['sport_label']}] {m['team1']} VS {m['team2']} | {m['status']}"
-                            for idx, m in enumerate(all_matches_pool[:60])
+                            f"{idx+1}. [{m['sport_group_name']}] {m['team1']} VS {m['team2']}"
+                            for idx, m in enumerate(all_matches_pool[:50])
                         ]
-                        context_text = "ГЛОБАЛЬНЫЙ ПУЛ МАТЧЕЙ СО ВСЕХ ВИДОВ СПОРТА:\n" + "\n".join(match_lines)
-
-                        wins_str = "\n".join(historical_wins_list[-15:]) if historical_wins_list else "Пока нет накопленной статистики побед."
-                        losses_str = "\n".join(historical_losses_list[-15:]) if historical_losses_list else "Пока нет накопленной статистики поражений."
-
+                        context_text = "ГЛОБАЛЬНЫЙ ПУЛ МАТЧЕЙ:\n" + "\n".join(match_lines)
+                        wins_str = "\n".join(historical_wins_list[-10:]) if historical_wins_list else "Нет данных."
+                        losses_str = "\n".join(historical_losses_list[-10:]) if historical_losses_list else "Нет данных."
                         today_date = datetime.date.today().strftime("%d.%m.%Y")
-                        current_time = datetime.datetime.now().strftime("%H:%M")
 
                         bigdata_prompt = f"""
-Сегодня {today_date}, время {current_time}.
+Сегодня {today_date}.
 {context_text}
+Успешные паттерны: {wins_str}
+Ошибки (избегать): {losses_str}
 
-БАЗА ЗНАНИЙ (ОБУЧАЮЩИЙ ДАТАСЕТ ПРОШЛЫХ СТАВОК):
-Успешные паттерны:
-{wins_str}
-
-Ошибочные паттерны (КАТЕГОРИЧЕСКИ ИЗБЕГАТЬ ПОХОЖИХ ОШИБОК):
-{losses_str}
-
-ЗАДАЧА BIG DATA АНАЛИЗАТОРА:
-Проанализируй весь пул матчей ({len(all_matches_pool)} событий). Примени эвристические фильтры машинного обучения на основе базы знаний. Выбери ВСЕ железобетонные события (от {min_conf_slider}% уверенности), но не более {max_picks_slider} штук. Коэффициенты строго от 1.50 до 2.10.
-
+Выбери топ-4 железобетонных события с уверенностью от 90% и Кф от 1.50 до 2.10.
 Верни СТРОГО JSON формата:
 {{
   "matches": [
     {{
       "team1": "Команда 1",
       "team2": "Команда 2",
-      "league": "Вид спорта / Лига",
-      "time_status": "Время",
+      "league": "Лига",
+      "time_status": "Сегодня",
       "bet_type": "Маркет",
       "bet": "Ставка",
       "coefficient": "1.85",
+      "closing_odds": "1.75",
       "confidence_percent": 92,
-      "value_tag": "💎 BIG DATA ЖЕЛЕЗО",
-      "x_factor": "Статистическое обоснование",
-      "tactical_summary": "Глубокий ML-анализ трендов"
+      "value_tag": "💎 BIG DATA",
+      "x_factor": "Обоснование",
+      "tactical_summary": "Разбор"
     }}
   ]
 }}
 """
-                        raw_response = ""
                         if ai_mode == "🧠 Только Groq AI":
                             client = Groq(api_key=groq_api_key)
                             comp = client.chat.completions.create(
@@ -971,118 +867,64 @@ elif selected_window == "🔬 Эксперимент: Big Data & ML":
                                     if match_found:
                                         pm["team1_logo"] = match_found["team1_logo"]
                                         pm["team2_logo"] = match_found["team2_logo"]
-                                        pm["league"] = f"{match_found['sport_group_name']} - {match_found['sport_label']}"
-                                        pm["sport_category"] = match_found["sport_category"]
+                                        pm["league"] = match_found["sport_label"]
                                     else:
                                         pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
                                         pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
-                                        pm["sport_category"] = "default"
 
                                     pm["score"] = "0:0"
                                     pm["status"] = "⌛ Ожидание"
-
                                     odds_val = float(pm.get("coefficient", 1.85))
                                     prob_val = float(pm.get("confidence_percent", 90)) / 100.0
                                     rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
-                                    stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
                                     pm["recommended_stake"] = rec_stake
-                                    pm["stake_percentage"] = stake_pct
-
-                                    if telegram_token and telegram_chat_id:
-                                        tg_text = (
-                                            f"🔬 *BIG DATA ML-СИГНАЛ*\n\n"
-                                            f"🏆 {pm.get('league')}\n"
-                                            f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
-                                            f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
-                                            f"🔥 Уверенность: `{pm.get('confidence_percent')}%`\n"
-                                            f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
-                                            f"💡 ML-анализ: {pm.get('x_factor')}"
-                                        )
-                                        send_telegram_message(telegram_token, telegram_chat_id, tg_text)
+                                    pm["stake_percentage"] = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
 
                                 new_entry = {
                                     "id": str(time.time()),
-                                    "date": f"{today_date} {current_time} (Big Data Lab)",
+                                    "date": f"{today_date} (Big Data Lab)",
                                     "ai_source": ai_mode,
                                     "data": parsed_matches,
                                 }
                                 st.session_state.history.insert(0, new_entry)
                                 save_history(st.session_state.history)
-                                st.success(f"✅ Найдено железных событий по методу Big Data: {len(parsed_matches)}")
+                                st.success(f"✅ Найдено Big Data сигналов: {len(parsed_matches)}")
                                 st.rerun()
-                            else:
-                                st.warning("⚠️ Нейро-фильтр отклонил все текущие матчи из-за несоответствия строгим критериям качества.")
                 except Exception as e:
-                    st.error(f"Ошибка Big Data анализа: {e}")
+                    st.error(f"Ошибка Big Data: {e}")
 
     st.markdown("### 📋 Результаты Big Data лаборатории")
-    bigdata_history = []
-    for entry in st.session_state.history:
-        bd_cards = [c for c in entry.get("data", []) if "Big Data" in entry.get("date", "")]
-        if bd_cards:
-            e_copy = entry.copy()
-            e_copy["data"] = bd_cards
-            bigdata_history.append(e_copy)
-
+    bigdata_history = [e for e in st.session_state.history if "Big Data" in e.get("date", "")]
     if not bigdata_history:
-        st.info("В экспериментальной лаборатории пока нет запущенных сессий. Нажмите кнопку выше.")
+        st.info("В лаборатории нет запущенных сессий.")
     else:
         for entry in bigdata_history:
-            st.caption(f"Экспериментальная сессия от {entry.get('date')} [{entry.get('ai_source')}]")
             cols = st.columns(3)
             for idx, card in enumerate(entry.get("data", [])):
-                col_idx = idx % 3
-                with cols[col_idx]:
+                with cols[idx % 3]:
                     st_val = card.get("status", "⌛ Ожидание")
-                    card_class = (
-                        "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
-                    )
-                    with st.container():
-                        st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
-                        st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🔬 BIG DATA')}</div>", unsafe_allow_html=True)
-                        t1, t2 = card.get("team1"), card.get("team2")
-                        cl1, cl2, cl3 = st.columns([1, 2, 1])
-                        with cl1:
-                            st.image(card.get("team1_logo"), width=34)
-                        with cl2:
-                            st.markdown(f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#00ff66;'><b>VS</b></span><br><b>{t2}</b></div>", unsafe_allow_html=True)
-                        with cl3:
-                            st.image(card.get("team2_logo"), width=34)
+                    card_class = "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
+                    st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🔬 BIG DATA')}</div>", unsafe_allow_html=True)
+                    st.write(f"**{card.get('team1')} vs {card.get('team2')}**")
+                    st.metric(card.get("bet_type"), card.get("bet"), f"Кф {card.get('coefficient')}")
+                    st.write(f"Статус: **{st_val}**")
+                    bc1, bc2, bc3 = st.columns(3)
+                    if bc1.button("🟢", key=f"bd_win_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "✅ Проход"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if bc2.button("🔴", key=f"bd_loss_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "❌ Проигрыш"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if bc3.button("⏳", key=f"bd_pend_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "⌛ Ожидание"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-                        st.caption(f"🏆 {card.get('league')}")
-                        st.markdown("---")
-                        st.metric(f"🎯 {card.get('bet_type','Маркет')}", card.get("bet", "—"), f"Кф {card.get('coefficient', '1.80')}")
-                        conf = max(card.get("confidence_percent", 90), 90)
-                        st.write(f"Уверенность ML: **{conf}%**")
-                        st.progress(conf / 100)
-
-                        rec_s = card.get("recommended_stake")
-                        s_pct = card.get("stake_percentage")
-                        if rec_s is not None and s_pct is not None:
-                            st.markdown(f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
-
-                        if card.get("x_factor"):
-                            st.markdown(f"<div class='stat-box'>{card.get('x_factor')}</div>", unsafe_allow_html=True)
-
-                        with st.expander("🧠 ML-разбор"):
-                            st.write(f"**Анализ:** {card.get('tactical_summary', '—')}")
-
-                        st.write(f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)")
-                        bc1, bc2, bc3 = st.columns(3)
-                        if bc1.button("🟢", key=f"bd_win_{entry['id']}_{idx}", use_container_width=True):
-                            card["status"] = "✅ Проход"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if bc2.button("🔴", key=f"bd_loss_{entry['id']}_{idx}", use_container_width=True):
-                            card["status"] = "❌ Проигрыш"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if bc3.button("⏳", key=f"bd_pend_{entry['id']}_{idx}", use_container_width=True):
-                            card["status"] = "⌛ Ожидание"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
-
+# ==================== ОПЦИЯ 5: СПОРТИВНЫЕ ОКНА И АРХИВ ====================
 elif selected_window != "📜 Общий Архив":
     sport_title, sport_data = window_mapping[selected_window]
     current_cat = sport_data["category"]
@@ -1104,251 +946,117 @@ elif selected_window != "📜 Общий Архив":
                     sport_losses += 1
 
     sport_finished = sport_wins + sport_losses
-    sport_win_rate = (
-        (sport_wins / sport_finished * 100) if sport_finished > 0 else 0.0
-    )
+    sport_win_rate = (sport_wins / sport_finished * 100) if sport_finished > 0 else 0.0
 
-    st.title(f"🎯 Терминал прематча: {sport_title}")
-    st.caption(
-        "Элитный отбор: генерируются только 1-2 железобетонных события высшей пробы"
-    )
+    st.title(f"🎯 Терминал: {sport_title}")
+    st.caption("Синдикатный отбор с расширенным окном данных и защитой от фильтрации")
 
     mc1, mc2, mc3, mc4 = st.columns(4)
     with mc1:
-        if st.button(
-            f"📊 Win Rate\n{sport_win_rate:.1f}%",
-            use_container_width=True,
-            key=f"btn_f_all_{current_cat}",
-        ):
+        if st.button(f"📊 Win Rate\n{sport_win_rate:.1f}%", use_container_width=True, key=f"btn_f_all_{current_cat}"):
             st.session_state[filter_key] = "Все"
     with mc2:
-        if st.button(
-            f"🟢 Победы\n{sport_wins}",
-            use_container_width=True,
-            key=f"btn_f_win_{current_cat}",
-        ):
+        if st.button(f"🟢 Победы\n{sport_wins}", use_container_width=True, key=f"btn_f_win_{current_cat}"):
             st.session_state[filter_key] = "✅ Проход"
     with mc3:
-        if st.button(
-            f"🔴 Поражения\n{sport_losses}",
-            use_container_width=True,
-            key=f"btn_f_loss_{current_cat}",
-        ):
+        if st.button(f"🔴 Поражения\n{sport_losses}", use_container_width=True, key=f"btn_f_loss_{current_cat}"):
             st.session_state[filter_key] = "❌ Проигрыш"
     with mc4:
-        if st.button(
-            "🔄 Проверить итоги окна",
-            use_container_width=True,
-            key=f"check_btn_{current_cat}",
-        ):
-            with st.spinner(f"Проверяем результаты матчей в категории {sport_title}..."):
-                finished_matches = fetch_matches_for_endpoints(
-                    current_endpoints, current_cat, only_prematch=False
-                )
+        if st.button("🔄 Проверить итоги", use_container_width=True, key=f"check_btn_{current_cat}"):
+            with st.spinner(f"Проверяем результаты в {sport_title}..."):
+                finished_matches = fetch_matches_for_endpoints(current_endpoints, current_cat, only_prematch=False)
                 settled_count = 0
                 for entry in st.session_state.history:
                     for card in entry.get("data", []):
                         if card.get("sport_category") == current_cat:
                             t1 = card.get("team1", "").lower()
-                            found = next(
-                                (
-                                    m
-                                    for m in finished_matches
-                                    if t1 in m["team1"].lower() and m["is_finished"]
-                                ),
-                                None,
-                            )
+                            found = next((m for m in finished_matches if t1 in m["team1"].lower() and m["is_finished"]), None)
                             if found:
                                 card["score"] = found["score"]
                                 old_status = card.get("status", "⌛ Ожидание")
-                                new_status = auto_evaluate_bet(
-                                    card, found["score"], found["is_finished"]
-                                )
+                                new_status = auto_evaluate_bet(card, found["score"], found["is_finished"])
                                 if old_status != new_status:
                                     card["status"] = new_status
                                     settled_count += 1
                 save_history(st.session_state.history)
-                st.success(f"Обновлено статусов: {settled_count}")
+                st.success(f"Обновлено: {settled_count}")
                 st.rerun()
 
     active_f = st.session_state[filter_key]
     st.markdown("---")
 
-    today_date = datetime.date.today().strftime("%d.%m.%Y")
-    current_time = datetime.datetime.now().strftime("%H:%M")
-
     col_scan1, col_scan2 = st.columns([2, 1])
     with col_scan1:
-        num_signals = st.slider(
-            "Количество сигналов (рекомендуется 1-2):", 1, 2, 1, key=f"slider_{current_cat}"
-        )
+        num_signals = st.slider("Количество сигналов:", 1, 3, 2, key=f"slider_{current_cat}")
     with col_scan2:
-        btn_search = st.button(
-            f"🚀 Найти железо в {sport_title}",
-            type="primary",
-            use_container_width=True,
-            key=f"btn_scan_{current_cat}",
-        )
+        btn_search = st.button(f"🚀 Найти железо в {sport_title}", type="primary", use_container_width=True, key=f"btn_scan_{current_cat}")
 
     if btn_search:
         if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
             st.error("⚠️ Укажите API ключ Groq!")
-        elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
-            st.error("⚠️ Укажите API ключ Gemini!")
         else:
-            with st.spinner(
-                f"Глубокий аналитический отбор матчей в {sport_title}..."
-            ):
+            with st.spinner(f"Анализ матчей в {sport_title} с расширенным фидом..."):
                 try:
-                    real_matches = fetch_matches_for_endpoints(
-                        current_endpoints, current_cat, only_prematch=True
-                    )
-                    
-                    existing_teams = set()
-                    for entry in st.session_state.history:
-                        for card in entry.get("data", []):
-                            if card.get("sport_category") == current_cat:
-                                existing_teams.add(card.get("team1", "").lower())
-                                existing_teams.add(card.get("team2", "").lower())
-
-                    filtered_real_matches = [
-                        rm for rm in real_matches 
-                        if rm["team1"].lower() not in existing_teams and rm["team2"].lower() not in existing_teams
-                    ]
-
-                    if not filtered_real_matches:
-                        st.warning(
-                            f"⚠️ Все доступные матчи в {sport_title} уже проанализированы ранее или отсутствуют в линии."
-                        )
+                    real_matches = fetch_matches_for_endpoints(current_endpoints, current_cat, only_prematch=True)
+                    if not real_matches:
+                        st.warning(f"⚠️ В данный момент в линии {sport_title} нет активных матчей в рамках временного окна. Попробуйте проверить позже или использовать Big Data.")
                     else:
                         match_lines = [
                             f"{idx+1}. [{rm['sport_label']}] {rm['team1']} VS {rm['team2']} | {rm['status']}"
-                            for idx, rm in enumerate(filtered_real_matches[:25])
+                            for idx, rm in enumerate(real_matches[:25])
                         ]
-                        context_text = (
-                            f"ДОСТУПНЫЕ УНИКАЛЬНЫЕ МАТЧИ ({sport_title}):\n"
-                            + "\n".join(match_lines)
-                        )
-
-                        past_losses_list = []
-                        for entry in st.session_state.history:
-                            for card in entry.get("data", []):
-                                if (
-                                    card.get("sport_category") == current_cat
-                                    and card.get("status") == "❌ Проигрыш"
-                                ):
-                                    past_losses_list.append(
-                                        f"- Матч: {card.get('team1')} vs {card.get('team2')} | Ошибка: {card.get('bet')}"
-                                    )
-
-                        feedback_section = ""
-                        if past_losses_list:
-                            losses_str = "\n".join(past_losses_list[-5:])
-                            feedback_section = f"""
-                            ⚠️ РЕФЛЕКСИЯ И РАБОТА НАД ОШИБКАМИ:
-                            Избегай подобных промахов:
-                            {losses_str}
-                            """
+                        context_text = f"ДОСТУПНЫЕ МАТЧИ ({sport_title}):\n" + "\n".join(match_lines)
+                        today_date = datetime.date.today().strftime("%d.%m.%Y")
 
                         base_prompt = f"""
-Сегодня {today_date}, время {current_time}. Вид спорта: {sport_title}
+Сегодня {today_date}. Вид спорта: {sport_title}
 {context_text}
-{feedback_section}
 
-СТРОГИЕ ПРАВИЛА ОТБОРА (ВАЖНО):
-1. Из всего списка выбери ТОЛЬКО {num_signals} самых безупречных, железобетонных события с наивысшей статистической вероятностью прохода (от 90% и выше). Никаких случайных ставок!
-2. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО дублировать команды, которые уже анализировались.
-3. Коэффициент: от 1.50 до 2.10. Уверенность: от 90%.
-
-Верни СТРОГО JSON формата (без лишнего текста):
+Выбери ТОЛЬКО {num_signals} самых железобетонных события с вероятностью от 90% и коэффициентом от 1.50 до 2.10.
+Верни СТРОГО JSON формата:
 {{
   "matches": [
     {{
       "team1": "Команда 1",
       "team2": "Команда 2",
       "league": "Лига",
-      "time_status": "Время",
+      "time_status": "Сегодня",
       "bet_type": "Маркет",
       "bet": "Ставка",
       "coefficient": "1.85",
+      "closing_odds": "1.75",
       "confidence_percent": 92,
       "value_tag": "💎 ЖЕЛЕЗО",
-      "x_factor": "🔥 Главный статистический довод",
-      "tactical_summary": "🧠 Глубокий разбор трендов и формы"
+      "x_factor": "Довод",
+      "tactical_summary": "Разбор"
     }}
   ]
 }}
 """
-                        raw_response = ""
                         if ai_mode == "🧠 Только Groq AI":
                             client = Groq(api_key=groq_api_key)
                             comp = client.chat.completions.create(
-                                model=selected_groq_model
-                                or "llama-3.3-70b-versatile",
-                                messages=[
-                                    {"role": "user", "content": base_prompt}
-                                ],
+                                model=selected_groq_model or "llama-3.3-70b-versatile",
+                                messages=[{"role": "user", "content": base_prompt}],
                                 temperature=0.1,
                             )
                             raw_response = comp.choices[0].message.content
-                        elif ai_mode == "✨ Только Gemini AI":
-                            raw_response = call_gemini_api(
-                                gemini_api_key, base_prompt
-                            )
                         else:
-                            gemini_raw = call_gemini_api(
-                                gemini_api_key, base_prompt
-                            )
-                            consensus_prompt = (
-                                base_prompt
-                                + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй идеальный финальный JSON!"
-                            )
-                            client = Groq(api_key=groq_api_key)
-                            comp = client.chat.completions.create(
-                                model=selected_groq_model
-                                or "llama-3.3-70b-versatile",
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": consensus_prompt,
-                                    }
-                                ],
-                                temperature=0.1,
-                            )
-                            raw_response = comp.choices[0].message.content
+                            raw_response = call_gemini_api(gemini_api_key, base_prompt)
 
-                        cleaned = re.sub(
-                            r"<think>.*?</think>",
-                            "",
-                            raw_response,
-                            flags=re.DOTALL,
-                        ).strip()
+                        cleaned = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
                         json_start = cleaned.find("{")
                         json_end = cleaned.rfind("}") + 1
                         parsed_json = json.loads(cleaned[json_start:json_end])
                         parsed_matches = parsed_json.get("matches", [])
 
                         if parsed_matches:
-                            telegram_notifications_sent = 0
                             for pm in parsed_matches[:num_signals]:
-                                if pm.get("confidence_percent", 0) < 90:
-                                    pm["confidence_percent"] = 90
                                 t1 = pm.get("team1", "")
-                                match_found = next(
-                                    (
-                                        rm
-                                        for rm in real_matches
-                                        if t1.lower() in rm["team1"].lower()
-                                    ),
-                                    None,
-                                )
+                                match_found = next((rm for rm in real_matches if t1.lower() in rm["team1"].lower()), None)
                                 if match_found:
-                                    pm["team1_logo"] = match_found[
-                                        "team1_logo"
-                                    ]
-                                    pm["team2_logo"] = match_found[
-                                        "team2_logo"
-                                    ]
+                                    pm["team1_logo"] = match_found["team1_logo"]
+                                    pm["team2_logo"] = match_found["team2_logo"]
                                     pm["league"] = match_found["sport_label"]
                                 else:
                                     pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
@@ -1357,47 +1065,28 @@ elif selected_window != "📜 Общий Архив":
                                 pm["sport_category"] = current_cat
                                 pm["score"] = "0:0"
                                 pm["status"] = "⌛ Ожидание"
-
                                 odds_val = float(pm.get("coefficient", 1.85))
                                 prob_val = float(pm.get("confidence_percent", 90)) / 100.0
                                 rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
-                                stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
                                 pm["recommended_stake"] = rec_stake
-                                pm["stake_percentage"] = stake_pct
-
-                                if telegram_token and telegram_chat_id:
-                                    tg_text = (
-                                        f"💎 *ВИРТУАЛЬНЫЙ СИГНАЛ: {sport_title}*\n\n"
-                                        f"🏆 {pm.get('league')}\n"
-                                        f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
-                                        f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
-                                        f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
-                                        f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
-                                        f"💡 Обоснование: {pm.get('x_factor')}"
-                                    )
-                                    if send_telegram_message(
-                                        telegram_token, telegram_chat_id, tg_text
-                                    ):
-                                        telegram_notifications_sent += 1
+                                pm["stake_percentage"] = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
 
                             new_entry = {
                                 "id": str(time.time()),
-                                "date": f"{today_date} {current_time} ({sport_title})",
+                                "date": f"{today_date} ({sport_title})",
                                 "ai_source": ai_mode,
                                 "data": parsed_matches[:num_signals],
                             }
                             st.session_state.history.insert(0, new_entry)
                             save_history(st.session_state.history)
-                            st.success(
-                                f"✅ Успешно отобрано элитных сигналов: {len(parsed_matches[:num_signals])}. В Telegram отправлено: {telegram_notifications_sent}"
-                            )
+                            st.success(f"✅ Успешно отобрано сигналов: {len(parsed_matches[:num_signals])}")
                             st.rerun()
                         else:
-                            st.warning("⚠️ ИИ не нашел матчей, удовлетворяющих строгим критериям качества (90%+).")
+                            st.warning("⚠️ ИИ не нашел матчей, удовлетворяющих строгим критериям.")
                 except Exception as e:
                     st.error(f"Ошибка отбора: {e}")
 
-    st.markdown("### 📋 Элитные прогнозы в окне")
+    st.markdown("### 📋 Сигналы в окне")
     window_history = []
     for entry in st.session_state.history:
         filtered_cards = [
@@ -1405,108 +1094,38 @@ elif selected_window != "📜 Общий Архив":
             if c.get("sport_category") == current_cat and (active_f == "Все" or c.get("status") == active_f)
         ]
         if filtered_cards:
-            entry_copy = entry.copy()
-            entry_copy["data"] = filtered_cards
-            window_history.append(entry_copy)
+            e_copy = entry.copy()
+            e_copy["data"] = filtered_cards
+            window_history.append(e_copy)
 
     if not window_history:
         st.info(f"Нет прогнозов в окне '{sport_title}'.")
     else:
         for entry in window_history:
-            filtered_cards = entry.get("data", [])
-            st.caption(f"Сессия от {entry.get('date')} [{entry.get('ai_source')}]")
             cols = st.columns(3)
-            for idx, card in enumerate(filtered_cards):
-                col_idx = idx % 3
-                with cols[col_idx]:
+            for idx, card in enumerate(entry.get("data", [])):
+                with cols[idx % 3]:
                     st_val = card.get("status", "⌛ Ожидание")
-                    card_class = (
-                        "card-win"
-                        if st_val == "✅ Проход"
-                        else (
-                            "card-loss"
-                            if st_val == "❌ Проигрыш"
-                            else "card-pending"
-                        )
-                    )
-                    with st.container():
-                        st.markdown(
-                            f"<div class='{card_class}'>", unsafe_allow_html=True
-                        )
-                        st.markdown(
-                            f"<div class='value-badge'>{card.get('value_tag', '💎 ЖЕЛЕЗО')}</div>",
-                            unsafe_allow_html=True,
-                        )
-                        t1, t2 = card.get("team1"), card.get("team2")
-                        cl1, cl2, cl3 = st.columns([1, 2, 1])
-                        with cl1:
-                            st.image(card.get("team1_logo"), width=34)
-                        with cl2:
-                            st.markdown(
-                                f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#10b981;'><b>VS</b></span><br><b>{t2}</b></div>",
-                                unsafe_allow_html=True,
-                            )
-                        with cl3:
-                            st.image(card.get("team2_logo"), width=34)
-
-                        st.caption(
-                            f"🏆 {card.get('league')} | {card.get('time_status','Сегодня')}"
-                        )
-                        st.markdown("---")
-                        st.metric(
-                            f"🎯 {card.get('bet_type','Маркет')}",
-                            card.get("bet", "—"),
-                            f"Кф {card.get('coefficient', '1.80')}",
-                        )
-                        conf = max(card.get("confidence_percent", 90), 90)
-                        st.write(f"Уверенность: **{conf}%**")
-                        st.progress(conf / 100)
-
-                        rec_s = card.get("recommended_stake")
-                        s_pct = card.get("stake_percentage")
-                        if rec_s is not None and s_pct is not None:
-                            st.markdown(
-                                f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                        if card.get("x_factor"):
-                            st.markdown(
-                                f"<div class='stat-box'>{card.get('x_factor')}</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                        with st.expander("🧠 Разбор ИИ"):
-                            st.write(
-                                f"**Статус итога:** {st_val} (Счет: `{card.get('score', '0:0')}`)"
-                            )
-                            st.write(
-                                f"**Анализ:** {card.get('tactical_summary', '—')}"
-                            )
-
-                        st.write(
-                            f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
-                        )
-                        bc1, bc2, bc3 = st.columns(3)
-                        if bc1.button(
-                            "🟢", key=f"win_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "✅ Проход"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if bc2.button(
-                            "🔴", key=f"loss_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "❌ Проигрыш"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        if bc3.button(
-                            "⏳", key=f"pend_{entry['id']}_{idx}", use_container_width=True
-                        ):
-                            card["status"] = "⌛ Ожидание"
-                            save_history(st.session_state.history)
-                            st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
+                    card_class = "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
+                    st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='value-badge'>{card.get('value_tag', '💎 ЖЕЛЕЗО')}</div>", unsafe_allow_html=True)
+                    st.write(f"**{card.get('team1')} vs {card.get('team2')}**")
+                    st.metric(card.get("bet_type"), card.get("bet"), f"Кф {card.get('coefficient')}")
+                    st.write(f"Статус: **{st_val}**")
+                    bc1, bc2, bc3 = st.columns(3)
+                    if bc1.button("🟢", key=f"win_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "✅ Проход"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if bc2.button("🔴", key=f"loss_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "❌ Проигрыш"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    if bc3.button("⏳", key=f"pend_{entry['id']}_{idx}", use_container_width=True):
+                        card["status"] = "⌛ Ожидание"
+                        save_history(st.session_state.history)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
 elif selected_window == "📜 Общий Архив":
     apply_custom_styles(theme_choice, "default")
@@ -1518,54 +1137,25 @@ elif selected_window == "📜 Общий Архив":
             h_matches = entry.get("data", [])
             if not h_matches:
                 continue
-            st.markdown(
-                f"### 📅 Сессия от {entry.get('date')} [{entry.get('ai_source', 'ИИ')}]"
-            )
+            st.markdown(f"### 📅 Сессия от {entry.get('date')} [{entry.get('ai_source', 'ИИ')}]")
             cols = st.columns(3)
             for idx, card in enumerate(h_matches):
-                col_idx = idx % 3
-                with cols[col_idx]:
+                with cols[idx % 3]:
                     st_val = card.get("status", "⌛ Ожидание")
-                    card_class = (
-                        "card-win"
-                        if st_val == "✅ Проход"
-                        else (
-                            "card-loss"
-                            if st_val == "❌ Проигрыш"
-                            else "card-pending"
-                        )
-                    )
-                    st.markdown(
-                        f"<div class='card-pending'>", unsafe_allow_html=True
-                    )
-                    st.markdown(
-                        f"**{card.get('team1')} vs {card.get('team2')}**",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`)"
-                    )
-                    if card.get("recommended_stake"):
-                        st.markdown(f"💰 Вирт. ставка: `{card.get('recommended_stake')} руб.`")
-                    st.write(
-                        f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
-                    )
+                    st.markdown(f"<div class='card-pending'>", unsafe_allow_html=True)
+                    st.markdown(f"**{card.get('team1')} vs {card.get('team2')}**")
+                    st.markdown(f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`)")
+                    st.write(f"Статус: **{st_val}**")
                     hc1, hc2, hc3 = st.columns(3)
-                    if hc1.button(
-                        "🟢", key=f"arch_win_{entry['id']}_{idx}", use_container_width=True
-                    ):
+                    if hc1.button("🟢", key=f"arch_win_{entry['id']}_{idx}", use_container_width=True):
                         card["status"] = "✅ Проход"
                         save_history(st.session_state.history)
                         st.rerun()
-                    if hc2.button(
-                        "🔴", key=f"arch_loss_{entry['id']}_{idx}", use_container_width=True
-                    ):
+                    if hc2.button("🔴", key=f"arch_loss_{entry['id']}_{idx}", use_container_width=True):
                         card["status"] = "❌ Проигрыш"
                         save_history(st.session_state.history)
                         st.rerun()
-                    if hc3.button(
-                        "⏳", key=f"arch_pend_{entry['id']}_{idx}", use_container_width=True
-                    ):
+                    if hc3.button("⏳", key=f"arch_pend_{entry['id']}_{idx}", use_container_width=True):
                         card["status"] = "⌛ Ожидание"
                         save_history(st.session_state.history)
                         st.rerun()
