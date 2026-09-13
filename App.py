@@ -178,9 +178,9 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
             "- 💡 Обоснование прогноза."
         )
 
-        # ИСПРАВЛЕННАЯ МОДЕЛЬ ЗДЕСЬ
+        # СТАБИЛЬНАЯ АКТУАЛЬНАЯ МОДЕЛЬ
         completion = client.chat.completions.create(
-            model="llama3-70b-8192", 
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )
