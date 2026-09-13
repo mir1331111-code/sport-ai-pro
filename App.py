@@ -252,23 +252,8 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     if only_prematch:
                         if state != "pre":
                             continue
-                        match_date_str = ev.get("date")
-                        if match_date_str:
-                            try:
-                                match_time = datetime.datetime.fromisoformat(
-                                    match_date_str.replace("Z", "+00:00")
-                                )
-                                now_utc = datetime.datetime.now(datetime.timezone.utc)
-                                diff_hours = (match_time - now_utc).total_seconds() / 3600.0
-                                if diff_hours < -0.5 or diff_hours > 12.0:
-                                    continue
-                            except Exception:
-                                pass
                     elif only_live:
                         if state != "in":
-                            continue
-                    else:
-                        if state == "pre":
                             continue
 
                     short_detail = status_type.get("shortDetail", "Сегодня")
@@ -277,8 +262,8 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                         continue
                     home = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
                     away = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
-                    t1_name = home.get("team", {}).get("displayName", "Спортсмен 1")
-                    t2_name = away.get("team", {}).get("displayName", "Спортсмен 2")
+                    t1_name = home.get("team", {}).get("displayName", "Команда 1")
+                    t2_name = away.get("team", {}).get("displayName", "Команда 2")
                     t1_logo = home.get("team", {}).get("logo", f"https://ui-avatars.com/api/?name={t1_name}&background=1e293b&color=00ff66")
                     t2_logo = away.get("team", {}).get("logo", f"https://ui-avatars.com/api/?name={t2_name}&background=1e293b&color=00bfff")
                     score_home = home.get("score", "0")
@@ -306,6 +291,31 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     })
         except Exception:
             pass
+
+    # УМНЫЙ ФАЛЛБЕК (ДЕМО-РЕЖИМ): Если API пустой, подставляем тестовый матч, 
+    # чтобы интерфейс всегда работал и вы могли тестировать сканер и ИИ без ожидания реальных матчей.
+    if not raw_matches:
+        mock_pairs = [
+            ("Арсенал", "Челси"), ("Реал Мадрид", "Барселона"),
+            ("Бавария М", "Боруссия Д"), ("Манчестер Сити", "Ливерпуль"),
+            ("ПСЖ", "Марсель"), ("Милан", "Интер")
+        ]
+        t1, t2 = random.choice(mock_pairs)
+        league_lbl = endpoints_list[0][2] if endpoints_list else "Топовая лига"
+        raw_matches.append({
+            "sport_label": f"{league_lbl} (Демо)",
+            "sport_category": sport_category,
+            "team1": t1,
+            "team2": t2,
+            "team1_logo": f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66",
+            "team2_logo": f"https://ui-avatars.com/api/?name={t2}&background=1e293b&color=00bfff",
+            "status": "⏳ Начало в 22:00 (Тестовый матч)",
+            "is_finished": False,
+            "score": "0:0",
+            "state": "pre",
+            "short_detail": "22:00",
+        })
+
     return raw_matches
 
 
@@ -485,7 +495,6 @@ fc4.metric("🏆 Винрейт", f"{simulator_winrate}% ({total_wins}/{total_se
 fc5.metric("⚡ Beat CLV Rate", f"{clv_rate}%")
 st.markdown("---")
 
-# Применяем стили в зависимости от выбора темы и спорта
 active_sport_cat = "default"
 if selected_window in window_mapping:
     active_sport_cat = window_mapping[selected_window][1]["category"]
@@ -510,70 +519,66 @@ if selected_window in window_mapping:
     if scan_button:
         with st.spinner("Сканируем линии букмекерских API и рассчитываем валуй..."):
             matches = fetch_matches_for_endpoints(sport_data["endpoints"], sport_data["category"], only_prematch=only_pre, only_live=only_live)
-            if not matches:
-                st.warning("В данный момент нет подходящих матчей под выбранный фильтр.")
-            else:
-                analyzed_cards = []
-                for m in matches[:5]: # Ограничиваем пакет для стабильности
-                    prompt = f"""
-                    Ты профессиональный спортивный аналитик и сканер валуйных ставок синдиката.
-                    Проанализируй матч: {m['team1']} против {m['team2']} в лиге {m['sport_label']}.
-                    Статус: {m['status']}. Счет: {m['score']}.
-                    Выдай JSON со следующими полями:
-                    - "recommendation": Сделай выбор ставки (например, "П1", "ТБ 2.5", "Ф1(-1.5)").
-                    - "coefficient": Реалистичный коэффициент букмекерской линии (float, например 1.85).
-                    - "closing_odds": Прогнозируемый закрывающий коэффициент (float, например 1.75).
-                    - "probability": Оценка вероятности прохода от 0.51 до 0.85.
-                    - "analysis": Краткое обоснование в 2 предложения на русском языке.
-                    """
-                    raw_resp = None
-                    if ai_mode in ["🧠 Только Groq AI", "🤖🤖 Консилиум (Groq + Gemini)"] and groq_api_key:
-                        try:
-                            client = Groq(api_key=groq_api_key)
-                            chat_completion = client.chat.completions.create(
-                                messages=[{"role": "user", "content": prompt}],
-                                model=selected_groq_model or "llama-3.3-70b-versatile",
-                                response_format={"type": "json_object"}
-                            )
-                            raw_resp = chat_completion.choices[0].message.content
-                        except Exception:
-                            pass
-                    if not raw_resp and gemini_api_key:
-                        raw_resp = call_gemini_api(gemini_api_key, prompt)
-                    
-                    if raw_resp:
-                        try:
-                            parsed = json.loads(raw_resp)
-                            odds = float(parsed.get("coefficient", 1.90))
-                            prob = float(parsed.get("probability", 0.55))
-                            closing = float(parsed.get("closing_odds", odds))
-                            fair_p1, fair_p2 = calculate_devigged_probability(odds, odds * 0.95)
-                            stake = calculate_kelly_stake(current_virtual_bank, odds, prob, active_kelly_fraction)
-                            
-                            analyzed_cards.append({
-                                **m,
-                                "bet": parsed.get("recommendation", "П1"),
-                                "coefficient": odds,
-                                "closing_odds": closing,
-                                "probability": prob,
-                                "analysis": parsed.get("analysis", "Анализ завершен успешно."),
-                                "recommended_stake": stake,
-                                "status": "⌛ Ожидание"
-                            })
-                        except Exception:
-                            pass
+            analyzed_cards = []
+            for m in matches[:5]:
+                prompt = f"""
+                Ты профессиональный спортивный аналитик и сканер валуйных ставок синдиката.
+                Проанализируй матч: {m['team1']} против {m['team2']} в лиге {m['sport_label']}.
+                Статус: {m['status']}. Счет: {m['score']}.
+                Выдай JSON со следующими полями:
+                - "recommendation": Сделай выбор ставки (например, "П1", "ТБ 2.5", "Ф1(-1.5)").
+                - "coefficient": Реалистичный коэффициент букмекерской линии (float, например 1.85).
+                - "closing_odds": Прогнозируемый закрывающий коэффициент (float, например 1.75).
+                - "probability": Оценка вероятности прохода от 0.51 до 0.85.
+                - "analysis": Краткое обоснование в 2 предложения на русском языке.
+                """
+                raw_resp = None
+                if ai_mode in ["🧠 Только Groq AI", "🤖🤖 Консилиум (Groq + Gemini)"] and groq_api_key:
+                    try:
+                        client = Groq(api_key=groq_api_key)
+                        chat_completion = client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=selected_groq_model or "llama-3.3-70b-versatile",
+                            response_format={"type": "json_object"}
+                        )
+                        raw_resp = chat_completion.choices[0].message.content
+                    except Exception:
+                        pass
+                if not raw_resp and gemini_api_key:
+                    raw_resp = call_gemini_api(gemini_api_key, prompt)
                 
-                if analyzed_cards:
-                    st.session_state.history.insert(0, {
-                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "sport": sport_title,
-                        "data": analyzed_cards
-                    })
-                    save_history(st.session_state.history)
-                    st.success(f"Сканирование завершено! Найдено валуйных сигналов: {len(analyzed_cards)}")
-                    st.rerun()
+                if raw_resp:
+                    try:
+                        parsed = json.loads(raw_resp)
+                        odds = float(parsed.get("coefficient", 1.90))
+                        prob = float(parsed.get("probability", 0.55))
+                        closing = float(parsed.get("closing_odds", odds))
+                        fair_p1, fair_p2 = calculate_devigged_probability(odds, odds * 0.95)
+                        stake = calculate_kelly_stake(current_virtual_bank, odds, prob, active_kelly_fraction)
+                        
+                        analyzed_cards.append({
+                            **m,
+                            "bet": parsed.get("recommendation", "П1"),
+                            "coefficient": odds,
+                            "closing_odds": closing,
+                            "probability": prob,
+                            "analysis": parsed.get("analysis", "Анализ завершен успешно."),
+                            "recommended_stake": stake,
+                            "status": "⌛ Ожидание"
+                        })
+                    except Exception:
+                        pass
+            
+            if analyzed_cards:
+                st.session_state.history.insert(0, {
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "sport": sport_title,
+                    "data": analyzed_cards
+                })
+                save_history(st.session_state.history)
+                st.success(f"Сканирование завершено! Сигналов получено: {len(analyzed_cards)}")
+                st.rerun()
 
-    # Отображение текущего архива по этому виду спорта
     st.markdown("### 📋 Активные сигналы и архив")
     filtered_history = [entry for entry in st.session_state.history if entry.get("sport") == sport_title]
     if not filtered_history:
@@ -583,7 +588,6 @@ if selected_window in window_mapping:
             st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
             cols = st.columns(2)
             for idx, card in enumerate(entry.get("data", [])):
-                # Автоматическая проверка статуса при завершении
                 card["status"] = auto_evaluate_bet(card, card.get("score", "0:0"), card.get("is_finished", False))
                 
                 status_class = "card-pending"
@@ -598,12 +602,11 @@ if selected_window in window_mapping:
                         <span class="value-badge">ВАЛУЙ СИГНАЛ</span>
                         <b>{card['team1']} vs {card['team2']}</b><br>
                         <small>{card['sport_label']} | Статус: {card['status']}</small><hr style="margin:4px 0;">
-                        <b>Прогноз:</b> {card['bet']} | <b>Кэф:</b> {card['coefficient']} | <b> stake:</b> {card['recommended_stake']} руб.<br>
+                        <b>Прогноз:</b> {card['bet']} | <b>Кэф:</b> {card['coefficient']} | <b>Стейк:</b> {card['recommended_stake']} руб.<br>
                         <i>{card['analysis']}</i>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # Ручное управление статусом для теста
                     c1, c2, c3 = st.columns(3)
                     if c1.button("✅ Выиграл", key=f"w_{entry['timestamp']}_{idx}"):
                         card["status"] = "✅ Проход"
@@ -622,8 +625,8 @@ if selected_window in window_mapping:
 elif selected_window == "🚨 Лайв-радар (Камбэки)":
     st.subheader("🚨 Лайв-радар поиска камбэков и давления")
     st.write("Мониторинг матчей, где фаворит уступает в счете по ходу встречи, но владеет инициативой.")
-    if st.button("📡 Сканировать लाइव-ситуации"):
-        st.info("Сканирование лайв-рынков активно. Проверьте вкладки конкретных видов спорта для получения детальных сигналов.")
+    if st.button("📡 Сканировать лайв-ситуации"):
+        st.info("Лайв-модуль активен. Проверьте вкладки видов спорта для получения сигналов.")
 
 elif selected_window == "🔬 Эксперимент: Big Data & ML":
     st.subheader("🔬 Экспериментальный модуль Big Data & Machine Learning")
