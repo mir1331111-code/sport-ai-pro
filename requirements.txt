@@ -1,3 +1,4 @@
 streamlit
+streamlit-autorefresh
 groq
-duckduckgo_search
+requests
