@@ -138,10 +138,10 @@ def apply_custom_styles(sport_type="default"):
         .loss-reason-box {{
             background: rgba(220, 38, 38, 0.15);
             border-left: 3px solid #ef4444;
-            padding: 8px 12px;
+            padding: 10px 14px;
             border-radius: 6px;
-            margin: 6px 0;
-            font-size: 0.82rem;
+            margin: 8px 0;
+            font-size: 0.86rem;
             color: #fca5a5;
         }}
 
@@ -518,9 +518,9 @@ with tab_current:
                         loss_context = ""
                         if failed_predictions:
                             loss_context = (
-                                "\n\n🚨 БЛОК ОБУЧЕНИЯ НА ПРОШЛЫХ ОШИБКАХ (НЕ"
-                                " ПОВТОРЯТЬ!):\n"
-                                + "\n".join(failed_predictions[-6:])
+                                "\n\n🚨 БЛОК ОБУЧЕНИЯ НА ПРОШЛЫХ ОШИБКАХ (ЖЕСТКО"
+                                " НЕ ПОВТОРЯТЬ ЭТИ СЦЕНАРИИ!):\n"
+                                + "\n".join(failed_predictions[-8:])
                             )
 
                         base_prompt = f"""
@@ -532,7 +532,7 @@ with tab_current:
 КРИТИЧЕСКИЕ ПРАВИЛА АНАЛИЗА:
 1. ИСКЛЮЧИТЕЛЬНО предстоящие матчи или текущие LIVE. Никаких завершенных игр!
 2. ЖЕСТКОЕ ТРЕБОВАНИЕ К КОЭФФИЦИЕНТУ: Коэффициент каждого прогноза должен быть СТРОГО ОТ 1.40 и выше! Никаких низких кф (1.10 - 1.35) предлагать нельзя. Если надежный исход идет ниже 1.40, ищи другой маркет с кф >= 1.40 (форы, индивидуальные тоталы, рискованные исходы с валуем).
-3. Разнообразь виды спорта, если в списке есть выбор.
+3. Анализируй прошлые ошибки и учитывай их в текущем отборе, чтобы повысить точность инструмента.
 
 Верни СТРОГО JSON формата:
 {{
@@ -764,8 +764,9 @@ with tab_current:
 
                         if card.get("user_loss_reason"):
                             st.markdown(
-                                "<div class='loss-reason-box'>🚨 **Причина"
-                                f" минуса:** {card.get('user_loss_reason')}</div>",
+                                "<div class='loss-reason-box'>🚨 **Посмертный"
+                                f" разбор ошибки:**"
+                                f" {card.get('user_loss_reason')}</div>",
                                 unsafe_allow_html=True,
                             )
 
@@ -787,24 +788,25 @@ with tab_current:
                         with b_c2:
                             with st.popover("🔴 Минус"):
                                 st.write(
-                                    "🧠 **Обучение ИИ: почему ставка не"
-                                    " зашла?**"
+                                    "🧠 **Фиксация ошибки для обучения"
+                                    " ИИ:**"
                                 )
                                 reason_opt = st.selectbox(
-                                    "Укажите фактор:",
+                                    "Главная причина:",
                                     [
                                         "Срезали красной карточкой",
-                                        "Засушили второй тайм",
-                                        "Не забили пенальти / куча промахов",
-                                        "Ранний гол изменил ход игры",
+                                        "Засушили второй тайм / ушли в оборону",
+                                        "Не реализовали моменты / пенальти",
+                                        "Быстрый гол сломал изначальный план",
+                                        "Тактическая ошибка прогноза",
                                         "Другое",
                                     ],
                                     key=f"pop_sel_{idx}",
                                 )
                                 custom_r = st.text_input(
-                                    "Своя причина:",
+                                    "Детали провала:",
                                     key=f"pop_txt_{idx}",
-                                    placeholder="Например: слили на 90+4'",
+                                    placeholder="Например: пропустили контратаку на 91'",
                                 )
                                 if st.button(
                                     "Сохранить и обучить ИИ",
@@ -815,7 +817,9 @@ with tab_current:
                                         custom_r if custom_r else reason_opt
                                     )
                                     save_history(st.session_state.history)
-                                    st.success("Причина записана в память!")
+                                    st.success(
+                                        "Ошибка зафиксирована в базе знаний!"
+                                    )
                                     st.rerun()
 
 with tab_manual:
@@ -1002,17 +1006,26 @@ with tab_manual:
                         st.error(f"Ошибка при ручном разборе: {ex}")
 
 with tab_history:
-    st.subheader("📜 Архив прогнозов & Центр самообучения ИИ")
+    st.subheader(
+        "📜 Архив прогнозов & Центр глубокой аналитики и самообучения"
+    )
+    st.write(
+        "Здесь собрана полная история матчей. Каждое поражение с вашей"
+        " пометкой попадает в базу знаний ИИ, исключая повторение ошибок в"
+        " будущих сканированиях."
+    )
 
     if failed_predictions:
         with st.expander(
-            "🧠 **Память ошибок (ИИ больше их не повторяет)**", expanded=True
+            "🧠 **Активный пул учтенных ошибок (ИИ опирается на них при"
+            " генерации новых прогнозов)**",
+            expanded=True,
         ):
-            for err in failed_predictions[-5:]:
+            for err in failed_predictions[-6:]:
                 st.markdown(f"- `{err}`")
 
     if not st.session_state.history:
-        st.info("Архив пуст.")
+        st.info("Архив пуст. Проведите сканирование или добавьте матч вручную.")
     else:
         for entry in st.session_state.history:
             h_matches = entry.get("data", [])
@@ -1020,8 +1033,8 @@ with tab_history:
                 continue
 
             st.markdown(
-                f"### 📅 Прогноз от {entry.get('date')}"
-                f" ({entry.get('ai_source', 'ИИ')})"
+                f"### 📅 Сессия от {entry.get('date')}"
+                f" [{entry.get('ai_source', 'ИИ')}]"
             )
 
             cols = st.columns(min(len(h_matches), 2))
@@ -1036,18 +1049,33 @@ with tab_history:
                         )
                         st.markdown(
                             f"🎯 **Ставка:** `{card.get('bet')}` (Кф"
-                            f" {card.get('coefficient')})"
+                            f" `{card.get('coefficient')}`)"
                         )
-                        st.write(f"Результат: **{card.get('status')}**")
+                        st.write(f"Статус: **{card.get('status')}**")
 
+                        # Если это проигрыш и есть причина — выводим детальный блок аналитики
                         if card.get("user_loss_reason"):
-                            st.caption(
-                                f"🚨 Причина: {card.get('user_loss_reason')}"
+                            st.markdown(
+                                "<div class='loss-reason-box'>🚨 **Анализ"
+                                f" провала (Причина):**"
+                                f" {card.get('user_loss_reason')}<br><small>💡"
+                                " <i>Учтено в следующем цикле"
+                                " сканирования</i></small></div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        with st.expander("🔍 Посмотреть исходный разбор"):
+                            st.write(
+                                f"**Обоснование:** {card.get('reason', 'Нет данных')}"
+                            )
+                            st.write(
+                                f"**Ключевой фактор:** {card.get('x_factor', 'Нет данных')}"
                             )
 
                         hc1, hc2, hc3 = st.columns(3)
                         if hc1.button("🟢", key=f"hist_win_{entry['id']}_{idx}"):
                             card["status"] = "✅ Проход"
+                            card.pop("user_loss_reason", None)
                             save_history(st.session_state.history)
                             st.rerun()
                         if hc2.button(
@@ -1060,6 +1088,7 @@ with tab_history:
                             "⏳", key=f"hist_pend_{entry['id']}_{idx}"
                         ):
                             card["status"] = "⌛ Ожидание"
+                            card.pop("user_loss_reason", None)
                             save_history(st.session_state.history)
                             st.rerun()
             st.markdown("---")
