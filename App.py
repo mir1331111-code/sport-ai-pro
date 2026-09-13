@@ -4,7 +4,9 @@ from google import genai
 import streamlit as st
 
 st.set_page_config(
-    title="Auto-Sniper: Точный авто-поиск", page_icon="🤖", layout="centered"
+    page_title="Auto-Sniper: Точный авто-поиск",
+    page_icon="🤖",
+    layout="centered",
 )
 
 st.markdown(
