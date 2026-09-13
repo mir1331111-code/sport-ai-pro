@@ -271,7 +271,47 @@ def call_groq_deep_analyst(groq_api_key, team1, team2, sport_label, odds1, odds2
     return None
 
 
-# --- НАДЕЖНЫЙ ГИБРИДНЫЙ ЗАГРУЗЧИК (API + РЕЗЕРВНЫЙ ПУЛ ДЛЯ ГАРАНТИИ) ---
+# --- СТРОГО СЕГМЕНТИРОВАННЫЕ РЕЗЕРВНЫЕ ПУЛЫ ПО ВИДАМ СПОРТА ---
+FALLBACK_POOLS = {
+    "soccer": [
+        ("Реал Мадрид", "Барселона", "⚽ Ла Лига", 1.95, 3.60),
+        ("Манчестер Сити", "Арсенал", "⚽ АПЛ", 1.85, 3.90),
+        ("Бавария", "Боруссия Д", "⚽ Бундеслига", 1.65, 4.40),
+        ("Ювентус", "Интер", "⚽ Серия А", 2.30, 3.10),
+    ],
+    "hockey": [
+        ("Лада", "Динамо Мн", "🏒 КХЛ", 1.82, 2.05),
+        ("Северсталь", "Динамо Москва", "🏒 КХЛ", 2.15, 1.74),
+        ("Торпедо", "Ак Барс", "🏒 КХЛ", 2.40, 1.62),
+        ("СКА", "ЦСКА", "🏒 КХЛ", 1.90, 2.10),
+    ],
+    "basketball": [
+        ("ВЭФ Рига", "Абшерон", "🏀 Единая лига / Еврокубок", 1.45, 2.70),
+        ("Опава", "Дзики Варшава", "🏀 Единая лига", 1.90, 1.90),
+        ("Маккаби Ришон", "Хапоэль Эйлат", "🏀 Кубок лиги", 1.60, 2.30),
+    ],
+    "tennis": [
+        ("Кристина Буча", "Бьянка Андрееску", "🎾 WTA 500", 1.88, 1.92),
+        ("Эльвина Калиева", "Кайла Дэй", "🎾 WTA Турнир", 2.65, 1.50),
+        ("Татьяна Мария", "Тэйлор Таунсенд", "🎾 WTA Хард", 3.05, 1.38),
+    ],
+    "volleyball": [
+        ("Зенит-Казань", "Динамо Москва", "🏐 Суперлига", 1.42, 2.75),
+        ("Белогорье", "Локомотив НС", "🏐 Суперлига", 1.85, 1.90),
+        ("Динамо-ЛО", "Факел", "🏐 Суперлига", 1.70, 2.10),
+    ],
+    "handball": [
+        ("Барселона", "Киль", "🤾 Лига Чемпионов", 1.40, 3.20),
+        ("ПСЖ", "Магдебург", "🤾 Лига Чемпионов", 1.80, 2.10),
+    ],
+    "esports": [
+        ("Natus Vincere", "FaZe Clan", "🎮 CS2 Blast Premier", 1.65, 2.10),
+        ("Team Spirit", "Vitality", "🎮 CS2 Major", 1.85, 1.90),
+        ("G2 Esports", "Heroic", "🎮 CS2 Pro League", 1.72, 2.05),
+    ],
+}
+
+
 def fetch_matches_from_odds_api(
     endpoints_list,
     sport_category,
@@ -389,19 +429,10 @@ def fetch_matches_from_odds_api(
       except Exception:
         pass
 
-  # ГАРАНТИРОВАННЫЙ РЕЗЕРВНЫЙ ПУЛ (Срабатывает, если API недоступен или пуст, чтобы вы всегда получали матчи с высокой проходимостью)
+  # ГАРАНТИРОВАННЫЙ РЕЗЕРВНЫЙ ПУЛ СТРОГО ПО КАТЕГОРИИ СПОРТА
   if not raw_matches:
-    sample_teams = [
-        ("Лада", "Динамо Мн", "🏒 КХЛ", 1.82, 2.05),
-        ("Северсталь", "Динамо Москва", "🏒 КХЛ", 2.15, 1.74),
-        ("Торпедо", "Ак Барс", "🏒 КХЛ", 2.40, 1.62),
-        ("Реал Мадрид", "Барселона", "⚽ Ла Лига", 1.95, 3.60),
-        ("Манчестер Сити", "Арсенал", "⚽ АПЛ", 1.85, 3.90),
-        ("ВЭФ Рига", "Абшерон", "🏀 Единая лига ВТБ", 1.45, 2.70),
-        ("Опава", "Дзики Варшава", "🏀 Еврокубок", 1.90, 1.90),
-        ("Кристина Буча", "Бьянка Андрееску", "🎾 ATP / WTA", 1.88, 1.92),
-    ]
-    for t1, t2, label, o1, o2 in sample_teams:
+    category_pool = FALLBACK_POOLS.get(sport_category, FALLBACK_POOLS["soccer"])
+    for t1, t2, label, o1, o2 in category_pool:
       p1, p2 = o1, o2
       ai_res = (
           call_groq_deep_analyst(groq_key, t1, t2, label, p1, p2)
@@ -656,7 +687,9 @@ if selected_window == "🌍 Глобальный омниссканер (Все 
       "Многопоточный сканер автоматически собирает матчи, фильтрует валуйные исходы и рассчитывает вероятности победы."
   )
 
-  if st.button("🚀 Запустить глубокое сканирование всех рынков", use_container_width=True):
+  if st.button(
+      "🚀 Запустить глубокое сканирование всех рынков", use_container_width=True
+  ):
     with st.spinner("Сбор матчей, ИИ-анализ вероятностей и расчет валуев..."):
       all_global_matches = []
       for group_name, group_data in SPORT_GROUPS.items():
@@ -692,7 +725,9 @@ if selected_window == "🌍 Глобальный омниссканер (Все 
 
   st.markdown("### 📋 Результаты")
   for entry in [
-      e for e in st.session_state.history if e.get("sport") == "🌍 Глобальный рынок"
+      e
+      for e in st.session_state.history
+      if e.get("sport") == "🌍 Глобальный рынок"
   ]:
     st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
     render_match_cards(entry, "glob")
@@ -708,7 +743,9 @@ elif selected_window == "📥 Ручной инжектор":
     with c2:
       t2 = st.text_input("Гости", "Динамо")
       o2 = st.number_input("Кэф П2", min_value=1.01, value=3.90)
-    sport_lbl = st.selectbox("Спорт", ["⚽ Футбол", "🏒 Хоккей", "🏀 Баскетбол", "🎾 Теннис"])
+    sport_lbl = st.selectbox(
+        "Спорт", ["⚽ Футбол", "🏒 Хоккей", "🏀 Баскетбол", "🎾 Теннис", "🏐 Волейбол"]
+    )
     submitted = st.form_submit_button("⚡ Проанализировать и добавить")
 
     if submitted:
@@ -718,10 +755,16 @@ elif selected_window == "📥 Ручной инжектор":
           else None
       )
       prob = float(ai_res.get("expert_probability", 0.78)) if ai_res else 0.76
-      bet = ai_res.get("recommended_bet", f"Победа 1 ({t1})") if ai_res else f"Победа 1 ({t1})"
+      bet = (
+          ai_res.get("recommended_bet", f"Победа 1 ({t1})")
+          if ai_res
+          else f"Победа 1 ({t1})"
+      )
       coef = o1 if "1" in bet or t1 in bet else o2
       ev = (coef * prob) - 1
-      stake = calculate_kelly_stake(current_virtual_bank, coef, prob, active_kelly_fraction)
+      stake = calculate_kelly_stake(
+          current_virtual_bank, coef, prob, active_kelly_fraction
+      )
 
       card = {
           "sport_label": sport_lbl,
@@ -740,7 +783,9 @@ elif selected_window == "📥 Ручной инжектор":
           "status": "⌛ Ожидание",
           "rec_status": "green",
           "recommended_stake": stake,
-          "analysis": ai_res.get("analysis_text", "Индивидуальный ИИ-анализ.") if ai_res else "Уверенный прогноз.",
+          "analysis": ai_res.get("analysis_text", "Индивидуальный ИИ-анализ.")
+          if ai_res
+          else "Уверенный прогноз.",
       }
       st.session_state.history.insert(
           0,
@@ -763,7 +808,9 @@ elif selected_window in window_mapping:
   sport_title, sport_data = window_mapping[selected_window]
   st.header(f"Терминал: {sport_title}")
 
-  if st.button(f"🚀 Запустить AI-сканирование ({sport_title})", use_container_width=True):
+  if st.button(
+      f"🚀 Запустить AI-сканирование ({sport_title})", use_container_width=True
+  ):
     with st.spinner("Анализ матчей..."):
       matches = fetch_matches_from_odds_api(
           sport_data["endpoints"],
