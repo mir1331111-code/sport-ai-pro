@@ -1,1 +1,1 @@
-pip install streamlit-autorefresh
+rm match_history_pro.json
