@@ -9,8 +9,8 @@ import streamlit as st
 from groq import Groq
 from streamlit_autorefresh import st_autorefresh
 
-# --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ---
-count = st_autorefresh(interval=3600000, key="auto_sniper_refresh")
+# --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ (КАЖДЫЕ 15 МИНУТ) ---
+count = st_autorefresh(interval=900000, key="auto_sniper_refresh")
 
 HISTORY_FILE = "match_history.json"
 
@@ -398,7 +398,8 @@ def run_background_global_scan(
     kelly_fraction,
 ):
     current_time_ts = time.time()
-    if current_time_ts - st.session_state.last_scan_timestamp < 3300:
+    # Интервал уменьшен до 900 секунд (15 минут)
+    if current_time_ts - st.session_state.last_scan_timestamp < 900:
         return
 
     st.session_state.last_scan_timestamp = current_time_ts
