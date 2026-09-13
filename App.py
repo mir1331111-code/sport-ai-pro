@@ -6,7 +6,7 @@ from duckduckgo_search import DDGS
 from groq import Groq
 import streamlit as st
 
-# Файл для постоянного хранения истории
+# Файл для хранения истории
 HISTORY_FILE = "match_history.json"
 
 
@@ -45,19 +45,17 @@ st.markdown(
 if "history" not in st.session_state:
   st.session_state.history = load_history()
 
-# --- БОКОВАЯ ПАНЕЛЬ (Ключ, Выбор Модели, Статистика) ---
+# --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("⚙️ Настройки и Архив")
 groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 
 
-# Функция Динамического получения живых моделей от Groq API
 def fetch_active_groq_models(api_key):
   if not api_key:
     return ["llama-3.3-70b-versatile"]
   try:
     client = Groq(api_key=api_key)
     models = client.models.list()
-    # Собираем только активные ID моделей
     active_ids = [
         m.id
         for m in models.data
@@ -65,13 +63,7 @@ def fetch_active_groq_models(api_key):
     ]
     return active_ids if active_ids else ["llama-3.3-70b-versatile"]
   except Exception:
-    return [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama-3.2-3b-preview",
-        "llama-3.2-1b-preview",
-        "deepseek-r1-distill-llama-70b",
-    ]
+    return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
 selected_model = None
@@ -147,7 +139,6 @@ else:
         save_history(st.session_state.history)
         st.rerun()
 
-
 # --- ГЛАВНЫЙ ЭКРАН ---
 today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
@@ -166,60 +157,78 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
   else:
     with st.spinner("Сканируем спортивные сайты и анализируем матчи..."):
       try:
+        # Усиленный сбор сведений через DDGS
+        search_results = []
         queries = [
-            f"футбол матчи расписание сегодня {today_date}",
-            f"апл ла лига сериал а бундеслига матчи {today_date}",
-            f"flashscore футбол матчи на сегодня",
+            f"футбол сегодня {today_date} матчи расписание",
+            f"чемпионат футбол матчи {today_date}",
+            f"football matches schedule today {today_date}",
         ]
 
-        search_results = []
         with DDGS() as ddgs:
           for q in queries:
             try:
-              results = ddgs.text(q, max_results=3)
-              for r in results:
-                body = r.get("body", "")
+              res_text = ddgs.text(
+                  q, region="ru-ru", timelimit="d", max_results=5
+              )
+              for r in res_text:
+                body = r.get("body") or r.get("snippet") or ""
+                title = r.get("title", "")
                 if body:
-                  search_results.append(body)
+                  search_results.append(f"{title}: {body}")
             except Exception:
-              continue
+              pass
 
-        search_context = "\n".join(search_results)
-        if len(search_context) < 50:
-          search_context = (
-              f"Топ матчи европейских чемпионатов на сегодня ({today_date})"
-          )
+            try:
+              res_news = ddgs.news(
+                  q, region="ru-ru", timelimit="d", max_results=3
+              )
+              for r in res_news:
+                body = r.get("body") or r.get("snippet") or ""
+                title = r.get("title", "")
+                if body:
+                  search_results.append(f"{title}: {body}")
+            except Exception:
+              pass
+
+        search_context = (
+            "\n".join(search_results)
+            if search_results
+            else "Результаты онлайн-поиска временно ограничены."
+        )
 
         client = Groq(api_key=groq_api_key)
 
-        prompt = (
-            f"Сегодня {today_date}, текущее время {current_time} МСК.\n"
-            "Вот данные, найденные в интернете по сегодняшним"
-            f" матчам:\n{search_context}\n\n"
-            "Ты профессиональный спортивный аналитик и каппер. "
-            f"Выбери ровно {num_signals} реальных матча из найденных данных, "
-            "которые играются сегодня. Запрещено выдумывать команды. "
-            "Для каждого сигнала укажи строго по пунктам:\n"
-            "- ⏱ Время начала (МСК).\n"
-            "- 🌐 Турнир / Лига.\n"
-            "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный).\n"
-            "- 🏆 Событие (Команда 1 - Команда 2).\n"
-            "- 🎯 Ставка и коэффициент.\n"
-            "- 📈 Вероятность прохода (в %).\n"
-            "- 💡 Обоснование прогноза."
-        )
+        # Гибкий и универсальный промпт
+        prompt = f"""
+Сегодня {today_date}, текущее время {current_time} МСК.
 
-        # Формируем очередь моделей для автоперебора (Fallback Queue)
+Вот данные из поисковой выдачи:
+{search_context}
+
+Инструкция:
+Ты профессиональный спортивный аналитик и каппер. 
+Выбери {num_signals} наиболее актуальных и важных футбольных матчей на сегодня ({today_date}). 
+Если поисковых данных мало, опирайся на свои знания реальных матчей главных европейских турниров (АПЛ, Ла Лига, Серия А, Бундеслига, РПЛ и др.), завершающих тур в этот день.
+
+Для каждого из {num_signals} сигналов выведи строгую структуру:
+- ⏱ **Время начала (МСК)**:
+- 🌐 **Турнир / Лига**:
+- ⚠️ **Уровень риска**: (🟢 Ультра-надежный или 🟡 Стандартный)
+- 🏆 **Матч**: (Команда 1 - Команда 2)
+- 🎯 **Прогноз и коэффициент**:
+- 📈 **Вероятность прохода**: (в %)
+- 💡 **Аналитика и обоснование**:
+"""
+
         models_to_try = []
         if selected_model:
           models_to_try.append(selected_model)
 
-        # Добавляем резервный список актуальных моделей
         fallback_list = [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
             "llama-3.2-3b-preview",
-            "llama-3.2-1b-preview",
             "deepseek-r1-distill-llama-70b",
         ]
         for m in fallback_list:
@@ -229,7 +238,6 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
         response_text = None
         last_error = None
 
-        # Перебираем модели по очереди, пока одна из них не сработает
         for model_name in models_to_try:
           try:
             completion = client.chat.completions.create(
@@ -238,7 +246,7 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
                 temperature=0.7,
             )
             response_text = completion.choices[0].message.content
-            break  # Успешный запрос — выходим из цикла
+            break
           except Exception as err:
             last_error = err
             continue
@@ -260,11 +268,9 @@ if st.button("🚀 Найти матчи и сделать прогноз чер
       except Exception as e:
         st.error(f"Ошибка при обработке: {e}")
 
-# Отображение последнего результата
 if st.session_state.history:
   st.markdown("---")
   st.subheader("🔥 Последний свежий прогноз")
   latest = st.session_state.history[0]
   st.info(f"Дата запроса: {latest['date']} | Статус: **{latest['status']}**")
   st.write(latest["content"])
-  
