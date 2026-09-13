@@ -31,7 +31,7 @@ def save_history(history_data):
 
 
 st.set_page_config(
-    page_title="Auto-Sniper: Smart Deduplicated AI", page_icon="🎯", layout="wide"
+    page_title="Auto-Sniper: Smart AI Hub", page_icon="🎯", layout="wide"
 )
 
 if "history" not in st.session_state:
@@ -62,20 +62,19 @@ def apply_dynamic_background(sport_type="default"):
   bg_url = DEFAULT_STADIUM_BGS.get(
       sport_type, DEFAULT_STADIUM_BGS["default"]
   )
-  st.markdown(
-      f"""
+  css_style = """
     <style>
-        .stApp {{
-            background: linear-gradient(rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.92)), url("{bg_url}");
+        .stApp {
+            background: linear-gradient(rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.92)), url("__BG_URL__");
             background-size: cover;
             background-attachment: fixed;
             background-position: center;
-        }}
-        .block-container {{ padding-top: 1rem; padding-bottom: 2rem; }}
-        div[data-testid="stMetricValue"] {{ font-size: 1.25rem; color: #00FF66; font-weight: bold; }}
-        div[data-testid="stMetricLabel"] {{ font-size: 0.8rem; opacity: 0.8; }}
+        }
+        .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+        div[data-testid="stMetricValue"] { font-size: 1.25rem; color: #00FF66; font-weight: bold; }
+        div[data-testid="stMetricLabel"] { font-size: 0.8rem; opacity: 0.8; }
         
-        .value-badge {{
+        .value-badge {
             background: linear-gradient(135deg, #059669 0%, #10b981 100%);
             color: white;
             padding: 4px 10px;
@@ -84,8 +83,8 @@ def apply_dynamic_background(sport_type="default"):
             font-size: 0.8rem;
             display: inline-block;
             margin-bottom: 8px;
-        }}
-        .score-badge {{
+        }
+        .score-badge {
             background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
             color: white;
             padding: 4px 10px;
@@ -94,23 +93,21 @@ def apply_dynamic_background(sport_type="default"):
             font-size: 0.85rem;
             display: inline-block;
             margin-bottom: 8px;
-        }}
-        .stat-box {{
+        }
+        .stat-box {
             background-color: rgba(30, 41, 59, 0.7);
             border-left: 4px solid #00FF66;
             padding: 8px 12px;
             border-radius: 4px;
             margin: 6px 0;
             font-size: 0.85rem;
-        }}
+        }
     </style>
-    """,
-      unsafe_allow_html=True,
-  )
+    """.replace("__BG_URL__", bg_url)
+  st.markdown(css_style, unsafe_allow_html=True)
 
 
 def determine_match_phase(status_str, state_str):
-  """Определение фазы матча: 'до перерыва' или 'после перерыва'"""
   s = status_str.lower()
   if state_str == "pre":
     return "до перерыва"
@@ -209,7 +206,6 @@ def fetch_all_sports_matches():
     except Exception:
       pass
 
-  # Балансировка по видам спорта
   categorized = {}
   for m in raw_matches:
     cat = m["sport_category"]
@@ -274,7 +270,6 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-# Инициализация фоновой темы
 initial_bg_cat = "default"
 if st.session_state.history and st.session_state.history[0].get("data"):
   initial_bg_cat = st.session_state.history[0]["data"][0].get(
@@ -402,7 +397,7 @@ with tab_current:
     num_signals = st.slider("Количество событий для разбора:", 1, 4, 2)
   with c_input2:
     btn_search = st.button(
-        f"🚀 Сканировать Линию", type="primary", use_container_width=True
+        "🚀 Сканировать Линию", type="primary", use_container_width=True
     )
 
   if btn_search:
@@ -422,7 +417,6 @@ with tab_current:
         try:
           real_matches = fetch_all_sports_matches()
 
-          # ФИЛЬТРАЦИЯ ПОВТОРОВ ПО ФАЗАМ (До перерыва / После перерыва)
           analyzed_phases = set()
           for item in st.session_state.history:
             for card in item.get("data", []):
@@ -440,7 +434,6 @@ with tab_current:
             pair_key = f"{t1_k}_vs_{t2_k}"
             phase = rm["game_phase"]
 
-            # Исключаем если match+phase уже был проанализирован ранее или повторился в текущей выдаче
             if (
                 pair_key not in seen_in_batch
                 and (pair_key, phase) not in analyzed_phases
@@ -598,4 +591,14 @@ with tab_current:
           st.session_state.history.insert(0, new_entry)
           save_history(st.session_state.history)
 
-          apply_dynamic_background(
+          apply_dynamic_background(first_sport_cat)
+          st.success("Новый уникальный разбор сформирован без дубликатов!")
+
+        except Exception as e:
+          st.error(f"Ошибка генерации: {e}")
+
+  if st.session_state.history:
+    latest = st.session_state.history[0]
+    matches_data = latest.get("data", [])
+
+    
