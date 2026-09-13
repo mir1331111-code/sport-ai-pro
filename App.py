@@ -3,10 +3,10 @@ import json
 import os
 import re
 import time
-from duckduckgo_search import DDGS
-from groq import Groq
 import requests
 import streamlit as st
+from duckduckgo_search import DDGS
+from groq import Groq
 
 HISTORY_FILE = "match_history.json"
 
@@ -144,13 +144,15 @@ def fetch_all_sports_matches():
   return real_matches
 
 
-# --- ФУНКЦИЯ ЗАПРОСА К GEMINI API ---
 def call_gemini_api(api_key, prompt_text):
   url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
   headers = {"Content-Type": "application/json"}
   payload = {
       "contents": [{"parts": [{"text": prompt_text}]}],
-      "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
+      "generationConfig": {
+          "temperature": 0.2,
+          "responseMimeType": "application/json",
+      },
   }
   try:
     res = requests.post(url, json=payload, headers=headers, timeout=12)
@@ -162,7 +164,7 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-# --- БОКОВАЯ ПАНЕЛЬ (КЛЮЧИ ДВУХ ИИ) ---
+# --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.title("⚙️ Интеллект ИИ (Двухъядерный)")
 groq_api_key = st.sidebar.text_input("1. Ключ Groq API", type="password")
 gemini_api_key = st.sidebar.text_input("2. Ключ Gemini API", type="password")
@@ -190,7 +192,7 @@ if groq_api_key:
   models_list = fetch_active_groq_models(groq_api_key)
   selected_groq_model = st.sidebar.selectbox("Модель Groq", models_list, index=0)
 
-# --- РАСЧЕТ СТАТИСТИКИ И РАБОТЫ НАД ОШИБКАМИ ---
+# --- РАСЧЕТ СТАТИСТИКИ ---
 total_wins = 0
 total_losses = 0
 total_pending = 0
@@ -342,12 +344,10 @@ with tab_current:
           parsed_json = None
           used_ai = "Single AI"
 
-          # 1. Если есть ОБА ключа — делаем КОНСИЛИУМ
           if groq_api_key and gemini_api_key:
             used_ai = "🤖🤖 Консенсус Groq + Gemini"
             gemini_raw = call_gemini_api(gemini_api_key, base_prompt)
 
-            # Передаем мнение Gemini в Groq для утверждения общего решения
             consensus_prompt = (
                 base_prompt
                 + f"\n\nМнение модели Gemini:\n{gemini_raw}\nСинтезируй общее"
@@ -363,7 +363,6 @@ with tab_current:
             )
             raw_response = comp.choices[0].message.content
 
-          # 2. Если только Groq
           elif groq_api_key:
             used_ai = "🧠 Groq AI"
             client = Groq(api_key=groq_api_key)
@@ -375,7 +374,6 @@ with tab_current:
             )
             raw_response = comp.choices[0].message.content
 
-          # 3. Если только Gemini
           else:
             used_ai = "✨ Gemini AI"
             raw_response = call_gemini_api(gemini_api_key, base_prompt)
@@ -431,7 +429,7 @@ with tab_current:
         except Exception as e:
           st.error(f"Ошибка анализа: {e}")
 
-  # Отображение ПОСЛЕДНЕГО сигнала
+  # Отображение ПОСЛЕДНИХ прогнозов
   if st.session_state.history:
     latest = st.session_state.history[0]
     matches_data = latest.get("data", [])
@@ -451,10 +449,11 @@ with tab_current:
             )
 
             if card.get("score_changed"):
+              prev_sc = card.get("prev_score", "0:0")
+              curr_sc = card.get("score", "0:0")
               st.markdown(
-                  f"<div class='score-badge'>🔥 ГОЛ / СЧЕТ ИЗМЕНИЛСЯ:"
-                  f" {card.get('prev_score','0:0')} ➔"
-                  f" {card.get('score','0:0')}</div>",
+                  f"<div class='score-badge'>🔥 ГОЛ / СЧЕТ ИЗМЕНИЛСЯ: {prev_sc}"
+                  f" ➔ {curr_sc}</div>",
                   unsafe_allow_html=True,
               )
 
@@ -462,10 +461,11 @@ with tab_current:
             with c_l1:
               st.image(card.get("team1_logo"), width=44)
             with c_l2:
+              score_val = card.get("score", "0:0")
               st.markdown(
                   f"<div style='text-align: center; font-size:"
                   f" 0.85rem;'><b>{t1}</b><br><span style='color:#00FF66;"
-                  f" font-size:1.1rem;'><b>{card.get('score','0:0')}</b></span><br><b>{t2}</b></div>",
+                  f" font-size:1.1rem;'><b>{score_val}</b></span><br><b>{t2}</b></div>",
                   unsafe_allow_html=True,
               )
             with c_l3:
@@ -510,7 +510,7 @@ with tab_current:
               save_history(st.session_state.history)
               st.rerun()
 
-# --- ВКЛАДКА 2: ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ АРХИВ ---
+# --- ВКЛАДКА 2: ИСТОРИЯ ---
 with tab_history:
   st.subheader("📜 Красивая история всех прогнозов и динамика счетов")
 
@@ -526,7 +526,6 @@ with tab_history:
     for entry in st.session_state.history:
       h_matches = entry.get("data", [])
 
-      # Фильтрация элементов
       filtered_matches = []
       for card in h_matches:
         st_val = card.get("status", "⌛ Ожидание")
@@ -551,10 +550,11 @@ with tab_history:
         with cols[col_idx]:
           with st.container(border=True):
             if card.get("score_changed"):
+              prev_sc = card.get("prev_score", "0:0")
+              curr_sc = card.get("score", "0:0")
               st.markdown(
-                  f"<div class='score-badge'>🔥 СЧЕТ ИЗМЕНИЛСЯ:"
-                  f" {card.get('prev_score','0:0')} ➔"
-                  f" {card.get('score','0:0')}</div>",
+                  f"<div class='score-badge'>🔥 СЧЕТ ИЗМЕНИЛСЯ: {prev_sc} ➔"
+                  f" {curr_sc}</div>",
                   unsafe_allow_html=True,
               )
 
@@ -562,10 +562,13 @@ with tab_history:
             with c_l1:
               st.image(card.get("team1_logo"), width=40)
             with c_l2:
+              team1_name = card.get("team1", "")
+              team2_name = card.get("team2", "")
+              score_val = card.get("score", "0:0")
               st.markdown(
                   f"<div style='text-align: center; font-size: 0.8rem;'>"
-                  f"<b>{card.get('team1')}</b><br><span style='color:#00FF66;"
-                  f" font-size:1rem;'><b>{card.get('score','0:0')}</b></span><br><b>{card.get('team2')}</b></div>",
+                  f"<b>{team1_name}</b><br><span style='color:#00FF66;"
+                  f" font-size:1rem;'><b>{score_val}</b></span><br><b>{team2_name}</b></div>",
                   unsafe_allow_html=True,
               )
             with c_l3:
@@ -593,4 +596,5 @@ with tab_history:
               save_history(st.session_state.history)
               st.rerun()
             if hc3.button("⏳", key=f"hist_pend_{entry['id']}_{idx}"):
-              card["stat
+              card["status"] = "⌛ Ожидание"
+              save_history(s
