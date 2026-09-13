@@ -30,7 +30,7 @@ def save_history(history_data):
 
 
 st.set_page_config(
-    page_title="Auto-Sniper: Sport Terminals", page_icon="🎯", layout="wide"
+    page_title="Auto-Sniper: Elite Terminals", page_icon="🎯", layout="wide"
 )
 
 if "history" not in st.session_state:
@@ -48,7 +48,6 @@ SPORT_GROUPS = {
             ("soccer", "fra.1", "Лига 1 (Франция)"),
             ("soccer", "rus.1", "РПЛ (Россия)"),
             ("soccer", "uefa.champions", "Лига Чемпионов УЕФА"),
-            ("soccer", "usa.1", "MLS (США)"),
         ],
     },
     "🏒 Хоккей": {
@@ -57,15 +56,12 @@ SPORT_GROUPS = {
             ("hockey", "nhl", "НХЛ (США/Канада)"),
             ("hockey", "khl", "КХЛ (Россия/Европа)"),
             ("hockey", "vhl", "ВХЛ (Россия)"),
-            ("hockey", "mhl", "МХЛ (Россия)"),
-            ("hockey", "shl", "Шведская лига (SHL)"),
         ],
     },
     "🏀 Баскетбол": {
         "category": "basketball",
         "endpoints": [
             ("basketball", "nba", "НБА (США)"),
-            ("basketball", "mens-college-basketball", "NCAA Баскетбол (США)"),
             ("basketball", "euroleague", "Евролига (Европа)"),
             ("basketball", "russia.1", "Единая лига ВТБ (Россия)"),
         ],
@@ -74,16 +70,6 @@ SPORT_GROUPS = {
         "category": "volleyball",
         "endpoints": [
             ("volleyball", "volleyball", "Волейбол (Международный)"),
-            (
-                "volleyball",
-                "womens-college-volleyball",
-                "NCAA Волейбол (Женщины)",
-            ),
-            (
-                "volleyball",
-                "mens-college-volleyball",
-                "NCAA Волейбол (Мужчины)",
-            ),
         ],
     },
     "🎾 Теннис": {
@@ -95,30 +81,21 @@ SPORT_GROUPS = {
     },
 }
 
-# ДИНАМИЧЕСКИЕ НАБОРЫ ФОНОВ
 SPORT_BACKGROUNDS = {
     "soccer": [
         "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=1920&q=80",
     ],
     "basketball": [
         "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1574623452334-1e0ac2bbfccb?auto=format&fit=crop&w=1920&q=80",
     ],
     "hockey": [
         "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1515703407324-5f753ff420b8?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?auto=format&fit=crop&w=1920&q=80",
     ],
     "volleyball": [
         "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1593341646782-e0b495cffc6d?auto=format&fit=crop&w=1920&q=80",
     ],
     "tennis": [
         "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80",
-        "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?auto=format&fit=crop&w=1920&q=80",
     ],
     "default": [
         "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"
@@ -126,115 +103,80 @@ SPORT_BACKGROUNDS = {
 }
 
 
-def apply_custom_styles(sport_type="default"):
-    bgs = SPORT_BACKGROUNDS.get(sport_type, SPORT_BACKGROUNDS["default"])
-    bg1, bg2, bg3 = bgs[0], bgs[1 % len(bgs)], bgs[2 % len(bgs)]
-
-    css_code = f"""
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
-        @keyframes slideShow {{
-            0% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}"); }}
-            38% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg2}"); }}
-            72% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg3}"); }}
-            100% {{ background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}"); }}
-        }}
-
-        .stApp {{
-            animation: slideShow 25s infinite ease-in-out;
-            background-size: cover;
-            background-attachment: fixed;
-            background-position: center;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }}
-        .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
-
-        .stButton>button {{
-            border-radius: 8px;
-            font-weight: 700;
-            font-size: 0.81rem;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }}
-        .stButton>button:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0,255,102,0.25);
-        }}
-
-        .value-badge {{
-            background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
-            color: #ffffff;
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-weight: 700;
-            font-size: 0.7rem;
-            display: inline-block;
-            margin-bottom: 6px;
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
-        }}
-        
-        .stat-box {{
-            background: rgba(30, 41, 59, 0.6);
-            border-left: 3px solid #00FF66;
-            padding: 8px 10px;
-            border-radius: 6px;
-            margin: 6px 0;
-            font-size: 0.8rem;
-            color: #f1f5f9;
-        }}
-
-        .card-win {{
-            background: rgba(16, 185, 129, 0.12) !important;
-            border: 2px solid #00FF66 !important;
-            box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
-            border-radius: 12px;
-            padding: 10px;
-        }}
-        .card-loss {{
-            background: rgba(239, 68, 68, 0.12) !important;
-            border: 2px solid #EF4444 !important;
-            box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
-            border-radius: 12px;
-            padding: 10px;
-        }}
-        .card-pending {{
-            background: rgba(30, 41, 59, 0.75) !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-            border-radius: 12px;
-            padding: 10px;
-        }}
-
-        @keyframes goalPulse {{
-            0% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.8); }}
-            70% {{ transform: scale(1.01); box-shadow: 0 0 0 12px rgba(0, 255, 102, 0); }}
-            100% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 255, 102, 0); }}
-        }}
-        .goal-highlight {{
-            animation: goalPulse 1.5s infinite;
-        }}
-    </style>
-    """
+def apply_custom_styles(theme_mode, sport_type="default"):
+    if theme_mode == "☀️ Светлая тема":
+        css_code = """
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+            .stApp { background-color: #f8fafc !important; color: #0f172a; font-family: 'Plus Jakarta Sans', sans-serif; }
+            .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }
+            .value-badge { background: #2563eb; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.7rem; display: inline-block; margin-bottom: 6px; }
+            .stat-box { background: #f1f5f9; border-left: 3px solid #10b981; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #334155; }
+            .card-win { background: #ecfdf5 !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 10px; }
+            .card-loss { background: #fef2f2 !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 10px; }
+            .card-pending { background: #ffffff !important; border: 1px solid #cbd5e1 !important; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        </style>
+        """
+    elif theme_mode == "🌙 Строгая темная":
+        css_code = """
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+            .stApp { background-color: #0b0f19 !important; color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif; }
+            .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }
+            .value-badge { background: #2563eb; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.7rem; display: inline-block; margin-bottom: 6px; }
+            .stat-box { background: #1e293b; border-left: 3px solid #00ff66; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #f1f5f9; }
+            .card-win { background: rgba(16, 185, 129, 0.12) !important; border: 2px solid #00ff66 !important; border-radius: 12px; padding: 10px; }
+            .card-loss { background: rgba(239, 68, 68, 0.12) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 10px; }
+            .card-pending { background: #1e293b !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px; padding: 10px; }
+        </style>
+        """
+    else:
+        bgs = SPORT_BACKGROUNDS.get(sport_type, SPORT_BACKGROUNDS["default"])
+        bg1 = bgs[0]
+        css_code = f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+            .stApp {{
+                background-image: linear-gradient(rgba(8, 12, 22, 0.92), rgba(8, 12, 22, 0.96)), url("{bg1}");
+                background-size: cover; background-attachment: fixed; background-position: center;
+                color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif;
+            }}
+            .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
+            .value-badge {{ background: #2563eb; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.7rem; display: inline-block; margin-bottom: 6px; }}
+            .stat-box {{ background: rgba(30, 41, 59, 0.6); border-left: 3px solid #00FF66; padding: 8px 10px; border-radius: 6px; margin: 6px 0; font-size: 0.8rem; color: #f1f5f9; }}
+            .card-win {{ background: rgba(16, 185, 129, 0.12) !important; border: 2px solid #00FF66 !important; border-radius: 12px; padding: 10px; }}
+            .card-loss {{ background: rgba(239, 68, 68, 0.12) !important; border: 2px solid #EF4444 !important; border-radius: 12px; padding: 10px; }}
+            .card-pending {{ background: rgba(30, 41, 59, 0.75) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px; padding: 10px; }}
+        </style>
+        """
     st.markdown(css_code, unsafe_allow_html=True)
+
+
+def send_telegram_message(token, chat_id, text):
+    if not token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    try:
+        resp = requests.post(url, json=payload, timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
 
 
 def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=False):
     today_str = datetime.date.today().strftime("%Y%m%d")
     raw_matches = []
-
     for sport, league, label in endpoints_list:
         url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates={today_str}"
         try:
             resp = requests.get(url, timeout=3)
             if resp.status_code == 200:
                 data = resp.json()
-                events = data.get("events", [])
-
-                for ev in events:
+                for ev in data.get("events", []):
                     comp = ev.get("competitions", [{}])[0]
                     status_type = ev.get("status", {}).get("type", {})
                     state = status_type.get("state", "pre")
-
                     if only_prematch:
                         if state != "pre":
                             continue
@@ -250,7 +192,7 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                                 diff_hours = (
                                     match_time - now_utc
                                 ).total_seconds() / 3600.0
-                                if diff_hours < -0.1 or diff_hours > 1.0:
+                                if diff_hours < -0.1 or diff_hours > 2.0:
                                     continue
                             except Exception:
                                 pass
@@ -262,7 +204,6 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     competitors = comp.get("competitors", [])
                     if len(competitors) < 2:
                         continue
-
                     home = next(
                         (c for c in competitors if c.get("homeAway") == "home"),
                         competitors[0],
@@ -271,14 +212,12 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                         (c for c in competitors if c.get("homeAway") == "away"),
                         competitors[1],
                     )
-
                     t1_name = home.get("team", {}).get(
                         "displayName", "Команда 1"
                     )
                     t2_name = away.get("team", {}).get(
                         "displayName", "Команда 2"
                     )
-
                     t1_logo = home.get("team", {}).get(
                         "logo",
                         f"https://ui-avatars.com/api/?name={t1_name}&background=1e293b&color=00ff66",
@@ -287,11 +226,9 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                         "logo",
                         f"https://ui-avatars.com/api/?name={t2_name}&background=1e293b&color=00bfff",
                     )
-
                     score_home = home.get("score", "0")
                     score_away = away.get("score", "0")
                     score_str = f"{score_home}:{score_away}"
-
                     is_finished = state == "post"
                     status_str = (
                         f"🏁 Завершен ({score_str})"
@@ -310,11 +247,9 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                         "is_finished": is_finished,
                         "score": score_str,
                         "state": state,
-                        "game_phase": "прематч (до 1 часа)",
                     })
         except Exception:
             pass
-
     return raw_matches
 
 
@@ -326,7 +261,6 @@ def auto_evaluate_bet(card, score_str, is_finished):
         sh, sa = int(parts[0]), int(parts[1])
         total = sh + sa
         bet = str(card.get("bet", "")).upper()
-
         if "ТБ" in bet:
             val = float(re.findall(r"\d+\.?\d*", bet)[0])
             return "✅ Проход" if total > val else "❌ Проигрыш"
@@ -352,7 +286,7 @@ def call_gemini_api(api_key, prompt_text):
     payload = {
         "contents": [{"parts": [{"text": prompt_text}]}],
         "generationConfig": {
-            "temperature": 0.2,
+            "temperature": 0.1,
             "responseMimeType": "application/json",
         },
     }
@@ -383,7 +317,18 @@ def fetch_active_groq_models(api_key):
         return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
-# НАВИГАЦИЯ ПО ОКНАМ
+# --- НАВИГАЦИЯ И НАСТРОЙКИ В САЙДБАРЕ ---
+st.sidebar.title("🎛️ Настройки интерфейса")
+theme_choice = st.sidebar.selectbox(
+    "Тема оформления:",
+    [
+        "🎨 Динамический спорт-фон",
+        "☀️ Светлая тема",
+        "🌙 Строгая темная",
+    ],
+    index=0,
+)
+
 st.sidebar.title("🎛️ Выбор окна спорта")
 selected_window = st.sidebar.radio(
     "Переключение терминала:",
@@ -399,7 +344,7 @@ selected_window = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.title("⚙️ Настройки ИИ")
+st.sidebar.title("⚙️ Настройки ИИ и Telegram")
 ai_mode = st.sidebar.radio(
     "Режим анализа:",
     [
@@ -412,6 +357,25 @@ ai_mode = st.sidebar.radio(
 
 groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 gemini_api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
+
+st.sidebar.markdown("---")
+telegram_token = st.sidebar.text_input(
+    "Telegram Bot Token", type="password", placeholder="123456:ABC-DEF..."
+)
+telegram_chat_id = st.sidebar.text_input(
+    "Telegram Chat ID", placeholder="-100123456789"
+)
+
+if st.sidebar.button("🔔 Тест Telegram"):
+    success = send_telegram_message(
+        telegram_token,
+        telegram_chat_id,
+        "🟢 *Auto-Sniper*: Тестовое сообщение успешно доставлено!",
+    )
+    if success:
+        st.sidebar.success("Сообщение отправлено!")
+    else:
+        st.sidebar.error("Ошибка отправки. Проверьте Token и Chat ID.")
 
 selected_groq_model = None
 if groq_api_key:
@@ -432,7 +396,7 @@ if selected_window != "📜 Общий Архив":
     sport_title, sport_data = window_mapping[selected_window]
     current_cat = sport_data["category"]
     current_endpoints = sport_data["endpoints"]
-    apply_custom_styles(current_cat)
+    apply_custom_styles(theme_choice, current_cat)
 
     filter_key = f"filter_{current_cat}"
     if filter_key not in st.session_state:
@@ -455,11 +419,9 @@ if selected_window != "📜 Общий Архив":
 
     st.title(f"🎯 Терминал прематча: {sport_title}")
     st.caption(
-        f"Собственная аналитика для {sport_title} (Кф $\\ge$ 1.40 | Уверенность"
-        " $\\ge$ 85% | До 1 часа до матча)"
+        "Элитный отбор: генерируются только 1-2 железобетонных события высшей пробы"
     )
 
-    # ИНТЕРАКТИВНЫЕ МЕТРИКИ-ФИЛЬТРЫ
     mc1, mc2, mc3, mc4 = st.columns(4)
     with mc1:
         if st.button(
@@ -493,7 +455,6 @@ if selected_window != "📜 Общий Архив":
                     current_endpoints, current_cat, only_prematch=False
                 )
                 settled_count = 0
-
                 for entry in st.session_state.history:
                     for card in entry.get("data", []):
                         if card.get("sport_category") == current_cat:
@@ -508,7 +469,6 @@ if selected_window != "📜 Общий Архив":
                             )
                             if found:
                                 card["score"] = found["score"]
-                                card["time_status"] = found["status"]
                                 old_status = card.get("status", "⌛ Ожидание")
                                 new_status = auto_evaluate_bet(
                                     card, found["score"], found["is_finished"]
@@ -516,17 +476,11 @@ if selected_window != "📜 Общий Архив":
                                 if old_status != new_status:
                                     card["status"] = new_status
                                     settled_count += 1
-
                 save_history(st.session_state.history)
-                st.success(f"Обновлено статусов в окне: {settled_count}")
+                st.success(f"Обновлено статусов: {settled_count}")
                 st.rerun()
 
     active_f = st.session_state[filter_key]
-    if active_f != "Все":
-        st.info(
-            f"🔍 Активен фильтр: показаны только события со статусом **{active_f}**. Нажмите на «Win Rate» выше, чтобы сбросить."
-        )
-
     st.markdown("---")
 
     today_date = datetime.date.today().strftime("%d.%m.%Y")
@@ -534,12 +488,13 @@ if selected_window != "📜 Общий Архив":
 
     col_scan1, col_scan2 = st.columns([2, 1])
     with col_scan1:
+        # Снижено до 1-2 сигналов по умолчанию для максимального качества отбора
         num_signals = st.slider(
-            "Количество прематч-сигналов:", 1, 5, 2, key=f"slider_{current_cat}"
+            "Количество сигналов (рекомендуется 1-2):", 1, 2, 1, key=f"slider_{current_cat}"
         )
     with col_scan2:
         btn_search = st.button(
-            f"🚀 Сканировать {sport_title}",
+            f"🚀 Найти железо в {sport_title}",
             type="primary",
             use_container_width=True,
             key=f"btn_scan_{current_cat}",
@@ -552,27 +507,40 @@ if selected_window != "📜 Общий Архив":
             st.error("⚠️ Укажите API ключ Gemini!")
         else:
             with st.spinner(
-                f"Сканируем линию прематча ({sport_title}) с учетом анализа прошлых минусов..."
+                f"Глубокий аналитический отбор матчей в {sport_title}..."
             ):
                 try:
                     real_matches = fetch_matches_for_endpoints(
                         current_endpoints, current_cat, only_prematch=True
                     )
-                    if not real_matches:
+                    
+                    # Исключаем матчи, которые уже есть в истории, чтобы не дублировать
+                    existing_teams = set()
+                    for entry in st.session_state.history:
+                        for card in entry.get("data", []):
+                            if card.get("sport_category") == current_cat:
+                                existing_teams.add(card.get("team1", "").lower())
+                                existing_teams.add(card.get("team2", "").lower())
+
+                    filtered_real_matches = [
+                        rm for rm in real_matches 
+                        if rm["team1"].lower() not in existing_teams and rm["team2"].lower() not in existing_teams
+                    ]
+
+                    if not filtered_real_matches:
                         st.warning(
-                            f"⚠️ В данный момент нет матчей в {sport_title} в диапазоне до 1 часа до начала."
+                            f"⚠️ Все доступные матчи в {sport_title} уже проанализированы ранее или отсутствуют в линии."
                         )
                     else:
                         match_lines = [
                             f"{idx+1}. [{rm['sport_label']}] {rm['team1']} VS {rm['team2']} | {rm['status']}"
-                            for idx, rm in enumerate(real_matches[:20])
+                            for idx, rm in enumerate(filtered_real_matches[:25])
                         ]
                         context_text = (
-                            f"ДОСТУПНЫЕ МАТЧИ ({sport_title}, до 1 часа до начала):\n"
+                            f"ДОСТУПНЫЕ УНИКАЛЬНЫЕ МАТЧИ ({sport_title}):\n"
                             + "\n".join(match_lines)
                         )
 
-                        # --- АВТОМАТИЧЕСКИЙ СБОР МИНУСОВ ДЛЯ ОБУЧЕНИЯ ИИ ---
                         past_losses_list = []
                         for entry in st.session_state.history:
                             for card in entry.get("data", []):
@@ -581,50 +549,43 @@ if selected_window != "📜 Общий Архив":
                                     and card.get("status") == "❌ Проигрыш"
                                 ):
                                     past_losses_list.append(
-                                        f"- Матч: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')}) | Счет: {card.get('score')} | Обоснование прошлой ошибки: {card.get('reason', 'Нет данных')}"
+                                        f"- Матч: {card.get('team1')} vs {card.get('team2')} | Ошибка: {card.get('bet')}"
                                     )
 
                         feedback_section = ""
                         if past_losses_list:
-                            # Берем последние 5 ошибок для контекста
                             losses_str = "\n".join(past_losses_list[-5:])
                             feedback_section = f"""
-                            ⚠️ РЕФЛЕКСИЯ И РАБОТА НАД ОШИБКАМИ (ПРОШЛЫЕ МИНУСЫ):
-                            Ниже приведены прошлые неверные прогнозы по этому спорту. Проанализируй их и НЕ ДОПУСКАЙ аналогичных ошибок (избегай ложных маркеров, переоценки фаворитов или ошибочного чтения формы команд):
+                            ⚠️ РЕФЛЕКСИЯ И РАБОТА НАД ОШИБКАМИ:
+                            Избегай подобных промахов:
                             {losses_str}
                             """
 
                         base_prompt = f"""
-Сегодня {today_date}, время {current_time} МСК.
-Вид спорта: {sport_title}
+Сегодня {today_date}, время {current_time}. Вид спорта: {sport_title}
 {context_text}
-
 {feedback_section}
 
-КРИТЕРИИ ПРЕМАТЧ-АНАЛИЗА:
-1. Выбирай только из предложенного списка матчей для {sport_title}.
-2. Проанализируй мотивацию, форму и статистику, учитывая прошлые ошибки.
-3. КОЭФФИЦИЕНТ: строго от 1.40 и выше.
-4. УВЕРЕННОСТЬ ИИ: строго от 85% и выше.
+СТРОГИЕ ПРАВИЛА ОТБОРА (ВАЖНО):
+1. Из всего списка выбери ТОЛЬКО {num_signals} самых безупречных, железобетонных события с наивысшей статистической вероятностью прохода (от 90% и выше). Никаких случайных ставок!
+2. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО дублировать команды, которые уже анализировались.
+3. Коэффициент: от 1.50 до 2.10. Уверенность: от 90%.
 
-Верни СТРОГО JSON формата:
+Верни СТРОГО JSON формата (без лишнего текста):
 {{
   "matches": [
     {{
-      "team1": "Команда 1 / Игрок 1",
-      "team2": "Команда 2 / Игрок 2",
+      "team1": "Команда 1",
+      "team2": "Команда 2",
       "league": "Лига",
-      "time_status": "Время начала",
-      "game_phase": "прематч (до 1 часа)",
-      "score": "0:0",
+      "time_status": "Время",
       "bet_type": "Маркет",
       "bet": "Ставка",
       "coefficient": "1.85",
-      "confidence_percent": 88,
-      "value_tag": "💎 Валуй",
-      "x_factor": "🔥 Ключевой фактор (с учетом работы над ошибками)",
-      "tactical_summary": "🧠 Анализ",
-      "reason": "Обоснование"
+      "confidence_percent": 92,
+      "value_tag": "💎 ЖЕЛЕЗО",
+      "x_factor": "🔥 Главный статистический довод",
+      "tactical_summary": "🧠 Глубокий разбор трендов и формы"
     }}
   ]
 }}
@@ -638,7 +599,7 @@ if selected_window != "📜 Общий Архив":
                                 messages=[
                                     {"role": "user", "content": base_prompt}
                                 ],
-                                temperature=0.2,
+                                temperature=0.1,
                             )
                             raw_response = comp.choices[0].message.content
                         elif ai_mode == "✨ Только Gemini AI":
@@ -651,7 +612,7 @@ if selected_window != "📜 Общий Архив":
                             )
                             consensus_prompt = (
                                 base_prompt
-                                + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй финальный JSON с учетом работы над ошибками!"
+                                + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй идеальный финальный JSON!"
                             )
                             client = Groq(api_key=groq_api_key)
                             comp = client.chat.completions.create(
@@ -663,7 +624,7 @@ if selected_window != "📜 Общий Архив":
                                         "content": consensus_prompt,
                                     }
                                 ],
-                                temperature=0.2,
+                                temperature=0.1,
                             )
                             raw_response = comp.choices[0].message.content
 
@@ -679,10 +640,10 @@ if selected_window != "📜 Общий Архив":
                         parsed_matches = parsed_json.get("matches", [])
 
                         if parsed_matches:
+                            telegram_notifications_sent = 0
                             for pm in parsed_matches[:num_signals]:
-                                if pm.get("confidence_percent", 0) < 85:
-                                    pm["confidence_percent"] = 85
-
+                                if pm.get("confidence_percent", 0) < 90:
+                                    pm["confidence_percent"] = 90
                                 t1 = pm.get("team1", "")
                                 match_found = next(
                                     (
@@ -692,7 +653,6 @@ if selected_window != "📜 Общий Архив":
                                     ),
                                     None,
                                 )
-
                                 if match_found:
                                     pm["team1_logo"] = match_found[
                                         "team1_logo"
@@ -702,15 +662,26 @@ if selected_window != "📜 Общий Архив":
                                     ]
                                     pm["league"] = match_found["sport_label"]
                                 else:
-                                    pm["team1_logo"] = (
-                                        f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
-                                    )
+                                    pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
                                     pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
 
                                 pm["sport_category"] = current_cat
                                 pm["score"] = "0:0"
-                                pm["game_phase"] = "прематч (до 1 часа)"
                                 pm["status"] = "⌛ Ожидание"
+
+                                if telegram_token and telegram_chat_id:
+                                    tg_text = (
+                                        f"💎 *ЭЛИТНЫЙ СИГНАЛ: {sport_title}*\n\n"
+                                        f"🏆 {pm.get('league')}\n"
+                                        f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
+                                        f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
+                                        f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
+                                        f"💡 Обоснование: {pm.get('x_factor')}"
+                                    )
+                                    if send_telegram_message(
+                                        telegram_token, telegram_chat_id, tg_text
+                                    ):
+                                        telegram_notifications_sent += 1
 
                             new_entry = {
                                 "id": str(time.time()),
@@ -721,18 +692,15 @@ if selected_window != "📜 Общий Архив":
                             st.session_state.history.insert(0, new_entry)
                             save_history(st.session_state.history)
                             st.success(
-                                f"✅ Сканирование с обучением по {sport_title} завершено!"
+                                f"✅ Успешно отобрано элитных сигналов: {len(parsed_matches[:num_signals])}. В Telegram отправлено: {telegram_notifications_sent}"
                             )
                             st.rerun()
                         else:
-                            st.warning(
-                                "⚠️ ИИ не смог сформировать сигнал под заданные фильтры."
-                            )
+                            st.warning("⚠️ ИИ не нашел матчей, удовлетворяющих строгим критериям качества (90%+).")
                 except Exception as e:
-                    st.error(f"Ошибка: {e}")
+                    st.error(f"Ошибка отбора: {e}")
 
-    st.markdown("### 📋 Прематч-прогнозы в окне")
-
+    st.markdown("### 📋 Элитные прогнозы в окне")
     window_history = []
     for entry in st.session_state.history:
         filtered_cards = [
@@ -745,61 +713,55 @@ if selected_window != "📜 Общий Архив":
             window_history.append(entry_copy)
 
     if not window_history:
-        st.info(
-            f"Нет прогнозов по выбранному фильтру ('{active_f}') в окне '{sport_title}'."
-        )
+        st.info(f"Нет прогнозов в окне '{sport_title}'.")
     else:
         for entry in window_history:
             filtered_cards = entry.get("data", [])
-            st.caption(
-                f"Сессия от {entry.get('date')} [{entry.get('ai_source')}]"
-            )
+            st.caption(f"Сессия от {entry.get('date')} [{entry.get('ai_source')}]")
             cols = st.columns(3)
             for idx, card in enumerate(filtered_cards):
                 col_idx = idx % 3
                 with cols[col_idx]:
                     st_val = card.get("status", "⌛ Ожидание")
-                    
-                    if st_val == "✅ Проход":
-                        card_class = "card-win goal-highlight"
-                    elif st_val == "❌ Проигрыш":
-                        card_class = "card-loss"
-                    else:
-                        card_class = "card-pending"
-
+                    card_class = (
+                        "card-win"
+                        if st_val == "✅ Проход"
+                        else (
+                            "card-loss"
+                            if st_val == "❌ Проигрыш"
+                            else "card-pending"
+                        )
+                    )
                     with st.container():
-                        st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
-                        
                         st.markdown(
-                            f"<div class='value-badge'>{card.get('value_tag', '💎 Валуй')}</div>",
+                            f"<div class='{card_class}'>", unsafe_allow_html=True
+                        )
+                        st.markdown(
+                            f"<div class='value-badge'>{card.get('value_tag', '💎 ЖЕЛЕЗО')}</div>",
                             unsafe_allow_html=True,
                         )
-
                         t1, t2 = card.get("team1"), card.get("team2")
                         cl1, cl2, cl3 = st.columns([1, 2, 1])
                         with cl1:
                             st.image(card.get("team1_logo"), width=34)
                         with cl2:
                             st.markdown(
-                                f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#00FF66;'><b>VS</b></span><br><b>{t2}</b></div>",
+                                f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#10b981;'><b>VS</b></span><br><b>{t2}</b></div>",
                                 unsafe_allow_html=True,
                             )
                         with cl3:
                             st.image(card.get("team2_logo"), width=34)
 
                         st.caption(
-                            f"🏆 {card.get('league')} |"
-                            f" {card.get('time_status','Сегодня')}"
+                            f"🏆 {card.get('league')} | {card.get('time_status','Сегодня')}"
                         )
                         st.markdown("---")
-
                         st.metric(
                             f"🎯 {card.get('bet_type','Маркет')}",
                             card.get("bet", "—"),
                             f"Кф {card.get('coefficient', '1.80')}",
                         )
-
-                        conf = max(card.get("confidence_percent", 85), 85)
+                        conf = max(card.get("confidence_percent", 90), 90)
                         st.write(f"Уверенность: **{conf}%**")
                         st.progress(conf / 100)
 
@@ -809,16 +771,17 @@ if selected_window != "📜 Общий Архив":
                                 unsafe_allow_html=True,
                             )
 
-                        with st.expander("🧠 Как событие попало сюда и что произошло"):
-                            st.write(f"**Статус итога:** {st_val} (Счет: `{card.get('score', '0:0')}`)")
-                            st.write(f"**Ключевой фактор:** {card.get('x_factor', '—')}")
-                            st.write(f"**Разбор ИИ:** {card.get('tactical_summary', '—')}")
-                            st.write(f"**Обоснование отбора:** {card.get('reason', '—')}")
+                        with st.expander("🧠 Разбор ИИ"):
+                            st.write(
+                                f"**Статус итога:** {st_val} (Счет: `{card.get('score', '0:0')}`)"
+                            )
+                            st.write(
+                                f"**Анализ:** {card.get('tactical_summary', '—')}"
+                            )
 
                         st.write(
                             f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
                         )
-
                         bc1, bc2, bc3 = st.columns(3)
                         if bc1.button(
                             "🟢", key=f"win_{entry['id']}_{idx}", use_container_width=True
@@ -838,16 +801,11 @@ if selected_window != "📜 Общий Архив":
                             card["status"] = "⌛ Ожидание"
                             save_history(st.session_state.history)
                             st.rerun()
-                            
                         st.markdown("</div>", unsafe_allow_html=True)
 
 else:
-    apply_custom_styles("default")
+    apply_custom_styles(theme_choice, "default")
     st.title("📜 Общий архив всех прогнозов")
-    st.write(
-        "Здесь собраны все сессии и прогнозы по всем видам спорта. Вы можете управлять их статусами."
-    )
-
     if not st.session_state.history:
         st.info("Архив пуст.")
     else:
@@ -855,30 +813,36 @@ else:
             h_matches = entry.get("data", [])
             if not h_matches:
                 continue
-
             st.markdown(
-                f"### 📅 Сессия от {entry.get('date')}"
-                f" [{entry.get('ai_source', 'ИИ')}]"
+                f"### 📅 Сессия от {entry.get('date')} [{entry.get('ai_source', 'ИИ')}]"
             )
-
             cols = st.columns(3)
             for idx, card in enumerate(h_matches):
                 col_idx = idx % 3
                 with cols[col_idx]:
                     st_val = card.get("status", "⌛ Ожидание")
-                    card_class = "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
-                    
-                    st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                    card_class = (
+                        "card-win"
+                        if st_val == "✅ Проход"
+                        else (
+                            "card-loss"
+                            if st_val == "❌ Проигрыш"
+                            else "card-pending"
+                        )
+                    )
+                    st.markdown(
+                        f"<div class='card-pending'>", unsafe_allow_html=True
+                    )
                     st.markdown(
                         f"**{card.get('team1')} vs {card.get('team2')}**",
                         unsafe_allow_html=True,
                     )
                     st.markdown(
-                        f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`"
-                        f" | `{card.get('confidence_percent', 85)}%`)"
+                        f"🎯 `{card.get('bet')}` (Кф `{card.get('coefficient')}`)"
                     )
-                    st.write(f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)")
-
+                    st.write(
+                        f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)"
+                    )
                     hc1, hc2, hc3 = st.columns(3)
                     if hc1.button(
                         "🟢", key=f"arch_win_{entry['id']}_{idx}", use_container_width=True
