@@ -15,12 +15,6 @@ if 'history' not in st.session_state:
 st.sidebar.header("⚙️ Настройки и Статистика")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
-# Оставляем только рабочие актуальные модели 1.5 с поддержкой поиска
-selected_model = st.sidebar.selectbox(
-    "Модель Gemini",
-    ["gemini-1.5-flash", "gemini-1.5-pro"]
-)
-
 if api_key:
     genai.configure(api_key=api_key)
 
@@ -56,10 +50,10 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner(f"Ищем матчи через модель {selected_model} (Flashscore/SofaScore)..."):
+        with st.spinner("Ищем матчи через gemini-1.5-flash (Flashscore/SofaScore)..."):
             try:
                 model = genai.GenerativeModel(
-                    model_name=selected_model,
+                    model_name='gemini-1.5-flash',
                     tools='google_search_retrieval'
                 )
                 
