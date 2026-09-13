@@ -398,7 +398,6 @@ def run_background_global_scan(
     kelly_fraction,
 ):
     current_time_ts = time.time()
-    # Интервал уменьшен до 900 секунд (15 минут)
     if current_time_ts - st.session_state.last_scan_timestamp < 900:
         return
 
@@ -572,6 +571,7 @@ selected_window = st.sidebar.radio(
         "🎾 Теннис — Окно",
         "🎮 Киберспорт — Окно",
         "🚨 Лайв-радар (Камбэки)",
+        "🔬 Эксперимент: Big Data & ML",
         "📜 Общий Архив",
     ],
     index=0,
@@ -599,7 +599,6 @@ kelly_map = {
 }
 active_kelly_fraction = kelly_map[kelly_choice]
 
-# Кнопка сброса симулятора
 if st.sidebar.button("🔄 Сбросить симулятор"):
     st.session_state.history = []
     if os.path.exists(HISTORY_FILE):
@@ -648,10 +647,8 @@ if groq_api_key:
         "Модель Groq", models_list, index=0
     )
 
-# Получаем текущие фин. показатели симулятора
 current_virtual_bank, net_profit, simulator_roi, simulator_winrate, total_settled, total_wins = get_financial_stats()
 
-# Автоматический запуск глобального фонового сканирования
 if groq_api_key or gemini_api_key:
     run_background_global_scan(
         groq_api_key,
@@ -860,6 +857,231 @@ if selected_window == "🚨 Лайв-радар (Камбэки)":
                     save_history(st.session_state.history)
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
+
+elif selected_window == "🔬 Эксперимент: Big Data & ML":
+    apply_custom_styles(theme_choice, "default")
+    st.title("🔬 Лаборатория Big Data & Машинного обучения")
+    st.caption("Глобальный кросс-дисциплинарный анализ всех доступных матчей с глубоким обучением на всей истории побед и поражений")
+
+    # Сбор всех ошибок и успехов для обучения
+    historical_wins_list = []
+    historical_losses_list = []
+    for entry in st.session_state.history:
+        for card in entry.get("data", []):
+            st_val = card.get("status")
+            if st_val == "✅ Проход":
+                historical_wins_list.append(f"- Успех: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')})")
+            elif st_val == "❌ Проигрыш":
+                historical_losses_list.append(f"- Провал: {card.get('team1')} vs {card.get('team2')} | Ставка: {card.get('bet')} (Кф {card.get('coefficient')})")
+
+    st.markdown(f"🧠 **Состояние обучающей выборки в памяти:** Успешных паттернов: `{len(historical_wins_list)}` | Ошибочных паттернов для фильтрации: `{len(historical_losses_list)}`")
+
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        min_conf_slider = st.slider("Минимальный порог уверенности (%):", 80, 99, 90, 1)
+    with col_exp2:
+        max_picks_slider = st.slider("Максимум сигналов в отчете:", 3, 15, 6, 1)
+
+    if st.button("🚀 Запустить Big Data Сводный Анализ рынка", type="primary", use_container_width=True):
+        if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
+            st.error("⚠️ Укажите API ключ Groq!")
+        elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
+            st.error("⚠️ Укажите API ключ Gemini!")
+        else:
+            with st.spinner("Агрегируем матчи со всех видов спорта, прогоняем через нейро-фильтр исторических ошибок..."):
+                try:
+                    all_matches_pool = []
+                    for s_name, s_info in SPORT_GROUPS.items():
+                        matches_sub = fetch_matches_for_endpoints(s_info["endpoints"], s_info["category"], only_prematch=True)
+                        for ms in matches_sub:
+                            ms["sport_group_name"] = s_name
+                            all_matches_pool.append(ms)
+
+                    if not all_matches_pool:
+                        st.warning("⚠️ На текущий момент нет доступных прематч-матчей в линии.")
+                    else:
+                        match_lines = [
+                            f"{idx+1}. [{m['sport_group_name']} - {m['sport_label']}] {m['team1']} VS {m['team2']} | {m['status']}"
+                            for idx, m in enumerate(all_matches_pool[:60])
+                        ]
+                        context_text = "ГЛОБАЛЬНЫЙ ПУЛ МАТЧЕЙ СО ВСЕХ ВИДОВ СПОРТА:\n" + "\n".join(match_lines)
+
+                        wins_str = "\n".join(historical_wins_list[-15:]) if historical_wins_list else "Пока нет накопленной статистики побед."
+                        losses_str = "\n".join(historical_losses_list[-15:]) if historical_losses_list else "Пока нет накопленной статистики поражений."
+
+                        today_date = datetime.date.today().strftime("%d.%m.%Y")
+                        current_time = datetime.datetime.now().strftime("%H:%M")
+
+                        bigdata_prompt = f"""
+Сегодня {today_date}, время {current_time}.
+{context_text}
+
+БАЗА ЗНАНИЙ (ОБУЧАЮЩИЙ ДАТАСЕТ ПРОШЛЫХ СТАВОК):
+Успешные паттерны:
+{wins_str}
+
+Ошибочные паттерны (КАТЕГОРИЧЕСКИ ИЗБЕГАТЬ ПОХОЖИХ ОШИБОК):
+{losses_str}
+
+ЗАДАЧА BIG DATA АНАЛИЗАТОРА:
+Проанализируй весь пул матчей ({len(all_matches_pool)} событий). Примени эвристические фильтры машинного обучения на основе базы знаний. Выбери ВСЕ железобетонные события (от {min_conf_slider}% уверенности), но не более {max_picks_slider} штук. Коэффициенты строго от 1.50 до 2.10.
+
+Верни СТРОГО JSON формата:
+{{
+  "matches": [
+    {{
+      "team1": "Команда 1",
+      "team2": "Команда 2",
+      "league": "Вид спорта / Лига",
+      "time_status": "Время",
+      "bet_type": "Маркет",
+      "bet": "Ставка",
+      "coefficient": "1.85",
+      "confidence_percent": 92,
+      "value_tag": "💎 BIG DATA ЖЕЛЕЗО",
+      "x_factor": "Статистическое обоснование",
+      "tactical_summary": "Глубокий ML-анализ трендов"
+    }}
+  ]
+}}
+"""
+                        raw_response = ""
+                        if ai_mode == "🧠 Только Groq AI":
+                            client = Groq(api_key=groq_api_key)
+                            comp = client.chat.completions.create(
+                                model=selected_groq_model or "llama-3.3-70b-versatile",
+                                messages=[{"role": "user", "content": bigdata_prompt}],
+                                temperature=0.1,
+                            )
+                            raw_response = comp.choices[0].message.content
+                        else:
+                            raw_response = call_gemini_api(gemini_api_key, bigdata_prompt)
+
+                        if raw_response:
+                            cleaned = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
+                            json_start = cleaned.find("{")
+                            json_end = cleaned.rfind("}") + 1
+                            parsed_json = json.loads(cleaned[json_start:json_end])
+                            parsed_matches = parsed_json.get("matches", [])
+
+                            if parsed_matches:
+                                for pm in parsed_matches:
+                                    t1 = pm.get("team1", "")
+                                    match_found = next((m for m in all_matches_pool if t1.lower() in m["team1"].lower()), None)
+                                    if match_found:
+                                        pm["team1_logo"] = match_found["team1_logo"]
+                                        pm["team2_logo"] = match_found["team2_logo"]
+                                        pm["league"] = f"{match_found['sport_group_name']} - {match_found['sport_label']}"
+                                        pm["sport_category"] = match_found["sport_category"]
+                                    else:
+                                        pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
+                                        pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
+                                        pm["sport_category"] = "default"
+
+                                    pm["score"] = "0:0"
+                                    pm["status"] = "⌛ Ожидание"
+
+                                    odds_val = float(pm.get("coefficient", 1.85))
+                                    prob_val = float(pm.get("confidence_percent", 90)) / 100.0
+                                    rec_stake = calculate_kelly_stake(current_virtual_bank, odds_val, prob_val, active_kelly_fraction)
+                                    stake_pct = round((rec_stake / current_virtual_bank) * 100, 1) if current_virtual_bank > 0 else 0
+                                    pm["recommended_stake"] = rec_stake
+                                    pm["stake_percentage"] = stake_pct
+
+                                    if telegram_token and telegram_chat_id:
+                                        tg_text = (
+                                            f"🔬 *BIG DATA ML-СИГНАЛ*\n\n"
+                                            f"🏆 {pm.get('league')}\n"
+                                            f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
+                                            f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
+                                            f"🔥 Уверенность: `{pm.get('confidence_percent')}%`\n"
+                                            f"💰 Авто-ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
+                                            f"💡 ML-анализ: {pm.get('x_factor')}"
+                                        )
+                                        send_telegram_message(telegram_token, telegram_chat_id, tg_text)
+
+                                new_entry = {
+                                    "id": str(time.time()),
+                                    "date": f"{today_date} {current_time} (Big Data Lab)",
+                                    "ai_source": ai_mode,
+                                    "data": parsed_matches,
+                                }
+                                st.session_state.history.insert(0, new_entry)
+                                save_history(st.session_state.history)
+                                st.success(f"✅ Найдено железных событий по методу Big Data: {len(parsed_matches)}")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ Нейро-фильтр отклонил все текущие матчи из-за несоответствия строгим критериям качества.")
+                except Exception as e:
+                    st.error(f"Ошибка Big Data анализа: {e}")
+
+    st.markdown("### 📋 Результаты Big Data лаборатории")
+    bigdata_history = []
+    for entry in st.session_state.history:
+        bd_cards = [c for c in entry.get("data", []) if "Big Data" in entry.get("date", "")]
+        if bd_cards:
+            e_copy = entry.copy()
+            e_copy["data"] = bd_cards
+            bigdata_history.append(e_copy)
+
+    if not bigdata_history:
+        st.info("В экспериментальной лаборатории пока нет запущенных сессий. Нажмите кнопку выше.")
+    else:
+        for entry in bigdata_history:
+            st.caption(f"Экспериментальная сессия от {entry.get('date')} [{entry.get('ai_source')}]")
+            cols = st.columns(3)
+            for idx, card in enumerate(entry.get("data", [])):
+                col_idx = idx % 3
+                with cols[col_idx]:
+                    st_val = card.get("status", "⌛ Ожидание")
+                    card_class = (
+                        "card-win" if st_val == "✅ Проход" else ("card-loss" if st_val == "❌ Проигрыш" else "card-pending")
+                    )
+                    with st.container():
+                        st.markdown(f"<div class='{card_class}'>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🔬 BIG DATA')}</div>", unsafe_allow_html=True)
+                        t1, t2 = card.get("team1"), card.get("team2")
+                        cl1, cl2, cl3 = st.columns([1, 2, 1])
+                        with cl1:
+                            st.image(card.get("team1_logo"), width=34)
+                        with cl2:
+                            st.markdown(f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#00ff66;'><b>VS</b></span><br><b>{t2}</b></div>", unsafe_allow_html=True)
+                        with cl3:
+                            st.image(card.get("team2_logo"), width=34)
+
+                        st.caption(f"🏆 {card.get('league')}")
+                        st.markdown("---")
+                        st.metric(f"🎯 {card.get('bet_type','Маркет')}", card.get("bet", "—"), f"Кф {card.get('coefficient', '1.80')}")
+                        conf = max(card.get("confidence_percent", 90), 90)
+                        st.write(f"Уверенность ML: **{conf}%**")
+                        st.progress(conf / 100)
+
+                        rec_s = card.get("recommended_stake")
+                        s_pct = card.get("stake_percentage")
+                        if rec_s is not None and s_pct is not None:
+                            st.markdown(f"<div class='stat-box'>💰 <b>Виртуальная ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
+
+                        if card.get("x_factor"):
+                            st.markdown(f"<div class='stat-box'>{card.get('x_factor')}</div>", unsafe_allow_html=True)
+
+                        with st.expander("🧠 ML-разбор"):
+                            st.write(f"**Анализ:** {card.get('tactical_summary', '—')}")
+
+                        st.write(f"Статус: **{st_val}** (Счет: `{card.get('score', '0:0')}`)")
+                        bc1, bc2, bc3 = st.columns(3)
+                        if bc1.button("🟢", key=f"bd_win_{entry['id']}_{idx}", use_container_width=True):
+                            card["status"] = "✅ Проход"
+                            save_history(st.session_state.history)
+                            st.rerun()
+                        if bc2.button("🔴", key=f"bd_loss_{entry['id']}_{idx}", use_container_width=True):
+                            card["status"] = "❌ Проигрыш"
+                            save_history(st.session_state.history)
+                            st.rerun()
+                        if bc3.button("⏳", key=f"bd_pend_{entry['id']}_{idx}", use_container_width=True):
+                            card["status"] = "⌛ Ожидание"
+                            save_history(st.session_state.history)
+                            st.rerun()
+                        st.markdown("</div>", unsafe_allow_html=True)
 
 elif selected_window != "📜 Общий Архив":
     sport_title, sport_data = window_mapping[selected_window]
