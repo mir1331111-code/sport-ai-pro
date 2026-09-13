@@ -105,6 +105,14 @@ SPORT_GROUPS = {
             ("tennis", "wta", "WTA Теннис"),
         ],
     },
+    "🎮 Киберспорт": {
+        "category": "esports",
+        "endpoints": [
+            ("esports", "counter-strike", "Counter-Strike 2"),
+            ("esports", "dota-2", "Dota 2"),
+            ("esports", "league-of-legends", "League of Legends"),
+        ],
+    },
 }
 
 SPORT_BACKGROUNDS = {
@@ -122,6 +130,9 @@ SPORT_BACKGROUNDS = {
     ],
     "tennis": [
         "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80"
+    ],
+    "esports": [
+        "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1920&q=80"
     ],
     "default": [
         "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"
@@ -190,7 +201,7 @@ def send_telegram_message(token, chat_id, text):
         return False
 
 
-def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=False):
+def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=False, only_live=False):
     today_str = datetime.date.today().strftime("%Y%m%d")
     raw_matches = []
     for sport, league, label in endpoints_list:
@@ -203,6 +214,7 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     comp = ev.get("competitions", [{}])[0]
                     status_type = ev.get("status", {}).get("type", {})
                     state = status_type.get("state", "pre")
+                    
                     if only_prematch:
                         if state != "pre":
                             continue
@@ -222,6 +234,9 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                                     continue
                             except Exception:
                                 pass
+                    elif only_live:
+                        if state != "in":
+                            continue
                     else:
                         if state == "pre":
                             continue
@@ -259,7 +274,7 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                     status_str = (
                         f"🏁 Завершен ({score_str})"
                         if is_finished
-                        else f"⏳ Начало в {short_detail}"
+                        else (f"🔴 ИДЕТ ЛАЙВ ({score_str})" if state == "in" else f"⏳ Начало в {short_detail}")
                     )
 
                     raw_matches.append({
@@ -273,6 +288,7 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
                         "is_finished": is_finished,
                         "score": score_str,
                         "state": state,
+                        "short_detail": short_detail,
                     })
         except Exception:
             pass
@@ -280,7 +296,7 @@ def fetch_matches_for_endpoints(endpoints_list, sport_category, only_prematch=Fa
 
 
 def auto_evaluate_bet(card, score_str, is_finished):
-    if not is_finished or card.get("status") != "⌛ Ожидание":
+    if not is_finished or card.get("status") not in ["⌛ Ожидание", "🔴 ЛАЙВ-СИГНАЛ"]:
         return card.get("status", "⌛ Ожидание")
     try:
         parts = score_str.split(":")
@@ -472,7 +488,6 @@ def run_background_global_scan(
                 pm["score"] = "0:0"
                 pm["status"] = "⌛ Ожидание"
 
-                # Расчет по Келли
                 odds_val = float(pm.get("coefficient", 1.85))
                 prob_val = float(pm.get("confidence_percent", 90)) / 100.0
                 rec_stake = calculate_kelly_stake(bankroll, odds_val, prob_val, kelly_fraction)
@@ -525,6 +540,8 @@ selected_window = st.sidebar.radio(
         "🏀 Баскетбол — Окно",
         "🏐 Волейбол — Окно",
         "🎾 Теннис — Окно",
+        "🎮 Киберспорт — Окно",
+        "🚨 Лайв-радар (Камбэки)",
         "📜 Общий Архив",
     ],
     index=0,
@@ -609,9 +626,190 @@ window_mapping = {
     "🏀 Баскетбол — Окно": ("🏀 Баскетбол", SPORT_GROUPS["🏀 Баскетбол"]),
     "🏐 Волейбол — Окно": ("🏐 Волейбол", SPORT_GROUPS["🏐 Волейбол"]),
     "🎾 Теннис — Окно": ("🎾 Теннис", SPORT_GROUPS["🎾 Теннис"]),
+    "🎮 Киберспорт — Окно": ("🎮 Киберспорт", SPORT_GROUPS["🎮 Киберспорт"]),
 }
 
-if selected_window != "📜 Общий Архив":
+if selected_window == "🚨 Лайв-радар (Камбэки)":
+    apply_custom_styles(theme_choice, "default")
+    st.title("🚨 Лайв-радар: Поиск камбэков фаворитов")
+    st.caption("Сканирование матчей в реальном времени: отслеживание фаворитов, проигрывающих по ходу встречи (тайм, сет, период)")
+
+    if st.button("🚀 Запустить сканирование Live-радара", type="primary", use_container_width=True):
+        if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
+            st.error("⚠️ Укажите API ключ Groq!")
+        elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
+            st.error("⚠️ Укажите API ключ Gemini!")
+        else:
+            with st.spinner("Сканируем лайв-линии всех видов спорта на предмет просевших фаворитов..."):
+                try:
+                    all_live_matches = []
+                    for s_name, s_info in SPORT_GROUPS.items():
+                        live_items = fetch_matches_for_endpoints(s_info["endpoints"], s_info["category"], only_live=True)
+                        for li in live_items:
+                            li["sport_group_name"] = s_name
+                            all_live_matches.append(li)
+
+                    if not all_live_matches:
+                        st.warning("⚠️ В данный момент в лайве нет подходящих матчей.")
+                    else:
+                        match_lines = [
+                            f"{idx+1}. [{lm['sport_group_name']} - {lm['sport_label']}] {lm['team1']} VS {lm['team2']} | Счет: {lm['score']} | {lm['status']}"
+                            for idx, lm in enumerate(all_live_matches[:25])
+                        ]
+                        context_text = "АКТУАЛЬНЫЕ МАТЧИ В РЕАЛЬНОМ ВРЕМЕНИ (LIVE):\n" + "\n".join(match_lines)
+
+                        today_date = datetime.date.today().strftime("%d.%m.%Y")
+                        current_time = datetime.datetime.now().strftime("%H:%M")
+
+                        live_prompt = f"""
+Сегодня {today_date}, время {current_time}.
+{context_text}
+
+ЗАДАЧА ЛАЙВ-РАДАРА:
+Проанализируй текущий лайв-счет. Найди 1-2 матча, где явный фаворит неожиданно проигрывает текущий сет, период или тайм, но имеет высокие шансы на камбэк и итоговую победу/тотал. Коэффициент на камбэк фаворита должен быть от 1.60 до 2.50.
+
+Верни СТРОГО JSON формата:
+{{
+  "matches": [
+    {{
+      "team1": "Команда 1",
+      "team2": "Команда 2",
+      "league": "Лига",
+      "time_status": "Лайв",
+      "bet_type": "Маркет Камбэк",
+      "bet": "П1 с учетом камбэка / ТБ",
+      "coefficient": "1.95",
+      "confidence_percent": 88,
+      "value_tag": "🚨 КАМБЭК",
+      "x_factor": "Фаворит уступает в счете, но доминирует по статистике",
+      "tactical_summary": "Разбор лайв-ситуации"
+    }}
+  ]
+}}
+"""
+                        raw_response = ""
+                        if ai_mode == "🧠 Только Groq AI":
+                            client = Groq(api_key=groq_api_key)
+                            comp = client.chat.completions.create(
+                                model=selected_groq_model or "llama-3.3-70b-versatile",
+                                messages=[{"role": "user", "content": live_prompt}],
+                                temperature=0.1,
+                            )
+                            raw_response = comp.choices[0].message.content
+                        else:
+                            raw_response = call_gemini_api(gemini_api_key, live_prompt)
+
+                        if raw_response:
+                            cleaned = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
+                            json_start = cleaned.find("{")
+                            json_end = cleaned.rfind("}") + 1
+                            parsed_json = json.loads(cleaned[json_start:json_end])
+                            parsed_matches = parsed_json.get("matches", [])
+
+                            if parsed_matches:
+                                for pm in parsed_matches:
+                                    t1 = pm.get("team1", "")
+                                    match_found = next((m for m in all_live_matches if t1.lower() in m["team1"].lower()), None)
+                                    if match_found:
+                                        pm["team1_logo"] = match_found["team1_logo"]
+                                        pm["team2_logo"] = match_found["team2_logo"]
+                                        pm["score"] = match_found["score"]
+                                        pm["league"] = match_found["sport_label"]
+                                        pm["sport_category"] = match_found["sport_category"]
+                                    else:
+                                        pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
+                                        pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
+                                        pm["sport_category"] = "live"
+                                        pm["score"] = "0:0"
+
+                                    pm["status"] = "🔴 ЛАЙВ-СИГНАЛ"
+                                    odds_val = float(pm.get("coefficient", 1.85))
+                                    prob_val = float(pm.get("confidence_percent", 85)) / 100.0
+                                    rec_stake = calculate_kelly_stake(bankroll_input, odds_val, prob_val, active_kelly_fraction)
+                                    stake_pct = round((rec_stake / bankroll_input) * 100, 1) if bankroll_input > 0 else 0
+                                    pm["recommended_stake"] = rec_stake
+                                    pm["stake_percentage"] = stake_pct
+
+                                    if telegram_token and telegram_chat_id:
+                                        tg_text = (
+                                            f"🚨 *ЛАЙВ-РАДАР: КАМБЭК*\n\n"
+                                            f"🏆 {pm.get('league')}\n"
+                                            f"⚽ *{pm.get('team1')} vs {pm.get('team2')}* (Счет: `{pm.get('score')}`)\n"
+                                            f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
+                                            f"🔥 Уверенность: `{pm.get('confidence_percent')}%`\n"
+                                            f"💰 Рекомендуемая ставка: `{rec_stake}` руб. (`{stake_pct}%` от банка)\n"
+                                            f"💡 Анализ: {pm.get('x_factor')}"
+                                        )
+                                        send_telegram_message(telegram_token, telegram_chat_id, tg_text)
+
+                                new_entry = {
+                                    "id": str(time.time()),
+                                    "date": f"{today_date} {current_time} (Лайв-радар)",
+                                    "ai_source": ai_mode,
+                                    "data": parsed_matches,
+                                }
+                                st.session_state.history.insert(0, new_entry)
+                                save_history(st.session_state.history)
+                                st.success(f"✅ Найдено лайв-сигналов камбэков: {len(parsed_matches)}")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ В текущих лайв-матчах нет подходящих условий для камбэка.")
+                except Exception as e:
+                    st.error(f"Ошибка лайв-радара: {e}")
+
+    st.markdown("### 📋 Активные сигналы Лайв-радара")
+    live_history = []
+    for entry in st.session_state.history:
+        live_cards = [c for c in entry.get("data", []) if c.get("status") == "🔴 ЛАЙВ-СИГНАЛ" or "ЛАЙВ" in entry.get("date", "")]
+        if live_cards:
+            e_copy = entry.copy()
+            e_copy["data"] = live_cards
+            live_history.append(e_copy)
+
+    if not live_history:
+        st.info("Нет активных сигналов лайв-радара. Запустите сканирование выше.")
+    else:
+        for entry in live_history:
+            for idx, card in enumerate(entry.get("data", [])):
+                st.markdown(f"<div class='card-pending'>", unsafe_allow_html=True)
+                st.markdown(f"<div class='value-badge'>{card.get('value_tag', '🚨 КАМБЭК')}</div>", unsafe_allow_html=True)
+                t1, t2 = card.get("team1"), card.get("team2")
+                cl1, cl2, cl3 = st.columns([1, 2, 1])
+                with cl1:
+                    st.image(card.get("team1_logo"), width=34)
+                with cl2:
+                    st.markdown(f"<div style='text-align: center; font-size:0.75rem;'><b>{t1}</b><br><span style='color:#ef4444;'><b>Лайв: {card.get('score')}</b></span><br><b>{t2}</b></div>", unsafe_allow_html=True)
+                with cl3:
+                    st.image(card.get("team2_logo"), width=34)
+
+                st.markdown("---")
+                st.metric(f"🎯 {card.get('bet_type','Маркет')}", card.get("bet", "—"), f"Кф {card.get('coefficient', '1.90')}")
+                
+                rec_s = card.get("recommended_stake")
+                s_pct = card.get("stake_percentage")
+                if rec_s is not None and s_pct is not None:
+                    st.markdown(f"<div class='stat-box'>💰 <b>Реком. ставка (Келли):</b> {rec_s} руб. ({s_pct}% от банка)</div>", unsafe_allow_html=True)
+
+                if card.get("x_factor"):
+                    st.markdown(f"<div class='stat-box'>{card.get('x_factor')}</div>", unsafe_allow_html=True)
+                
+                st.write(f"Статус: **{card.get('status')}**")
+                lc1, lc2, lc3 = st.columns(3)
+                if lc1.button("🟢 Проход", key=f"live_win_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "✅ Проход"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                if lc2.button("🔴 Проигрыш", key=f"live_loss_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "❌ Проигрыш"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                if lc3.button("⏳ Сброс", key=f"live_pend_{entry['id']}_{idx}", use_container_width=True):
+                    card["status"] = "🔴 ЛАЙВ-СИГНАЛ"
+                    save_history(st.session_state.history)
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+elif selected_window != "📜 Общий Архив":
     sport_title, sport_data = window_mapping[selected_window]
     current_cat = sport_data["category"]
     current_endpoints = sport_data["endpoints"]
@@ -886,7 +1084,6 @@ if selected_window != "📜 Общий Архив":
                                 pm["score"] = "0:0"
                                 pm["status"] = "⌛ Ожидание"
 
-                                # Расчет по критерию Келли
                                 odds_val = float(pm.get("coefficient", 1.85))
                                 prob_val = float(pm.get("confidence_percent", 90)) / 100.0
                                 rec_stake = calculate_kelly_stake(bankroll_input, odds_val, prob_val, active_kelly_fraction)
@@ -991,7 +1188,6 @@ if selected_window != "📜 Общий Архив":
                         st.write(f"Уверенность: **{conf}%**")
                         st.progress(conf / 100)
 
-                        # Отображение расчета по Келли в интерфейсе
                         rec_s = card.get("recommended_stake")
                         s_pct = card.get("stake_percentage")
                         if rec_s is not None and s_pct is not None:
@@ -1038,7 +1234,7 @@ if selected_window != "📜 Общий Архив":
                             st.rerun()
                         st.markdown("</div>", unsafe_allow_html=True)
 
-else:
+elif selected_window == "📜 Общий Архив":
     apply_custom_styles(theme_choice, "default")
     st.title("📜 Общий архив всех прогнозов")
     if not st.session_state.history:
