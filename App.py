@@ -12,7 +12,7 @@ st.set_page_config(
 st.markdown(
     """
 <h1 style='text-align: center;'>🤖 Auto-Sniper: Автоматический поиск</h1>
-<p style='text-align: center; color: gray;'>Автоматический сканер интернета и точные прогнозы на сегодня.</p>
+<p style='text-align: center; color: gray;'>Интеллектуальный сканер спортивных событий на сегодня.</p>
 """,
     unsafe_allow_html=True,
 )
@@ -51,8 +51,7 @@ current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
 st.info(
-    "Нажми кнопку ниже — система автоматически соберет расписание и выдаст"
-    " прогноз."
+    "Нажми кнопку ниже — система соберет расписание матчей и выдаст прогноз."
 )
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
@@ -61,7 +60,9 @@ if st.button("🔍 Найти реальные матчи и сделать пр
   if not api_key:
     st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
   else:
-    with st.spinner("Сканируем спортивные базы данных..."):
+    with st.spinner(
+        "Сканируем интернет и анализируем матчи через Gemini..."
+    ):
       try:
         queries = [
             f"футбол матчи расписание сегодня 13 сентября 2026",
@@ -88,7 +89,6 @@ if st.button("🔍 Найти реальные матчи и сделать пр
               " воскресенье 13 сентября 2026"
           )
 
-        # Используем стабильную модель с высоким лимитом бесплатных запросов
         client = genai.Client(api_key=api_key)
 
         prompt = (
@@ -111,7 +111,7 @@ if st.button("🔍 Найти реальные матчи и сделать пр
         )
 
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt,
         )
 
@@ -124,7 +124,15 @@ if st.button("🔍 Найти реальные матчи и сделать пр
         st.success("Актуальные матчи успешно сформированы!")
 
       except Exception as e:
-        st.error(f"Ошибка при обработке: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "ResourceExhausted" in error_msg:
+          st.error(
+              "⚠️ Исчерпан лимит бесплатных запросов (20 в сутки) для модели"
+              " Gemini на этом ключе. Подождите немного или используйте"
+              " резервный API-ключ."
+          )
+        else:
+          st.error(f"Ошибка при обработке запроса: {error_msg}")
 
 st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
