@@ -52,7 +52,6 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
     else:
         with st.spinner("Ищем матчи на Flashscore/SofaScore, анализируем мнения экспертов в сети..."):
             try:
-                # Используем стандартный инструмент поиска для google-generativeai
                 model = genai.GenerativeModel(
                     model_name='gemini-1.5-flash',
                     tools='google_search_retrieval'
@@ -130,4 +129,3 @@ else:
             st.rerun()
         
         st.markdown("---")
-        
