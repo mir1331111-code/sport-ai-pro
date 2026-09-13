@@ -1,4 +1,3 @@
-
 import datetime
 import json
 import os
@@ -596,4 +595,53 @@ with tab_current:
               st.rerun()
             if b_c3.button("⏳ Ждем", key=f"latest_pend_{idx}"):
               card["status"] = "⌛ Ожидание"
-              save_history(st.session_state.histo
+              save_history(st.session_state.history)
+              st.rerun()
+
+with tab_history:
+  st.subheader("📜 Архив прогнозов с подробной аналитикой")
+
+  if not st.session_state.history:
+    st.info("История пуста.")
+  else:
+    for entry in st.session_state.history:
+      h_matches = entry.get("data", [])
+      if not h_matches:
+        continue
+
+      st.markdown(
+          f"### 📅 Прогноз от {entry.get('date')} ({entry.get('ai_source', 'ИИ')})"
+      )
+
+      cols = st.columns(min(len(h_matches), 2))
+      for idx, card in enumerate(h_matches):
+        col_idx = idx % len(cols)
+        with cols[col_idx]:
+          with st.container(border=True):
+            st.markdown(
+                f"**{card.get('team1')} VS {card.get('team2')}** | Счет:"
+                f" `{card.get('score')}`"
+            )
+            st.markdown(
+                f"🎯 **Ставка:** `{card.get('bet')}` (Кф {card.get('coefficient')}) |"
+                f" {card.get('value_tag', '')}"
+            )
+            if card.get("x_factor"):
+              st.caption(f"{card.get('x_factor')}")
+            st.write(f"Результат: **{card.get('status')}**")
+
+            hc1, hc2, hc3 = st.columns(3)
+            if hc1.button("🟢", key=f"hist_win_{entry['id']}_{idx}"):
+              card["status"] = "✅ Проход"
+              save_history(st.session_state.history)
+              st.rerun()
+            if hc2.button("🔴", key=f"hist_loss_{entry['id']}_{idx}"):
+              card["status"] = "❌ Проигрыш"
+              save_history(st.session_state.history)
+              st.rerun()
+            if hc3.button("⏳", key=f"hist_pend_{entry['id']}_{idx}"):
+              card["status"] = "⌛ Ожидание"
+              save_history(st.session_state.history)
+              st.rerun()
+      st.markdown("---")
+
