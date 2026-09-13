@@ -73,11 +73,9 @@ def apply_custom_styles(sport_type="default"):
         }}
         .block-container {{ padding-top: 1rem; padding-bottom: 2rem; }}
         
-        /* Метрики */
         div[data-testid="stMetricValue"] {{ font-size: 1.3rem; color: #00FF66; font-weight: 800; }}
         div[data-testid="stMetricLabel"] {{ font-size: 0.78rem; opacity: 0.85; }}
         
-        /* Блоки и плашки */
         .value-badge {{
             background: linear-gradient(135deg, #059669 0%, #10b981 100%);
             color: #ffffff;
@@ -296,7 +294,6 @@ def call_gemini_api(api_key, prompt_text):
     return None
 
 
-# Инициализация стилей
 initial_bg_cat = "default"
 if st.session_state.history and st.session_state.history[0].get("data"):
     first_item = st.session_state.history[0]["data"][0]
@@ -555,4 +552,310 @@ with tab_current:
                         raw_response = comp.choices[0].message.content
 
                     elif ai_mode == "✨ Только Gemini AI":
-                        raw_r
+                        raw_response = call_gemini_api(
+                            gemini_api_key, base_prompt
+                        )
+
+                    else:
+                        gemini_raw = call_gemini_api(
+                            gemini_api_key, base_prompt
+                        )
+                        consensus_prompt = (
+                            base_prompt
+                            + f"\n\nМнение Gemini:\n{gemini_raw}\nСинтезируй финальное решение в JSON!"
+                        )
+                        client = Groq(api_key=groq_api_key)
+                        comp = client.chat.completions.create(
+                            model=selected_groq_model
+                            or "llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "user", "content": consensus_prompt}
+                            ],
+                            temperature=0.2,
+                        )
+                        raw_response = comp.choices[0].message.content
+
+                    cleaned = re.sub(
+                        r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
+                    ).strip()
+                    json_start = cleaned.find("{")
+                    json_end = cleaned.rfind("}") + 1
+                    parsed_json = json.loads(cleaned[json_start:json_end])
+
+                    parsed_matches = parsed_json.get("matches", [])
+
+                    if not parsed_matches:
+                        st.warning("⚠️ ИИ не сформировал новые прогнозы.")
+                    else:
+                        first_sport_cat = "default"
+                        for idx_pm, pm in enumerate(parsed_matches):
+                            t1 = pm.get("team1", "")
+                            t2_str = pm.get("team2", "")
+                            match_found = next(
+                                (
+                                    rm
+                                    for rm in real_matches
+                                    if t1.lower() in rm["team1"].lower()
+                                ),
+                                None,
+                            )
+
+                            if match_found:
+                                pm["team1_logo"] = match_found["team1_logo"]
+                                pm["team2_logo"] = match_found["team2_logo"]
+                                pm["league"] = match_found["sport_label"]
+                                pm["sport_category"] = match_found[
+                                    "sport_category"
+                                ]
+                                pm["time_status"] = match_found["status"]
+                                pm["score"] = match_found["score"]
+                                pm["game_phase"] = match_found["game_phase"]
+                            else:
+                                pm["team1_logo"] = (
+                                    f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
+                                )
+                                pm["team2_logo"] = (
+                                    f"https://ui-avatars.com/api/?name={t2_str}&background=1e293b&color=00bfff"
+                                )
+                                pm["score"] = pm.get("score", "0:0")
+                                pm["sport_category"] = "default"
+                                pm["game_phase"] = pm.get(
+                                    "game_phase", "до перерыва"
+                                )
+
+                            if idx_pm == 0:
+                                first_sport_cat = pm.get(
+                                    "sport_category", "default"
+                                )
+
+                            pm["status"] = "⌛ Ожидание"
+                            pm["score_changed"] = False
+
+                        new_entry = {
+                            "id": str(time.time()),
+                            "date": f"{today_date} {current_time}",
+                            "ai_source": ai_mode,
+                            "data": parsed_matches,
+                        }
+                        st.session_state.history.insert(0, new_entry)
+                        save_history(st.session_state.history)
+
+                        apply_custom_styles(first_sport_cat)
+                        if is_fallback_mode:
+                            st.info(
+                                "ℹ️ Повторный переанализ активных событий."
+                            )
+                        else:
+                            st.success("🔥 Свежий разбор готов!")
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"Ошибка при анализе: {e}")
+
+    if st.session_state.history:
+        latest = st.session_state.history[0]
+        matches_data = latest.get("data", [])
+
+        st.subheader(
+            f"🔥 Свежий прогноз ({latest['date']}) — {latest.get('ai_source', 'ИИ')}"
+        )
+
+        if not matches_data:
+            st.warning(
+                "В текущей записи нет матчей. Нажмите «🚀 Сканировать Линию»."
+            )
+        else:
+            cols = st.columns(min(len(matches_data), 2))
+            for idx, card in enumerate(matches_data):
+                col_idx = idx % len(cols)
+                with cols[col_idx]:
+                    with st.container(border=True):
+                        tag = card.get("value_tag", "💎 Снайперский выбор")
+                        phase_str = card.get("game_phase", "до перерыва").upper()
+                        st.markdown(
+                            f"<div class='value-badge'>{tag} | ⏱️ {phase_str}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        if card.get("score_changed"):
+                            st.markdown(
+                                "<div class='score-badge-live'>🔥 СЧЕТ"
+                                f" ИЗМЕНИЛСЯ: {card.get('prev_score')} ➔"
+                                f" {card.get('score')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        t1, t2 = card.get("team1", "Команда 1"), card.get(
+                            "team2", "Команда 2"
+                        )
+                        c_l1, c_l2, c_l3 = st.columns([1, 2, 1])
+                        with c_l1:
+                            st.image(card.get("team1_logo"), width=48)
+                        with c_l2:
+                            st.markdown(
+                                f"<div style='text-align: center; font-size:"
+                                f" 0.9rem;'><b>{t1}</b><br><span style='color:#00FF66;"
+                                f" font-size:1.3rem;'><b>{card.get('score','0:0')}</b></span><br><b>{t2}</b></div>",
+                                unsafe_allow_html=True,
+                            )
+                        with c_l3:
+                            st.image(card.get("team2_logo"), width=48)
+
+                        st.caption(
+                            f"🏆 {card.get('league')} |"
+                            f" {card.get('time_status','Сегодня')}"
+                        )
+                        st.markdown("---")
+
+                        m_c1, m_c2 = st.columns(2)
+                        with m_c1:
+                            st.metric(
+                                f"🎯 Ставка ({card.get('bet_type','Маркет')})",
+                                card.get("bet", "—"),
+                                f"Кф {card.get('coefficient', '1.80')}",
+                            )
+                        with m_c2:
+                            conf = card.get("confidence_percent", 80)
+                            st.write(f"Уверенность ИИ: **{conf}%**")
+                            st.progress(conf / 100)
+
+                        if card.get("x_factor"):
+                            st.markdown(
+                                f"<div class='stat-box'>{card.get('x_factor')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        if card.get("key_stat"):
+                            st.caption(
+                                f"📈 **Цифра дня:** {card.get('key_stat')}"
+                            )
+
+                        with st.expander("🧠 Тактический разбор & Анализ"):
+                            st.write(
+                                f"**Аналитика:** {card.get('tactical_summary', 'Разбор.')}"
+                            )
+                            st.write(
+                                f"**Вердикт:** {card.get('reason', 'Обоснование.')}"
+                            )
+
+                        if card.get("user_loss_reason"):
+                            st.markdown(
+                                "<div class='loss-reason-box'>🚨 **Причина"
+                                f" минуса:** {card.get('user_loss_reason')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        st.write(
+                            f"Статус: **{card.get('status', '⌛ Ожидание')}**"
+                        )
+
+                        b_c1, b_c2, b_c3 = st.columns(3)
+                        if b_c1.button("🟢 Зашел", key=f"latest_win_{idx}"):
+                            card["status"] = "✅ Проход"
+                            save_history(st.session_state.history)
+                            st.rerun()
+
+                        if b_c3.button("⏳ Ждем", key=f"latest_pend_{idx}"):
+                            card["status"] = "⌛ Ожидание"
+                            save_history(st.session_state.history)
+                            st.rerun()
+
+                        with b_c2:
+                            with st.popover("🔴 Минус"):
+                                st.write(
+                                    "🧠 **Обучение ИИ: почему ставка не"
+                                    " зашла?**"
+                                )
+                                reason_opt = st.selectbox(
+                                    "Укажите фактор:",
+                                    [
+                                        "Срезали красной карточкой",
+                                        "Засушили второй тайм",
+                                        "Не забили пенальти / куча промахов",
+                                        "Ранний гол изменил ход игры",
+                                        "Другое",
+                                    ],
+                                    key=f"pop_sel_{idx}",
+                                )
+                                custom_r = st.text_input(
+                                    "Своя причина:",
+                                    key=f"pop_txt_{idx}",
+                                    placeholder="Например: слили на 90+4'",
+                                )
+                                if st.button(
+                                    "Сохранить и обучить ИИ",
+                                    key=f"pop_btn_{idx}",
+                                ):
+                                    card["status"] = "❌ Проигрыш"
+                                    card["user_loss_reason"] = (
+                                        custom_r if custom_r else reason_opt
+                                    )
+                                    save_history(st.session_state.history)
+                                    st.success(
+                                        "Причина сохранена в память ИИ!"
+                                    )
+                                    st.rerun()
+
+with tab_history:
+    st.subheader("📜 Архив прогнозов & База знаний ИИ")
+
+    if failed_predictions:
+        with st.expander(
+            "🧠 **База прошлых ошибок ИИ (Используется для самообучения)**",
+            expanded=True,
+        ):
+            for err in failed_predictions[-5:]:
+                st.markdown(f"- `{err}`")
+
+    if not st.session_state.history:
+        st.info("История пуста.")
+    else:
+        for entry in st.session_state.history:
+            h_matches = entry.get("data", [])
+            if not h_matches:
+                continue
+
+            st.markdown(
+                f"### 📅 Прогноз от {entry.get('date')}"
+                f" ({entry.get('ai_source', 'ИИ')})"
+            )
+
+            cols = st.columns(min(len(h_matches), 2))
+            for idx, card in enumerate(h_matches):
+                col_idx = idx % len(cols)
+                with cols[col_idx]:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**{card.get('team1')} VS {card.get('team2')}** |"
+                            f" Счет: `{card.get('score')}`"
+                            f" [{card.get('game_phase', 'до перерыва')}]"
+                        )
+                        st.markdown(
+                            f"🎯 **Ставка:** `{card.get('bet')}` (Кф"
+                            f" {card.get('coefficient')})"
+                        )
+                        st.write(f"Результат: **{card.get('status')}**")
+
+                        if card.get("user_loss_reason"):
+                            st.caption(
+                                f"🚨 Причина: {card.get('user_loss_reason')}"
+                            )
+
+                        hc1, hc2, hc3 = st.columns(3)
+                        if hc1.button("🟢", key=f"hist_win_{entry['id']}_{idx}"):
+                            card["status"] = "✅ Проход"
+                            save_history(st.session_state.history)
+                            st.rerun()
+                        if hc2.button(
+                            "🔴", key=f"hist_loss_{entry['id']}_{idx}"
+                        ):
+                            card["status"] = "❌ Проигрыш"
+                            save_history(st.session_state.history)
+                            st.rerun()
+                        if hc3.button(
+                            "⏳", key=f"hist_pend_{entry['id']}_{idx}"
+                        ):
+                            card["status"] = "⌛ Ожидание"
+                            save_history(st.session_state.history)
+                            st.rerun()
+            st.markdown("---")
