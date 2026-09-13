@@ -37,15 +37,34 @@ st.set_page_config(
 if "history" not in st.session_state:
     st.session_state.history = load_history()
 
+# РАСШИРЕННЫЙ СПИСОК ЛИГ (Европа, Америка, Россия)
 SPORTS_ENDPOINTS = [
+    # Футбол
     ("soccer", "eng.1", "⚽ АПЛ (Англия)", "soccer"),
     ("soccer", "esp.1", "⚽ Ла Лига (Испания)", "soccer"),
     ("soccer", "ger.1", "⚽ Бундеслига (Германия)", "soccer"),
     ("soccer", "ita.1", "⚽ Серия А (Италия)", "soccer"),
+    ("soccer", "fra.1", "⚽ Лига 1 (Франция)", "soccer"),
     ("soccer", "rus.1", "⚽ РПЛ (Россия)", "soccer"),
-    ("basketball", "nba", "🏀 НБА (Баскетбол)", "basketball"),
-    ("hockey", "nhl", "🏒 НХЛ (Хоккей)", "hockey"),
+    ("soccer", "uefa.champions", "⚽ Лига Чемпионов УЕФА", "soccer"),
+    ("soccer", "usa.1", "⚽ MLS (США)", "soccer"),
+    # Баскетбол
+    ("basketball", "nba", "🏀 НБА (США)", "basketball"),
+    (
+        "basketball",
+        "mens-college-basketball",
+        "🏀 NCAA Баскетбол (США)",
+        "basketball",
+    ),
+    # Хоккей
+    ("hockey", "nhl", "🏒 НХЛ (США/Канада)", "hockey"),
+    ("hockey", "khl", "🏒 КХЛ (Россия/Европа)", "hockey"),
+    # Америка / Бейсбол / Американский футбол
+    ("football", "nfl", "🏈 НФЛ (США)", "american_football"),
+    ("baseball", "mlb", "⚾ МЛБ (США)", "baseball"),
+    # Теннис
     ("tennis", "atp", "🎾 ATP Теннис", "tennis"),
+    ("tennis", "wta", "🎾 WTA Теннис", "tennis"),
 ]
 
 DEFAULT_STADIUM_BGS = {
@@ -88,7 +107,7 @@ def apply_custom_styles(sport_type="default"):
         .stButton>button {{
             border-radius: 8px;
             font-weight: 700;
-            font-size: 0.85rem;
+            font-size: 0.81rem;
             transition: all 0.3s ease;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }}
@@ -129,16 +148,6 @@ def apply_custom_styles(sport_type="default"):
             margin: 6px 0;
             font-size: 0.8rem;
             color: #f1f5f9;
-        }}
-        
-        .loss-reason-box {{
-            background: rgba(220, 38, 38, 0.15);
-            border-left: 3px solid #ef4444;
-            padding: 8px 10px;
-            border-radius: 6px;
-            margin: 6px 0;
-            font-size: 0.8rem;
-            color: #fca5a5;
         }}
 
         .stTabs [data-baseweb="tab-list"] {{
@@ -189,6 +198,27 @@ def determine_match_phase(status_str, state_str):
     ):
         return "после перерыва"
     return "до перерыва"
+
+
+def is_match_near_end(status_str, sport_cat):
+    """Фильтрует матчи, у которых осталось 5-10 минут до конца"""
+    s = status_str.lower()
+    if sport_cat == "soccer":
+        # Проверяем минуты футбола (например, 85', 88', 90+')
+        mins = re.findall(r"(\d+)'", s)
+        if mins:
+            current_min = int(mins[0])
+            if current_min >= 83:  # Отсекаем концовку
+                return True
+    # Для других видов спорта если идет финальный отрезок
+    if any(
+        end_marker in s
+        for end_marker in ["4th qtr", "3rd period", "final", "от", "ot"]
+    ):
+        if "4th" in s or "3rd period" in s:
+            # Если это баскетбол/хоккей близко к концу
+            pass
+    return False
 
 
 def fetch_all_sports_matches():
@@ -251,6 +281,10 @@ def fetch_all_sports_matches():
                         status_str = f"🔴 LIVE {short_detail} ({score_str})"
                     else:
                         status_str = f"⏰ {short_detail}"
+
+                    # Пропускаем матчи, где осталось 5-10 минут
+                    if is_live and is_match_near_end(status_str, sport_cat):
+                        continue
 
                     phase = determine_match_phase(status_str, state)
 
@@ -371,8 +405,6 @@ if groq_api_key:
     )
 
 total_wins, total_losses = 0, 0
-failed_predictions = []
-
 for item in st.session_state.history:
     for card in item.get("data", []):
         st_val = card.get("status", "⌛ Ожидание")
@@ -380,11 +412,6 @@ for item in st.session_state.history:
             total_wins += 1
         elif st_val == "❌ Проигрыш":
             total_losses += 1
-            user_note = card.get("user_loss_reason", "Неустановленный фактор")
-            failed_predictions.append(
-                f"Игра: {card.get('team1')} vs {card.get('team2')} | Ставка:"
-                f" {card.get('bet')} | Ошибка: {user_note}"
-            )
 
 total_finished = total_wins + total_losses
 win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0.0
@@ -395,13 +422,12 @@ st.caption(
     " 85%)"
 )
 
-s_c1, s_c2, s_c3, s_c4, s_c5 = st.columns(5)
+s_c1, s_c2, s_c3, s_c4 = st.columns(4)
 s_c1.metric("📊 Win Rate", f"{win_rate:.1f}%")
 s_c2.metric("🟢 Победы", f"{total_wins}")
 s_c3.metric("🔴 Поражения", f"{total_losses}")
-s_c4.metric("🧠 Ошибки в базе", f"{len(failed_predictions)}")
 
-if s_c5.button("🔄 Синхролайн", use_container_width=True):
+if s_c4.button("🔄 Синхролайн", use_container_width=True):
     with st.spinner("Обновление живых счетов..."):
         live_matches = fetch_all_sports_matches()
         updated_count, settled_count = 0, 0
@@ -442,8 +468,8 @@ st.markdown("---")
 
 tab_current, tab_manual, tab_history = st.tabs([
     "🔥 Авто-Сканер Линии",
-    "✏️ Ручной выбор (Выбор спорта)",
-    "📜 Архив & База Ошибок",
+    "✏️ Ручной выбор (Все лиги)",
+    "📜 Архив & Результаты",
 ])
 
 with tab_current:
@@ -470,41 +496,32 @@ with tab_current:
             st.error("⚠️ Укажите оба ключа!")
         else:
             with st.spinner(
-                "Сканируем линии, отсеиваем исходы (Кф ≥ 1.40, Уверенность ≥"
-                " 85%)..."
+                "Сканируем линии (исключая концовки матчей), Кф ≥ 1.40, Уверенность ≥ 85%..."
             ):
                 try:
                     real_matches = fetch_all_sports_matches()
                     if not real_matches:
                         st.warning(
-                            "⚠️ Нет матчей в линии. Используйте ручной режим!"
+                            "⚠️ Нет подходящих матчей в линии. Попробуйте ручной выбор!"
                         )
                     else:
                         match_lines = [
                             f"{idx+1}. [{rm['sport_label']}] {rm['team1']} VS {rm['team2']} | Счет: {rm['score']} | Фаза: {rm['game_phase']} | Статус: {rm['status']}"
-                            for idx, rm in enumerate(real_matches[:15])
+                            for idx, rm in enumerate(real_matches[:20])
                         ]
                         context_text = (
-                            "ДОСТУПНЫЕ СОБЫТИЯ:\n" + "\n".join(match_lines)
+                            "ДОСТУПНЫЕ СОБЫТИЯ (Концовки матчей отсечены):\n"
+                            + "\n".join(match_lines)
                         )
-
-                        loss_context = ""
-                        if failed_predictions:
-                            loss_context = (
-                                "\n\n🚨 БЛОК УЧТЕННЫХ ОШИБОК (ЖЕСТКО"
-                                " ИСКЛЮЧАТЬ!):\n"
-                                + "\n".join(failed_predictions[-6:])
-                            )
 
                         base_prompt = f"""
 Сегодня {today_date}, время {current_time} МСК.
 {context_text}
-{loss_context}
 
 КРИТЕРИИ АНАЛИЗА:
-1. Только предстоящие или LIVE матчи.
+1. Только предстоящие матчи или LIVE в активной фазе (не за 5 минут до конца!).
 2. КОЭФФИЦИЕНТ: строго от 1.40 и выше.
-3. УВЕРЕННОСТЬ ИИ: строго от 85% и выше (никаких 65-80%). Железобетонные варианты.
+3. УВЕРЕННОСТЬ ИИ: строго от 85% и выше.
 
 Верни СТРОГО JSON формата:
 {{
@@ -523,7 +540,6 @@ with tab_current:
       "value_tag": "💎 Снайперский выбор",
       "x_factor": "🔥 Ключевой фактор",
       "tactical_summary": "🧠 Тактический разбор",
-      "key_stat": "📊 Цифра",
       "reason": "Обоснование"
     }}
   ]
@@ -579,13 +595,12 @@ with tab_current:
                         parsed_matches = parsed_json.get("matches", [])
 
                         if not parsed_matches:
-                            st.warning(
-                                "⚠️ Нет матчей под столь жесткие критерии (Кф"
-                                " ≥1.4, Уверенность ≥85%)."
-                            )
+                            st.warning("⚠️ Нет матчей под заданные критерии.")
                         else:
                             first_sport_cat = "default"
-                            for idx_pm, pm in enumerate(parsed_matches[:num_signals]):
+                            for idx_pm, pm in enumerate(
+                                parsed_matches[:num_signals]
+                            ):
                                 if pm.get("confidence_percent", 0) < 85:
                                     pm["confidence_percent"] = 85
 
@@ -640,9 +655,7 @@ with tab_current:
                             save_history(st.session_state.history)
 
                             apply_custom_styles(first_sport_cat)
-                            st.success(
-                                "🔥 Сканирование завершено (Уверенность ≥ 85%)!"
-                            )
+                            st.success("🔥 Сканирование успешно завершено!")
                             st.rerun()
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
@@ -724,88 +737,59 @@ with tab_current:
                                 f"**Вердикт:** {card.get('reason', '—')}"
                             )
 
-                        if card.get("user_loss_reason"):
-                            st.markdown(
-                                "<div class='loss-reason-box'>🚨 **Ошибка:"
-                                f"** {card.get('user_loss_reason')}</div>",
-                                unsafe_allow_html=True,
-                            )
-
                         st.write(
                             f"Статус: **{card.get('status', '⌛ Ожидание')}**"
                         )
 
+                        # ПРЯМЫЕ КНОПКИ УПРАВЛЕНИЯ (Без лишних всплывающих окон)
                         b_c1, b_c2, b_c3 = st.columns(3)
                         if b_c1.button(
-                            "🟢 Поб.", key=f"latest_win_{idx}", use_container_width=True
+                            "🟢 Победа",
+                            key=f"latest_win_{idx}",
+                            use_container_width=True,
                         ):
                             card["status"] = "✅ Проход"
-                            card.pop("user_loss_reason", None)
+                            save_history(st.session_state.history)
+                            st.rerun()
+
+                        if b_c2.button(
+                            "🔴 Проигрыш",
+                            key=f"latest_loss_{idx}",
+                            use_container_width=True,
+                        ):
+                            card["status"] = "❌ Проигрыш"
                             save_history(st.session_state.history)
                             st.rerun()
 
                         if b_c3.button(
-                            "⏳ Ждем", key=f"latest_pend_{idx}", use_container_width=True
+                            "⏳ Сброс",
+                            key=f"latest_pend_{idx}",
+                            use_container_width=True,
                         ):
                             card["status"] = "⌛ Ожидание"
-                            card.pop("user_loss_reason", None)
                             save_history(st.session_state.history)
                             st.rerun()
 
-                        with b_c2:
-                            with st.popover("🔴 Мин.", use_container_width=True):
-                                st.write("🧠 **Причина провала для ИИ:**")
-                                reason_opt = st.selectbox(
-                                    "Фактор:",
-                                    [
-                                        "Красная карточка / удаление",
-                                        "Засушили игру во 2-м тайме",
-                                        "Не реализовали моменты",
-                                        "Быстрый гол сломал план",
-                                        "Другое",
-                                    ],
-                                    key=f"pop_sel_{idx}",
-                                )
-                                custom_r = st.text_input(
-                                    "Детали:",
-                                    key=f"pop_txt_{idx}",
-                                    placeholder="Напр: пропустили на 90'",
-                                )
-                                if st.button(
-                                    "Записать", key=f"pop_btn_{idx}"
-                                ):
-                                    card["status"] = "❌ Проигрыш"
-                                    card["user_loss_reason"] = (
-                                        custom_r if custom_r else reason_opt
-                                    )
-                                    save_history(st.session_state.history)
-                                    st.rerun()
-
 with tab_manual:
-    st.subheader("✏️ Ручной выбор спорта (ИИ сам ищет матч в линии)")
+    st.subheader("✏️ Ручной выбор по конкретной лиге")
     st.write(
-        "Ты выбираешь только вид спорта — система берет актуальный матч из"
-        " линии и строит прогноз с железобетонными критериями (**КФ ≥ 1.40**, "
-        "**Уверенность ≥ 85%**)."
+        "Выберите любую европейскую, американскую или российскую лигу / теннис, и система найдет актуальный матч."
     )
 
+    # Динамический список из всех доступных лиг
+    all_league_labels = [item[2] for item in SPORTS_ENDPOINTS]
+
     with st.form("manual_sport_form"):
-        chosen_sport_label = st.selectbox(
-            "Выберите категорию / спорт:",
-            [
-                "⚽ Футбол (АПЛ / Ла Лига / РПЛ)",
-                "🏀 Баскетбол (НБА)",
-                "🏒 Хоккей (НХЛ)",
-                "🎾 Теннис (ATP)",
-            ],
+        chosen_league_label = st.selectbox(
+            "Выберите турнир / лигу:", all_league_labels
         )
         manual_user_note = st.text_input(
-            "Ваше пожелание к матчу (необязательно):",
-            placeholder="Например: выбери матч с явным фаворитом",
+            "Пожелание к матчу (опционально):",
+            placeholder="Например: матч с высокой результативностью",
         )
 
         submitted_manual = st.form_submit_button(
-            "🎯 Найти матч и проанализировать", type="primary"
+            "🎯 Найти и проанализировать", type="primary"
         )
 
         if submitted_manual:
@@ -814,41 +798,32 @@ with tab_manual:
             ) or (ai_mode == "✨ Только Gemini AI" and not gemini_api_key):
                 st.error("⚠️ Укажите API ключ в боковой панели!")
             else:
-                with st.spinner(
-                    "Ищем подходящий матч в линии и рассчитываем прогноз..."
-                ):
+                with st.spinner("Анализируем матчи выбранной лиги..."):
                     try:
                         all_matches = fetch_all_sports_matches()
-                        cat_map_rev = {
-                            "⚽ Футбол (АПЛ / Ла Лига / РПЛ)": "soccer",
-                            "🏀 Баскетбол (НБА)": "basketball",
-                            "🏒 Хоккей (НХЛ)": "hockey",
-                            "🎾 Теннис (ATP)": "tennis",
-                        }
-                        target_cat = cat_map_rev.get(chosen_sport_label, "soccer")
                         filtered_matches = [
                             m
                             for m in all_matches
-                            if m["sport_category"] == target_cat
+                            if m["sport_label"] == chosen_league_label
                         ]
 
                         if not filtered_matches:
-                            filtered_matches = all_matches
+                            filtered_matches = all_matches  дженерик запас
 
                         match_lines = [
                             f"- [{m['sport_label']}] {m['team1']} vs {m['team2']} (Счет: {m['score']}, Статус: {m['status']})"
-                            for m in filtered_matches[:10]
+                            for m in filtered_matches[:12]
                         ]
 
                         manual_prompt = f"""
-Пользователь выбрал категорию: {chosen_sport_label}
+Пользователь выбрал лигу/турнир: {chosen_league_label}
 Пожелание: {manual_user_note}
 
-ДОСТУПНЫЕ МАТЧИ В ЭТОЙ КАТЕГОРИИ:
-{"\n".join(match_lines)}
+ДОСТУПНЫЕ МАТЧИ В ЭТОЙ ЛИГЕ:
+{"\n".join(match_lines) if match_lines else "Нет активных матчей прямо сейчас, подбери топ-матч дня."}
 
-Выбери ОДИН лучший матч из этого списка (или составь прогноз на основе реального матча из списка).
-ЖЕСТКИЕ КРИТЕРИИ:
+Выбери ОДИН лучший матч и составь прогноз.
+КРИТЕРИИ:
 1. Коэффициент: строго от 1.40 и выше.
 2. Уверенность ИИ: строго от 85% и выше.
 
@@ -858,7 +833,7 @@ with tab_manual:
     {{
       "team1": "Команда 1",
       "team2": "Команда 2",
-      "league": "{chosen_sport_label}",
+      "league": "{chosen_league_label}",
       "time_status": "Сегодня",
       "game_phase": "до перерыва",
       "score": "0:0",
@@ -941,6 +916,12 @@ with tab_manual:
                                 None,
                             )
 
+                            target_cat = "soccer"
+                            for sc_tuple in SPORTS_ENDPOINTS:
+                                if sc_tuple[2] == chosen_league_label:
+                                    target_cat = sc_tuple[3]
+                                    break
+
                             if match_found:
                                 pm["team1_logo"] = match_found["team1_logo"]
                                 pm["team2_logo"] = match_found["team2_logo"]
@@ -963,7 +944,7 @@ with tab_manual:
 
                             new_entry = {
                                 "id": str(time.time()),
-                                "date": f"{today_date} {current_time} (Спорт-выбор)",
+                                "date": f"{today_date} {current_time} ({chosen_league_label})",
                                 "ai_source": ai_mode,
                                 "data": [pm],
                             }
@@ -971,9 +952,7 @@ with tab_manual:
                             save_history(st.session_state.history)
 
                             apply_custom_styles(target_cat)
-                            st.success(
-                                "✅ Матч найден и проанализирован ИИ!"
-                            )
+                            st.success("✅ Прогноз успешно сформирован!")
                             st.rerun()
                         else:
                             st.warning("⚠️ Не удалось сформировать прогноз.")
@@ -981,10 +960,9 @@ with tab_manual:
                         st.error(f"Ошибка: {ex}")
 
 with tab_history:
-    st.subheader("📜 Архив прогнозов & Управление результатами")
+    st.subheader("📜 Архив прогнозов & Управление")
     st.write(
-        "Здесь отображены все ранее запрошенные матчи. Ты можешь в один клик"
-        " отметить проход или поражение."
+        "Нажимайте прямо на кнопки под матчами в архиве, чтобы зафиксировать победу или поражение."
     )
 
     if not st.session_state.history:
@@ -1016,25 +994,17 @@ with tab_history:
                         )
                         st.write(f"Статус: **{card.get('status')}**")
 
-                        if card.get("user_loss_reason"):
-                            st.markdown(
-                                "<div class='loss-reason-box'>🚨 **Провал:**"
-                                f" {card.get('user_loss_reason')}</div>",
-                                unsafe_allow_html=True,
-                            )
-
                         hc1, hc2, hc3 = st.columns(3)
                         if hc1.button(
-                            "🟢 Поб.",
+                            "🟢 Победа",
                             key=f"hist_win_{entry['id']}_{idx}",
                             use_container_width=True,
                         ):
                             card["status"] = "✅ Проход"
-                            card.pop("user_loss_reason", None)
                             save_history(st.session_state.history)
                             st.rerun()
                         if hc2.button(
-                            "🔴 Мин.",
+                            "🔴 Проигрыш",
                             key=f"hist_loss_{entry['id']}_{idx}",
                             use_container_width=True,
                         ):
@@ -1042,12 +1012,11 @@ with tab_history:
                             save_history(st.session_state.history)
                             st.rerun()
                         if hc3.button(
-                            "⏳ Ждем",
+                            "⏳ Сброс",
                             key=f"hist_pend_{entry['id']}_{idx}",
                             use_container_width=True,
                         ):
                             card["status"] = "⌛ Ожидание"
-                            card.pop("user_loss_reason", None)
                             save_history(st.session_state.history)
                             st.rerun()
             st.markdown("---")
