@@ -5,8 +5,8 @@ import datetime
 st.set_page_config(page_title="Flashscore & SofaScore Auto-Sniper", page_icon="🤖", layout="centered")
 
 st.markdown("""
-<h1 style='text-align: center;'>🤖 Auto-Sniper: Авто-поиск с Flashscore & SofaScore</h1>
-<p style='text-align: center; color: gray;'>ИИ самостоятельно сканирует интернет, Flashscore, SofaScore и мнения экспертов, находя реальные матчи и давая точные прогнозы.</p>
+<h1 style='text-align: center;'>🤖 Auto-Sniper: Авто-поиск матчей</h1>
+<p style='text-align: center; color: gray;'>ИИ анализирует текущие матчи и дает экспертные прогнозы.</p>
 """, unsafe_allow_html=True)
 
 if 'history' not in st.session_state:
@@ -42,35 +42,32 @@ today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
-st.info("Нажми кнопку ниже — ИИ сам через поиск в интернете просканирует Flashscore, SofaScore и сайты спортивных экспертов, найдет реальные матчи и выдаст экспертный прогноз.")
+st.info("Нажми кнопку ниже — ИИ сформирует экспертные прогнозы на актуальные матчи.")
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
 
-if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и анализом экспертов", type="primary"):
+if st.button("🔍 Авто-поиск матчей и анализ экспертов", type="primary"):
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Ищем матчи через gemini-1.5-flash (Flashscore/SofaScore)..."):
+        with st.spinner("Анализируем матчи через gemini-1.5-flash..."):
             try:
-                model = genai.GenerativeModel(
-                    model_name='gemini-1.5-flash',
-                    tools='google_search_retrieval'
-                )
+                # Убран аргумент tools, вызывающий конфликт 404 на некоторых ключах
+                model = genai.GenerativeModel(model_name='gemini-1.5-flash')
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
-                    "Ты профессиональный спортивный аналитик, скаут и беттор. "
-                    "Используй поиск в интернете, чтобы найти реальные матчи, которые идут прямо сейчас в лайве или начнутся в ближайшее время сегодня на спортивных порталах Flashscore и SofaScore (футбол, теннис, баскетбол, волейбол и др.). "
-                    "Также изучи актуальные мнения, прогнозы и аналитику спортивных экспертов и капперов по этим матчам в сети. "
-                    f"На основе реальных данных из поиска выбери {num_signals} самых надежных матча с высокой вероятностью прохода. "
+                    "Ты профессиональный спортивный аналитик и беттор. "
+                    "Сформируй прогноз на актуальные матчи (футбол, теннис, баскетбол, волейбол и др.), которые идут или планируются сегодня. "
+                    f"Выбери {num_signals} надежных матча. "
                     "Для каждого сигнала укажи: "
-                    "- ⏱ Статус матча (Идет в лайве, счет/минута/сет или Старт во столько-то). "
-                    "- 🌐 Источник / Турнир (Название турнира и данные с Flashscore/SofaScore). "
+                    "- ⏱ Статус матча / Время. "
+                    "- 🌐 Турнир. "
                     "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
-                    "- 🏆 Событие (Точные команды/игроки). "
-                    "- 🎯 Сигнал для ставки (Точный рынок, исход и коэффициент). "
+                    "- 🏆 Событие (Команды/игроки). "
+                    "- 🎯 Сигнал для ставки (Исход и коэффициент). "
                     "- 📈 Вероятность прохода (в %). "
-                    "- 💡 Аналитика и мнения экспертов (Сводка того, что говорят эксперты в сети по этому матчу, текущая статистика, почему прогноз обоснован)."
+                    "- 💡 Аналитика и обоснование прогноза."
                 )
                 
                 response = model.generate_content(prompt)
@@ -81,7 +78,7 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
                     "status": "⌛ Ожидание"
                 }
                 st.session_state.history.insert(0, new_signal)
-                st.success("Сигналы успешно найдены и проанализированы!")
+                st.success("Сигналы успешно созданы!")
                 
             except Exception as e:
                 st.error(f"Ошибка при запросе к Gemini API: {e}")
@@ -90,7 +87,7 @@ st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
 
 if not st.session_state.history:
-    st.info("История пуста. Запусти авто-поиск выше.")
+    st.info("История пуста. Запусти поиск выше.")
 else:
     if st.button("🗑 Очистить всю историю"):
         st.session_state.history = []
@@ -129,4 +126,3 @@ else:
             st.rerun()
         
         st.markdown("---")
-        
