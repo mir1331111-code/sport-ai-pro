@@ -1,5 +1,5 @@
 """
-Ultimate Multi-Sport AI Experience Hub & High-Probability Value Scanner
+Ultimate Multi-Sport Experience Hub & High-Probability Value Scanner
 - Сканирует ВСЕ виды спорта (Футбол, Хоккей, Баскетбол, Теннис и др.)
 - Ведет полную базу опыта (сохраняет каждый матч для истории)
 - Рассчитывает глубокую статистику (маржа, честная вероятность, Edge, EV, Келли)
@@ -140,9 +140,8 @@ def analyze_and_build_experience(
         true_p = true_p2
 
     # 2. Модельная оценка с учетом рыночной неэффективности (поиск реального валуя)
-    # Модель оценивает вероятность с небольшой коррекцией на основе статистического веса
     model_p = true_p * 1.035
-    model_p = min(model_p, 0.92)  рациональный кап
+    model_p = min(model_p, 0.92)  # Рациональный кап
 
     ev = (chosen_odds * model_p) - 1
     edge = model_p - true_p
@@ -299,7 +298,7 @@ def main():
         save_to_experience_db(df_processed)
 
       st.success(
-          f"Анализ завершен! Обработано матчей со всех лиг:"
+          f"Анализ завершен! Обработано матчей со всех лиги:"
           f" {len(df_processed)}"
       )
 
