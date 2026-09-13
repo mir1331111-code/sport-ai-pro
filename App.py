@@ -1,14 +1,12 @@
 import streamlit as st
 from google import genai
-from google.genai import types
 import datetime
-import time
 
 st.set_page_config(page_title="Flashscore & SofaScore Auto-Sniper", page_icon="🤖", layout="centered")
 
 st.markdown("""
-<h1 style='text-align: center;'>🤖 Auto-Sniper: Живой поиск матчей</h1>
-<p style='text-align: center; color: gray;'>ИИ ищет актуальные матчи через реальный поиск в интернете.</p>
+<h1 style='text-align: center;'>🤖 Auto-Sniper: Генерация сигналов</h1>
+<p style='text-align: center; color: gray;'>ИИ формирует актуальные спортивные прогнозы на основе текущей даты.</p>
 """, unsafe_allow_html=True)
 
 if 'history' not in st.session_state:
@@ -41,66 +39,49 @@ today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
-st.info("Нажми кнопку ниже — ИИ подключит живой поиск Google, найдет реальные матчи на Flashscore/SofaScore на сегодня и выдаст точный прогноз.")
+st.info("Нажми кнопку ниже — ИИ сгенерирует точные прогнозы и сигналы на матчи текущего дня.")
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
 
-if st.button("🔍 Живой поиск матчей с Flashscore/SofaScore", type="primary"):
+if st.button("🔍 Сформировать сигналы и аналитику", type="primary"):
     if not api_key:
         st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Ищем реальные матчи в интернете (если сработал лимит, подождем пару секунд)..."):
+        with st.spinner("Анализируем матчи через gemini-3.6-flash..."):
             try:
                 client = genai.Client(api_key=api_key)
                 
                 prompt = (
-                    f"Сегодня {today_date}, текущее время {current_time} МСК. "
-                    "Ты профессиональный спортивный аналитик и скаут. "
-                    "Используй инструмент поиска Google, чтобы найти реальные спортивные матчи (футбол, хоккей, теннис, баскетбол и др.), которые проходят ПРЯМО СЕЙЧАС в лайве или запланированы на сегодня на спортивных сайтах Flashscore и SofaScore. "
-                    f"Выбери {num_signals} самых надежных матча из актуальной поисковой выдачи на сегодня. "
+                    f"Сегодня воскресенье, {today_date}, текущее время {current_time} МСК. "
+                    "Ты профессиональный спортивный аналитик, скаут и беттор. "
+                    "Сформируй качественные и реалистичные прогнозы на топ-матчи (футбол, хоккей, теннис, баскетбол), которые актуальны на сегодня (включая главные европейские футбольные лиги выходного дня). "
+                    f"Выбери {num_signals} надежных матча. "
                     "Для каждого сигнала укажи: "
-                    "- ⏱ Статус матча / Время начала. "
-                    "- 🌐 Турнир / Источник (данные с Flashscore/SofaScore). "
+                    "- ⏱ Время начала матча. "
+                    "- 🌐 Турнир / Лига. "
                     "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
                     "- 🏆 Событие (Команды или игроки). "
-                    "- 🎯 Сигнал для ставки (Конкретный исход и коэффициент). "
+                    "- 🎯 Сигнал для ставки (Конкретный рынок, исход и примерный коэффициент). "
                     "- 📈 Вероятность прохода (в %). "
                     "- 💡 Аналитика и обоснование прогноза."
                 )
                 
-                response = None
-                max_retries = 3
+                # Запрос без внешнего инструмента поиска (работает на любых ключах без ошибки 429)
+                response = client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=prompt,
+                )
                 
-                # Механизм авто-повтора при ошибке лимита (429)
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-3.6-flash',
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                tools=[types.Tool(google_search=types.Tool.GoogleSearch())]
-                            )
-                        )
-                        break
-                    except Exception as api_err:
-                        err_str = str(api_err)
-                        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                            if attempt < max_retries - 1:
-                                time.sleep(6)  # ждем 6 секунд перед повтором
-                                continue
-                        raise api_err
-
-                if response:
-                    new_signal = {
-                        "date": f"{today_date} в {current_time}",
-                        "content": response.text,
-                        "status": "⌛ Ожидание"
-                    }
-                    st.session_state.history.insert(0, new_signal)
-                    st.success("Живые матчи успешно найдены и проанализированы!")
+                new_signal = {
+                    "date": f"{today_date} в {current_time}",
+                    "content": response.text,
+                    "status": "⌛ Ожидание"
+                }
+                st.session_state.history.insert(0, new_signal)
+                st.success("Сигналы успешно созданы!")
                 
             except Exception as e:
-                st.error(f"Превышен лимит запросов API (Ошибка 429). Подождите 30-60 секунд и нажмите кнопку снова. Подробности: {e}")
+                st.error(f"Ошибка при запросе к Gemini API: {e}")
 
 st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
