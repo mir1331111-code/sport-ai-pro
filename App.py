@@ -1,20 +1,21 @@
 import streamlit as st
-from openai import OpenAI
+from google import genai
 import datetime
+from duckduckgo_search import DDGS
 
-st.set_page_config(page_title="Auto-Sniper: Perplexity Live", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Auto-Sniper: Авто-поиск матчей", page_icon="🤖", layout="centered")
 
 st.markdown("""
-<h1 style='text-align: center;'>🤖 Auto-Sniper: Авто-лайв поиск</h1>
-<p style='text-align: center; color: gray;'>ИИ автоматически сканирует интернет и находит реальные матчи в реальном времени.</p>
+<h1 style='text-align: center;'>🤖 Auto-Sniper: Автоматический поиск</h1>
+<p style='text-align: center; color: gray;'>ИИ автоматически находит реальные матчи на сегодня и формирует прогнозы.</p>
 """, unsafe_allow_html=True)
 
 if 'history' not in st.session_state:
     st.session_state.history = []
 
 st.sidebar.header("⚙️ Настройки и Статистика")
-# Ключ Perplexity API (начинается с pplx-...)
-api_key = st.sidebar.text_input("Ключ Perplexity API", type="password")
+# Обычный ключ Gemini API
+api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
 total_finished = 0
 total_wins = 0
@@ -40,54 +41,62 @@ today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
 st.subheader(f"⏱ Текущее время: {current_time} МСК ({today_date})")
-st.info("Нажми кнопку ниже — Perplexity API автоматически найдет реальные матчи в лайве и выдаст прогноз.")
+st.info("Нажми кнопку ниже — приложение само найдет актуальные матчи на сегодня через интернет и выдаст прогноз.")
 
 num_signals = st.slider("Количество сигналов", 1, 3, 2)
 
-if st.button("🔍 Найти реальные матчи в лайве (Авто)", type="primary"):
+if st.button("🔍 Найти матчи и сделать прогноз (Авто)", type="primary"):
     if not api_key:
-        st.error("⚠️ Введите ключ Perplexity API в боковой панели слева!")
+        st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
     else:
-        with st.spinner("Сканируем спортивные сайты в реальном времени..."):
+        with st.spinner("Ищем актуальные матчи в сети..."):
             try:
-                # Подключаемся к Perplexity API через базовый URL
-                client = OpenAI(api_key=api_key, base_url="https://api.perplexity.ai")
+                # 1. Автоматический поиск матчей через бесшумный Python-поисковик
+                query = f"футбол хоккей матчи сегодня flashscore sofascore {today_date}"
+                search_results = []
+                
+                with DDGS() as ddgs:
+                    for r in ddgs.text(query, max_results=6):
+                        search_results.append(r.get('body', ''))
+                
+                search_context = "\n".join(search_results)
+                if not search_context:
+                    search_context = "Топ-матчи европейских чемпионатов на сегодня."
+
+                # 2. Отправляем найденные данные в Gemini для глубокого анализа
+                client = genai.Client(api_key=api_key)
                 
                 prompt = (
-                    f"Сегодня {today_date}, текущее время {current_time} МСК. "
-                    "Найди в интернете реальные спортивные матчи (футбол, хоккей, теннис, баскетбол), которые идут ПРЯМО СЕЙЧАС в лайве или запланированы на сегодня на Flashscore, SofaScore и других спортивных сайтах. "
-                    f"Выбери {num_signals} самых актуальных матча. "
+                    f"Сегодня воскресенье, {today_date}, текущее время {current_time} МСК. "
+                    "Вот свежие данные из интернета по матчам на сегодня:\n"
+                    f"{search_context}\n\n"
+                    "Ты профессиональный спортивный аналитик, скаут и беттор. "
+                    f"На основе этих данных выбери {num_signals} самых надежных матча на сегодня. "
                     "Для каждого сигнала укажи: "
-                    "- ⏱ Точное время / Статус (минута матча в лайве или время начала). "
+                    "- ⏱ Время начала матча. "
                     "- 🌐 Турнир / Лига. "
                     "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
                     "- 🏆 Событие (Команды). "
-                    "- 🎯 Сигнал для ставки (Конкретный исход и коэффициент). "
+                    "- 🎯 Сигнал для ставки (Исход, рынок и коэффициент). "
                     "- 📈 Вероятность прохода (в %). "
-                    "- 💡 Краткая аналитика и обоснование."
+                    "- 💡 Детальная аналитика и обоснование."
                 )
                 
-                # Модель sonar сама ищет в интернете под капотом
-                response = client.chat.completions.create(
-                    model="sonar",
-                    messages=[
-                        {"role": "system", "content": "Ты профессиональный спортивный аналитик и скаут. Всегда используй самые свежие данные из поиска в реальном времени."},
-                        {"role": "user", "content": prompt}
-                    ]
+                response = client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=prompt,
                 )
-                
-                content = response.choices[0].message.content
                 
                 new_signal = {
                     "date": f"{today_date} в {current_time}",
-                    "content": content,
+                    "content": response.text,
                     "status": "⌛ Ожидание"
                 }
                 st.session_state.history.insert(0, new_signal)
-                st.success("Матчи успешно найдены!")
+                st.success("Матчи успешно найдены и проанализированы!")
                 
             except Exception as e:
-                st.error(f"Ошибка запроса: {e}")
+                st.error(f"Ошибка при обработке: {e}")
 
 st.markdown("---")
 st.subheader("📊 Трекер исходов и история сигналов")
@@ -132,4 +141,3 @@ else:
             st.rerun()
         
         st.markdown("---")
-        
