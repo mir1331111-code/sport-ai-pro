@@ -4,12 +4,13 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timezone
 import requests
 import streamlit as st
 from groq import Groq
 from streamlit_autorefresh import st_autorefresh
 
-# --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ (КАЖДЫЕ 15 МИНУТ) ---
+# --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ---
 count = st_autorefresh(interval=900000, key="auto_sniper_refresh")
 
 HISTORY_FILE = "match_history_pro.json"
@@ -20,7 +21,6 @@ def load_history():
     try:
       with open(HISTORY_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
-        # Поддержка старого и нового форматов во избежание ошибок
         if isinstance(data, list):
           return data
         elif isinstance(data, dict) and "bets" in data:
@@ -36,22 +36,6 @@ def save_history(history_data):
       json.dump(history_data, f, ensure_ascii=False, indent=4)
   except Exception:
     pass
-
-
-def calculate_devigged_probability(odds1, odds2):
-  try:
-    o1 = float(odds1)
-    o2 = float(odds2)
-    if o1 <= 1.0 or o2 <= 1.0:
-      return 0.5, 0.5
-    implied1 = 1.0 / o1
-    implied2 = 1.0 / o2
-    total_margin = implied1 + implied2
-    fair1 = implied1 / total_margin
-    fair2 = implied2 / total_margin
-    return round(fair1, 4), round(fair2, 4)
-  except Exception:
-    return 0.5, 0.5
 
 
 def calculate_kelly_stake(bankroll, odds, probability, fraction=0.25):
@@ -128,7 +112,6 @@ if "history" not in st.session_state:
 if "initial_bankroll" not in st.session_state:
   st.session_state.initial_bankroll = 10000.0
 
-# БАЗА ДАННЫХ ЛИГ И КЛЮЧЕЙ ДЛЯ THE ODDS API
 SPORT_GROUPS = {
     "⚽ Футбол": {
         "category": "soccer",
@@ -236,11 +219,15 @@ def send_telegram_message(token, chat_id, text):
     return False
 
 
-# ФУНКЦИЯ ПОЛУЧЕНИЯ РЕАЛЬНЫХ МАТЧЕЙ И КОЭФФИЦИЕНТОВ ИЗ THE ODDS API
-def fetch_matches_from_odds_api(endpoints_list, sport_category, api_key):
+# ФУНКЦИЯ ПОЛУЧЕНИЯ МАТЧЕЙ С ФИЛЬТРОМ ВРЕМЕНИ
+def fetch_matches_from_odds_api(
+    endpoints_list, sport_category, api_key, max_hours_ahead=12
+):
   raw_matches = []
   if not api_key:
     return raw_matches
+
+  now_utc = datetime.now(timezone.utc)
 
   for sport_key, label in endpoints_list:
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
@@ -255,9 +242,23 @@ def fetch_matches_from_odds_api(endpoints_list, sport_category, api_key):
       if resp.status_code == 200:
         events = resp.json()
         for ev in events:
+          comm_time_str = ev.get("commence_time", "")
+          if not comm_time_str:
+            continue
+
+          # Проверяем время матча, чтобы не брать игры, которые через неделю
+          comm_dt = datetime.fromisoformat(
+              comm_time_str.replace("Z", "+00:00")
+          )
+          hours_diff = (comm_dt - now_utc).total_seconds() / 3600.0
+
+          if (
+              hours_diff < -1 or hours_diff > max_hours_ahead
+          ):  # Пропускаем старые или слишком далекие матчи
+            continue
+
           t1 = ev.get("home_team", "Команда 1")
           t2 = ev.get("away_team", "Команда 2")
-          comm_time = ev.get("commence_time", "")
 
           odds_1, odds_x, odds_2 = 1.90, 3.20, 1.90
           bookmakers = ev.get("bookmakers", [])
@@ -281,35 +282,18 @@ def fetch_matches_from_odds_api(endpoints_list, sport_category, api_key):
               "team1_logo": f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66",
               "team2_logo": f"https://ui-avatars.com/api/?name={t2}&background=1e293b&color=00bfff",
               "status": (
-                  f"⏳ Начало: {comm_time[11:16]} (МСК)"
-                  if len(comm_time) >= 16
+                  f"⏳ Начало: {comm_time_str[11:16]} (UTC)"
+                  if len(comm_time_str) >= 16
                   else "⏳ Скоро"
               ),
               "is_finished": False,
               "score": "0:0",
               "state": "pre",
-              "short_detail": comm_time,
+              "short_detail": comm_time_str,
               "real_odds": {"1": odds_1, "X": odds_x, "2": odds_2},
           })
     except Exception:
       pass
-
-  # Фаллбек если ключа нет или API пустое
-  if not raw_matches:
-    raw_matches.append({
-        "sport_label": "Демо-матч (Введите API-ключ БК слева)",
-        "sport_category": sport_category,
-        "team1": "Арсенал",
-        "team2": "Манчестер Сити",
-        "team1_logo": "https://ui-avatars.com/api/?name=Arsenal&background=1e293b&color=00ff66",
-        "team2_logo": "https://ui-avatars.com/api/?name=ManCity&background=1e293b&color=00bfff",
-        "status": "⏳ Ожидание реального ключа БК",
-        "is_finished": False,
-        "score": "0:0",
-        "state": "pre",
-        "short_detail": "22:00",
-        "real_odds": {"1": 2.10, "X": 3.40, "2": 3.10},
-    })
 
   return raw_matches
 
@@ -364,6 +348,19 @@ odds_api_key = st.sidebar.text_input(
     "The Odds API Key",
     type="password",
     help="Ключ с the-odds-api.com для реальных кэфов",
+)
+
+# Полноценный фильтр времени матчей
+max_hours_filter = st.sidebar.slider(
+    "⏰ Искать матчи на ближайшие (часов):",
+    min_value=2,
+    max_value=48,
+    value=12,
+    step=2,
+    help=(
+        "Отсекает матчи, которые начнутся позже этого времени (чтобы не"
+        " заглядывать на неделю вперед)"
+    ),
 )
 
 st.sidebar.title("🎛️ Выбор окна терминала")
@@ -463,7 +460,7 @@ window_mapping = {
     "🎮 Киберспорт — Окно": ("🎮 Киберспорт", SPORT_GROUPS["🎮 Киберспорт"]),
 }
 
-# --- ВИРТУАЛЬНЫЙ СИНДИКАТОРНЫЙ ФИНАНСОВЫЙ ДАШБОРД ---
+# --- ФИНАНСОВЫЙ ДАШБОРД ---
 st.markdown("### 📊 Синдикатный финансовый дашборд Pro")
 fc1, fc2, fc3, fc4, fc5 = st.columns(5)
 fc1.metric(
@@ -490,8 +487,8 @@ if selected_window in window_mapping:
   col_ctrl1, col_ctrl2 = st.columns([2, 1])
   with col_ctrl1:
     st.info(
-        "💡 Линия подтягивается напрямую из БК через ваш The Odds API Key в"
-        " сайдбаре."
+        f"💡 Линия БК фильтруется по времени: показываются матчи на ближайшие"
+        f" {max_hours_filter} ч."
     )
   with col_ctrl2:
     scan_button = st.button(
@@ -499,10 +496,21 @@ if selected_window in window_mapping:
     )
 
   if scan_button:
-    with st.spinner("Запрашиваем коэффициенты БК и запускаем ИИ-анализ..."):
+    with st.spinner("Фильтруем линию БК и запускаем ИИ-анализ..."):
       matches = fetch_matches_from_odds_api(
-          sport_data["endpoints"], sport_data["category"], odds_api_key
+          sport_data["endpoints"],
+          sport_data["category"],
+          odds_api_key,
+          max_hours_ahead=max_hours_filter,
       )
+
+      if not matches:
+        st.warning(
+            "⚠️ В выбранном диапазоне времени (на ближайшие"
+            f" {max_hours_filter} ч.) матчей не найдено. Попробуйте увеличить"
+            " интервал в сайдбаре."
+        )
+
       analyzed_cards = []
       for m in matches[:6]:
         real_o1 = m["real_odds"]["1"]
@@ -567,9 +575,7 @@ if selected_window in window_mapping:
         st.session_state.history.insert(
             0,
             {
-                "timestamp": datetime.datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "sport": sport_title,
                 "data": analyzed_cards,
             },
@@ -585,7 +591,10 @@ if selected_window in window_mapping:
       if entry.get("sport") == sport_title
   ]
   if not filtered_history:
-    st.info("Нет сохраненных сигналов. Запустите сканер выше.")
+    st.info(
+        "Нет сохраненных сигналов. Запустите сканер для поиска матчей на"
+        " сегодня."
+    )
   else:
     for entry in filtered_history:
       st.caption(f"📅 Сессия от: {entry.get('timestamp')}")
@@ -632,8 +641,6 @@ elif selected_window == "🚨 Лайв-радар (Камбэки)":
       "Мониторинг матчей, где фаворит уступает в счете по ходу встречи, но"
       " владеет инициативой."
   )
-  if st.button("📡 Сканировать лайв-ситуации"):
-    st.info("Лайв-модуль активен. Проверьте вкладки видов спорта.")
 
 elif selected_window == "🔬 Эксперимент: Big Data & ML":
   st.subheader("🔬 Экспериментальный модуль Big Data & Machine Learning")
