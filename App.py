@@ -652,17 +652,16 @@ with tab_current:
         matches_data = latest.get("data", [])
 
         st.subheader(
-            f"🔥 Сессия ({latest['date'])}) — {latest.get('ai_source', 'ИИ')}"
+            f"🔥 Сессия ({latest['date']}) — {latest.get('ai_source', 'ИИ')}"
         )
 
         if not matches_data:
             st.warning("В текущей сессии нет прогнозов.")
         else:
-            # Сетка в 3 колонки для красивого и компактного интерфейса
             cols = st.columns(3)
             for idx, card in enumerate(matches_data):
                 col_idx = idx % 3
-                st.subheader(f"🔥 Сессия ({latest['date']}) — {latest.get('ai_source', 'ИИ')}")
+                with cols[col_idx]:
                     with st.container(border=True):
                         tag = card.get("value_tag", "💎 Валуй")
                         phase_str = card.get("game_phase", "до перерыва").upper()
@@ -736,7 +735,6 @@ with tab_current:
                             f"Статус: **{card.get('status', '⌛ Ожидание')}**"
                         )
 
-                        # Интерактивные кнопки результатов (лампочки / быстрый учет)
                         b_c1, b_c2, b_c3 = st.columns(3)
                         if b_c1.button(
                             "🟢 Поб.", key=f"latest_win_{idx}", use_container_width=True
@@ -821,7 +819,6 @@ with tab_manual:
                 ):
                     try:
                         all_matches = fetch_all_sports_matches()
-                        # Фильтруем по категории
                         cat_map_rev = {
                             "⚽ Футбол (АПЛ / Ла Лига / РПЛ)": "soccer",
                             "🏀 Баскетбол (НБА)": "basketball",
@@ -836,9 +833,7 @@ with tab_manual:
                         ]
 
                         if not filtered_matches:
-                            filtered_matches = (
-                                all_matches  д берем любые доступные
-                            )
+                            filtered_matches = all_matches
 
                         match_lines = [
                             f"- [{m['sport_label']}] {m['team1']} vs {m['team2']} (Счет: {m['score']}, Статус: {m['status']})"
