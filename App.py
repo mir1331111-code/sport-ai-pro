@@ -7,6 +7,11 @@ import time
 import requests
 import streamlit as st
 from groq import Groq
+from streamlit_autorefresh import st_autorefresh
+
+# --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ---
+# 3600000 миллисекунд = 1 час. Вкладка обновляется и запускает сканирование всех видов спорта.
+count = st_autorefresh(interval=3600000, key="auto_sniper_refresh")
 
 HISTORY_FILE = "match_history.json"
 
@@ -30,11 +35,14 @@ def save_history(history_data):
 
 
 st.set_page_config(
-    page_title="Auto-Sniper: Elite Terminals", page_icon="🎯", layout="wide"
+    page_title="Auto-Sniper: Global Terminals", page_icon="🎯", layout="wide"
 )
 
 if "history" not in st.session_state:
     st.session_state.history = load_history()
+
+if "last_scan_timestamp" not in st.session_state:
+    st.session_state.last_scan_timestamp = 0
 
 # БАЗА ДАННЫХ ЛИГ ПО КАТЕГОРИЯМ
 SPORT_GROUPS = {
@@ -83,19 +91,19 @@ SPORT_GROUPS = {
 
 SPORT_BACKGROUNDS = {
     "soccer": [
-        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=80"
     ],
     "basketball": [
-        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1920&q=80"
     ],
     "hockey": [
-        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1580748141549-71748dbe0bdc?auto=format&fit=crop&w=1920&q=80"
     ],
     "volleyball": [
-        "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=1920&q=80"
     ],
     "tennis": [
-        "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80",
+        "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=1920&q=80"
     ],
     "default": [
         "https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&w=1920&q=80"
@@ -317,6 +325,156 @@ def fetch_active_groq_models(api_key):
         return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
+def run_background_global_scan(
+    groq_key,
+    gemini_key,
+    ai_mode_setting,
+    groq_model_name,
+    tg_token,
+    tg_chat_id,
+):
+    current_time_ts = time.time()
+    if current_time_ts - st.session_state.last_scan_timestamp < 3300:
+        return
+
+    st.session_state.last_scan_timestamp = current_time_ts
+    today_date = datetime.date.today().strftime("%d.%m.%Y")
+    current_time_str = datetime.datetime.now().strftime("%H:%M")
+
+    for sport_name, sport_info in SPORT_GROUPS.items():
+        cat = sport_info["category"]
+        endpoints = sport_info["endpoints"]
+
+        try:
+            real_matches = fetch_matches_for_endpoints(
+                endpoints, cat, only_prematch=True
+            )
+            if not real_matches:
+                continue
+
+            existing_teams = set()
+            for entry in st.session_state.history:
+                for card in entry.get("data", []):
+                    if card.get("sport_category") == cat:
+                        existing_teams.add(card.get("team1", "").lower())
+                        existing_teams.add(card.get("team2", "").lower())
+
+            filtered_matches = [
+                m
+                for m in real_matches
+                if m["team1"].lower() not in existing_teams
+                and m["team2"].lower() not in existing_teams
+            ]
+            if not filtered_matches:
+                continue
+
+            match_lines = [
+                f"{idx+1}. [{rm['sport_label']}] {rm['team1']} VS {rm['team2']} | {rm['status']}"
+                for idx, rm in enumerate(filtered_matches[:15])
+            ]
+            context_text = (
+                f"ДОСТУПНЫЕ МАТЧИ ({sport_name}):\n"
+                + "\n".join(match_lines)
+            )
+
+            base_prompt = f"""
+Сегодня {today_date}, время {current_time_str}. Вид спорта: {sport_name}
+{context_text}
+
+СТРОГИЕ ПРАВИЛА:
+1. Выбери ТОЛЬКО 1 самое безупречное железобетонное событие с вероятностью прохода от 90%. Если идеального нет, верни пустой список матчей.
+2. Коэффициент: от 1.50 до 2.10.
+
+Верни СТРОГО JSON формата:
+{{
+  "matches": [
+    {{
+      "team1": "Команда 1",
+      "team2": "Команда 2",
+      "league": "Лига",
+      "time_status": "Время",
+      "bet_type": "Маркет",
+      "bet": "Ставка",
+      "coefficient": "1.85",
+      "confidence_percent": 92,
+      "value_tag": "💎 ЖЕЛЕЗО",
+      "x_factor": "Главный довод",
+      "tactical_summary": "Разбор"
+    }}
+  ]
+}}
+"""
+            raw_response = ""
+            if ai_mode_setting == "🧠 Только Groq AI" and groq_key:
+                client = Groq(api_key=groq_key)
+                comp = client.chat.completions.create(
+                    model=groq_model_name or "llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": base_prompt}],
+                    temperature=0.1,
+                )
+                raw_response = comp.choices[0].message.content
+            elif ai_mode_setting == "✨ Только Gemini AI" and gemini_key:
+                raw_response = call_gemini_api(gemini_key, base_prompt)
+            else:
+                continue
+
+            if not raw_response:
+                continue
+
+            cleaned = re.sub(
+                r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
+            ).strip()
+            json_start = cleaned.find("{")
+            json_end = cleaned.rfind("}") + 1
+            parsed_json = json.loads(cleaned[json_start:json_end])
+            parsed_matches = parsed_json.get("matches", [])
+
+            if parsed_matches:
+                pm = parsed_matches[0]
+                t1 = pm.get("team1", "")
+                match_found = next(
+                    (
+                        rm
+                        for rm in real_matches
+                        if t1.lower() in rm["team1"].lower()
+                    ),
+                    None,
+                )
+                if match_found:
+                    pm["team1_logo"] = match_found["team1_logo"]
+                    pm["team2_logo"] = match_found["team2_logo"]
+                    pm["league"] = match_found["sport_label"]
+                else:
+                    pm["team1_logo"] = f"https://ui-avatars.com/api/?name={t1}&background=1e293b&color=00ff66"
+                    pm["team2_logo"] = f"https://ui-avatars.com/api/?name=Team2&background=1e293b&color=00bfff"
+
+                pm["sport_category"] = cat
+                pm["score"] = "0:0"
+                pm["status"] = "⌛ Ожидание"
+
+                if tg_token and tg_chat_id:
+                    tg_text = (
+                        f"💎 *ФОНОВЫЙ СИГНАЛ: {sport_name}*\n\n"
+                        f"🏆 {pm.get('league')}\n"
+                        f"⚽ *{pm.get('team1')} vs {pm.get('team2')}*\n"
+                        f"📌 Ставка: `{pm.get('bet')}` (Кф `{pm.get('coefficient')}`)\n"
+                        f"🔥 Проход: `{pm.get('confidence_percent')}%`\n"
+                        f"💡 Обоснование: {pm.get('x_factor')}"
+                    )
+                    send_telegram_message(tg_token, tg_chat_id, tg_text)
+
+                new_entry = {
+                    "id": str(time.time()),
+                    "date": f"{today_date} {current_time_str} ({sport_name} - Авто)",
+                    "ai_source": ai_mode_setting,
+                    "data": [pm],
+                }
+                st.session_state.history.insert(0, new_entry)
+                save_history(st.session_state.history)
+        except Exception:
+            pass
+
+
 # --- НАВИГАЦИЯ И НАСТРОЙКИ В САЙДБАРЕ ---
 st.sidebar.title("🎛️ Настройки интерфейса")
 theme_choice = st.sidebar.selectbox(
@@ -382,6 +540,17 @@ if groq_api_key:
     models_list = fetch_active_groq_models(groq_api_key)
     selected_groq_model = st.sidebar.selectbox(
         "Модель Groq", models_list, index=0
+    )
+
+# Автоматический запуск глобального фонового сканирования по всем вкладкам
+if groq_api_key or gemini_api_key:
+    run_background_global_scan(
+        groq_api_key,
+        gemini_api_key,
+        ai_mode,
+        selected_groq_model,
+        telegram_token,
+        telegram_chat_id,
     )
 
 window_mapping = {
@@ -488,7 +657,6 @@ if selected_window != "📜 Общий Архив":
 
     col_scan1, col_scan2 = st.columns([2, 1])
     with col_scan1:
-        # Снижено до 1-2 сигналов по умолчанию для максимального качества отбора
         num_signals = st.slider(
             "Количество сигналов (рекомендуется 1-2):", 1, 2, 1, key=f"slider_{current_cat}"
         )
@@ -514,7 +682,6 @@ if selected_window != "📜 Общий Архив":
                         current_endpoints, current_cat, only_prematch=True
                     )
                     
-                    # Исключаем матчи, которые уже есть в истории, чтобы не дублировать
                     existing_teams = set()
                     for entry in st.session_state.history:
                         for card in entry.get("data", []):
