@@ -9,7 +9,7 @@ st.set_page_config(
 
 st.markdown(
     """
-<h1 style='text-align: center;'>🤖 Auto-Sniper: Точный авто-поиск матчей</h1>
+<h1 style='text-align: center;'>🤖 Auto-Sniper: Автоматический поиск</h1>
 <p style='text-align: center; color: gray;'>Многоуровневый сканер интернета для поиска реальных матчей на сегодня.</p>
 """,
     unsafe_allow_html=True,
@@ -59,9 +59,8 @@ if st.button("🔍 Найти реальные матчи и сделать пр
   if not api_key:
     st.error("⚠️ Введите ключ Gemini API в боковой панели слева!")
   else:
-    with st.spinner("Многоуровневый сканирование спортивных баз данных..."):
+    with st.spinner("Многоуровневое сканирование спортивных баз данных..."):
       try:
-        # Делаем несколько точных поисковых запросов параллельно
         queries = [
             f"футбол матчи расписание сегодня 13 сентября 2026",
             f"апл ла лига сериал а бундеслига матчи 13.09.2026",
@@ -87,7 +86,6 @@ if st.button("🔍 Найти реальные матчи и сделать пр
               " воскресенье 13 сентября 2026"
           )
 
-        # Отправляем очищенные данные в Gemini с жестким требованием
         client = genai.Client(api_key=api_key)
 
         prompt = (
@@ -100,7 +98,7 @@ if st.button("🔍 Найти реальные матчи и сделать пр
             " матчи-пустышки. Используй только реальные пары соперников."
             " Для каждого сигнала укажи строго по пунктам: "
             "- ⏱ Время начала матча (по МСК). "
-            "- 🌐 Турнир / Лига (например: АПЛ, Ла Лига и т.д.). "
+            "- 🌐 Турнир / Лига. "
             "- ⚠️ Уровень риска (🟢 Ультра-надежный или 🟡 Стандартный). "
             "- 🏆 Событие (Реальные команды: Команда 1 - Команда 2). "
             "- 🎯 Сигнал для ставки (Конкретный исход и примерный коэффициент)."
@@ -149,11 +147,8 @@ else:
 
     st.markdown(
         f"""
-        <div style="background-color: {bg_color}; border-left: 6px solid"
-        f" {border_color}; padding: 12px; border-radius: 6px; margin-top: 15px;"
-        f" margin-bottom: 5px; color: {text_color};">
-            <b>Сигнал #{signal_num}</b> (Запрошен: {item['date']})"
-        f" &nbsp;|&nbsp; Статус: <b>{status}</b>
+        <div style="background-color: {bg_color}; border-left: 6px solid {border_color}; padding: 12px; border-radius: 6px; margin-top: 15px; margin-bottom: 5px; color: {text_color};">
+            <b>Сигнал #{signal_num}</b> (Запрошен: {item['date']}) &nbsp;|&nbsp; Статус: <b>{status}</b>
         </div>
         """,
         unsafe_allow_html=True,
