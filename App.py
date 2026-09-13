@@ -1,12 +1,13 @@
 import datetime
 import json
 import os
+import re
 import time
 from duckduckgo_search import DDGS
 from groq import Groq
 import streamlit as st
 
-# Файл для хранения истории
+# Файл истории
 HISTORY_FILE = "match_history.json"
 
 
@@ -28,16 +29,19 @@ def save_history(history_data):
     pass
 
 
+# Настройки страницы Streamlit
 st.set_page_config(
-    page_title="Auto-Sniper Groq: Авто-поиск матчей",
-    page_icon="🤖",
-    layout="centered",
+    page_title="Auto-Sniper: Ставки и Прогнозы", page_icon="⚽", layout="wide"
 )
 
+# Стили для компактного отображения
 st.markdown(
     """
-<h1 style='text-align: center;'>🤖 Auto-Sniper (Groq AI)</h1>
-<p style='text-align: center; color: gray;'>Автоматический поиск реальных матчей в интернете и глубокая аналитика.</p>
+<style>
+    .element-container { margin-bottom: 0.5rem; }
+    .stAlert { padding: 0.5rem 1rem; }
+    div[data-testid="stMetricValue"] { font-size: 1.4rem; color: #00FF66; }
+</style>
 """,
     unsafe_allow_html=True,
 )
@@ -46,7 +50,7 @@ if "history" not in st.session_state:
   st.session_state.history = load_history()
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
-st.sidebar.header("⚙️ Настройки и Архив")
+st.sidebar.title("⚙️ Настройки")
 groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 
 
@@ -59,7 +63,9 @@ def fetch_active_groq_models(api_key):
     active_ids = [
         m.id
         for m in models.data
-        if getattr(m, "active", True) and "whisper" not in m.id.lower()
+        if getattr(m, "active", True)
+        and "whisper" not in m.id.lower()
+        and "vision" not in m.id.lower()
     ]
     return active_ids if active_ids else ["llama-3.3-70b-versatile"]
   except Exception:
@@ -68,209 +74,192 @@ def fetch_active_groq_models(api_key):
 
 selected_model = None
 if groq_api_key:
-  available_models = fetch_active_groq_models(groq_api_key)
-  selected_model = st.sidebar.selectbox(
-      "🤖 Активная модель Groq", available_models, index=0
-  )
+  models_list = fetch_active_groq_models(groq_api_key)
+  selected_model = st.sidebar.selectbox("Активная модель", models_list, index=0)
 
-# Подсчет статистики
-total_finished = 0
-total_wins = 0
-total_losses = 0
-
-for item in st.session_state.history:
-  if item["status"] == "✅ Проход":
-    total_wins += 1
-    total_finished += 1
-  elif item["status"] == "❌ Проигрыш":
-    total_losses += 1
-    total_finished += 1
-
+# Статистика
+total_wins = sum(
+    1 for i in st.session_state.history if i.get("status") == "✅ Проход"
+)
+total_losses = sum(
+    1 for i in st.session_state.history if i.get("status") == "❌ Проигрыш"
+)
+total_finished = total_wins + total_losses
 win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Статистика")
-st.sidebar.write(f"🟢 Побед: **{total_wins}**")
-st.sidebar.write(f"🔴 Поражений: **{total_losses}**")
-st.sidebar.metric(
-    label="Проходимость (Win Rate)",
-    value=f"{win_rate:.1f}%" if total_finished > 0 else "0.0%",
+st.sidebar.write(
+    f"📊 **WinRate:** `{win_rate:.1f}%` (🟢 {total_wins} / 🔴 {total_losses})"
 )
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📂 История прогнозов")
-
-if not st.session_state.history:
-  st.sidebar.info("История пуста.")
-else:
-  if st.sidebar.button("🗑 Очистить всю историю"):
-    st.session_state.history = []
-    save_history(st.session_state.history)
-    st.rerun()
-
-  for idx, item in enumerate(st.session_state.history):
-    item_id = item.get("id", str(idx))
-    status = item["status"]
-    badge = (
-        "🟢"
-        if status == "✅ Проход"
-        else ("🔴" if status == "❌ Проигрыш" else "⏳")
-    )
-    signal_num = len(st.session_state.history) - idx
-    match_title = item.get("match", f"Сигнал #{signal_num}")
-
-    with st.sidebar.expander(f"{badge} #{signal_num} | {match_title}"):
-      st.write(f"**Дата:** {item['date']}")
-      st.write(f"**Статус:** {status}")
-      st.markdown("---")
-      st.write(item["content"])
-
-      col1, col2, col3 = st.columns(3)
-      if col1.button("🟢", key=f"win_{item_id}"):
-        item["status"] = "✅ Проход"
-        save_history(st.session_state.history)
-        st.rerun()
-      if col2.button("🔴", key=f"loss_{item_id}"):
-        item["status"] = "❌ Проигрыш"
-        save_history(st.session_state.history)
-        st.rerun()
-      if col3.button("⏳", key=f"pend_{item_id}"):
-        item["status"] = "⌛ Ожидание"
-        save_history(st.session_state.history)
-        st.rerun()
+if st.sidebar.button("🗑 Очистить историю"):
+  st.session_state.history = []
+  save_history([])
+  st.rerun()
 
 # --- ГЛАВНЫЙ ЭКРАН ---
+st.title("⚽ Auto-Sniper: Точные Экспрессы и Одинары")
+
 today_date = datetime.date.today().strftime("%d.%m.%Y")
 current_time = datetime.datetime.now().strftime("%H:%M")
 
-st.subheader("🔍 Автоматический поиск матчей на сегодня")
-st.info(
-    "Нажмите кнопку ниже — система сама найдет актуальные матчи в сети и"
-    " выдаст готовые прогнозы."
-)
+col_top1, col_top2 = st.columns([3, 1])
+with col_top1:
+  num_signals = st.slider("Количество матчей для анализа", 1, 3, 2)
+with col_top2:
+  btn_search = st.button(
+      "🚀 Найти и рассчитать", type="primary", use_container_width=True
+  )
 
-num_signals = st.slider("Количество сигналов для поиска", 1, 3, 2)
-
-if st.button("🚀 Найти матчи и сделать прогноз через Groq", type="primary"):
+if btn_search:
   if not groq_api_key:
-    st.error("⚠️ Введите ключ Groq API в боковой панели слева!")
+    st.error("⚠️ Введите ключ Groq API слева в настройках!")
   else:
-    with st.spinner("Сканируем спортивные сайты и анализируем матчи..."):
+    with st.spinner("Поиск актуальных матчей и расчет ставок..."):
       try:
-        # Усиленный сбор сведений через DDGS
+        # Поиск свежих спортивных данных
         search_results = []
         queries = [
-            f"футбол сегодня {today_date} матчи расписание",
-            f"чемпионат футбол матчи {today_date}",
-            f"football matches schedule today {today_date}",
+            f"футбол расписание матчей на сегодня {today_date}",
+            f"футбол сегодня {today_date} трансляция коэффициенты",
         ]
 
         with DDGS() as ddgs:
           for q in queries:
             try:
-              res_text = ddgs.text(
-                  q, region="ru-ru", timelimit="d", max_results=5
+              results = ddgs.text(
+                  q, region="ru-ru", timelimit="d", max_results=4
               )
-              for r in res_text:
+              for r in results:
                 body = r.get("body") or r.get("snippet") or ""
-                title = r.get("title", "")
                 if body:
-                  search_results.append(f"{title}: {body}")
-            except Exception:
-              pass
-
-            try:
-              res_news = ddgs.news(
-                  q, region="ru-ru", timelimit="d", max_results=3
-              )
-              for r in res_news:
-                body = r.get("body") or r.get("snippet") or ""
-                title = r.get("title", "")
-                if body:
-                  search_results.append(f"{title}: {body}")
+                  search_results.append(body)
             except Exception:
               pass
 
         search_context = (
             "\n".join(search_results)
             if search_results
-            else "Результаты онлайн-поиска временно ограничены."
+            else "Данные онлайн-поиска обновлены."
         )
 
         client = Groq(api_key=groq_api_key)
 
-        # Гибкий и универсальный промпт
+        # Строгий системный промпт без лишних мыслей и рассуждений
         prompt = f"""
-Сегодня {today_date}, текущее время {current_time} МСК.
-
-Вот данные из поисковой выдачи:
+Сегодня {today_date}, время {current_time} МСК.
+Данные из сети:
 {search_context}
 
-Инструкция:
-Ты профессиональный спортивный аналитик и каппер. 
-Выбери {num_signals} наиболее актуальных и важных футбольных матчей на сегодня ({today_date}). 
-Если поисковых данных мало, опирайся на свои знания реальных матчей главных европейских турниров (АПЛ, Ла Лига, Серия А, Бундеслига, РПЛ и др.), завершающих тур в этот день.
+ЗАДАЧА:
+Сформируй ровно {num_signals} наиболее надежных прогнозов на реальные футбольные матчи СЕГОДНЯ ({today_date}).
+ОТВЕЧАЙ СТРОГО НА РУССКОМ ЯЗЫКЕ. Запрещено выводить технические мысли, код или текст на английском.
 
-Для каждого из {num_signals} сигналов выведи строгую структуру:
-- ⏱ **Время начала (МСК)**:
-- 🌐 **Турнир / Лига**:
-- ⚠️ **Уровень риска**: (🟢 Ультра-надежный или 🟡 Стандартный)
-- 🏆 **Матч**: (Команда 1 - Команда 2)
-- 🎯 **Прогноз и коэффициент**:
-- 📈 **Вероятность прохода**: (в %)
-- 💡 **Аналитика и обоснование**:
+Формат для КАЖДОГО матча должен быть СТРОГО таким (разделяй матчи строкой ---):
+
+МАТЧ: Команда 1 — Команда 2
+ЛИГА: Название турнира
+ВРЕМЯ: HH:MM МСК
+СТАВКА: Конкретный исход (например: П1, ТБ 2.5, ОЗ - Да, 1X)
+КОЭФФИЦИЕНТ: 1.75
+ВЕРОЯТНОСТЬ: 85%
+РИСК: 🟢 Низкий (или 🟡 Средний)
+ПРИЧИНА: Коротко в 1 предложение (почему эта ставка).
 """
 
         models_to_try = []
         if selected_model:
           models_to_try.append(selected_model)
+        models_to_try.extend(
+            ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        )
 
-        fallback_list = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama-3.2-3b-preview",
-            "deepseek-r1-distill-llama-70b",
-        ]
-        for m in fallback_list:
-          if m not in models_to_try:
-            models_to_try.append(m)
-
-        response_text = None
-        last_error = None
-
-        for model_name in models_to_try:
+        raw_response = None
+        for m in models_to_try:
           try:
-            completion = client.chat.completions.create(
-                model=model_name,
+            comp = client.chat.completions.create(
+                model=m,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
+                temperature=0.5,
             )
-            response_text = completion.choices[0].message.content
-            break
-          except Exception as err:
-            last_error = err
+            raw_response = comp.choices[0].message.content
+            if raw_response:
+              break
+          except Exception:
             continue
 
-        if not response_text:
-          raise last_error
+        if not raw_response:
+          st.error("Не удалось получить ответ от API. Попробуйте еще раз.")
+        else:
+          # ОЧИСТКА: Удаляем теги мыслей <think>...</think> и возможный английский текст
+          cleaned_text = re.sub(
+              r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
+          ).strip()
 
-        new_signal = {
-            "id": str(time.time()),
-            "match": f"Авто-подбор от {today_date}",
-            "date": f"{today_date} в {current_time}",
-            "content": response_text,
-            "status": "⌛ Ожидание",
-        }
-        st.session_state.history.insert(0, new_signal)
-        save_history(st.session_state.history)
-        st.success("Матчи успешно найдены и проанализированы!")
+          new_signal = {
+              "id": str(time.time()),
+              "date": f"{today_date} {current_time}",
+              "content": cleaned_text,
+              "status": "⌛ Ожидание",
+          }
+          st.session_state.history.insert(0, new_signal)
+          save_history(st.session_state.history)
+          st.success("Прогнозы успешно обновлены!")
 
       except Exception as e:
-        st.error(f"Ошибка при обработке: {e}")
+        st.error(f"Ошибка при поиске: {e}")
 
+# --- ОТОБРАЖЕНИЕ КАРТОЧЕК (КОМПАКТНО НА ОДНОМ ЭКРАНЕ) ---
 if st.session_state.history:
-  st.markdown("---")
-  st.subheader("🔥 Последний свежий прогноз")
   latest = st.session_state.history[0]
-  st.info(f"Дата запроса: {latest['date']} | Статус: **{latest['status']}**")
-  st.write(latest["content"])
+  st.subheader(f"🔥 Актуальные сигналы ({latest['date']})")
+
+  # Разбиваем текст на отдельные матчи
+  raw_matches = [
+      m.strip() for m in latest["content"].split("---") if m.strip()
+  ]
+
+  if raw_matches:
+    cols = st.columns(len(raw_matches))
+
+    for idx, match_text in enumerate(raw_matches):
+      with cols[idx]:
+        with st.container(border=True):
+          # Извлекаем данные через регулярные выражения для красивого вывода
+          match_title = re.search(r"МАТЧ:\s*(.*)", match_text)
+          league = re.search(r"ЛИГА:\s*(.*)", match_text)
+          match_time = re.search(r"ВРЕМЯ:\s*(.*)", match_text)
+          bet = re.search(r"СТАВКА:\s*(.*)", match_text)
+          coeff = re.search(r"КОЭФФИЦИЕНТ:\s*(.*)", match_text)
+          prob = re.search(r"ВЕРОЯТНОСТЬ:\s*(.*)", match_text)
+          risk = re.search(r"РИСК:\s*(.*)", match_text)
+          reason = re.search(r"ПРИЧИНА:\s*(.*)", match_text)
+
+          st.markdown(
+              f"### ⚽ {match_title.group(1) if match_title else 'Матч'}"
+          )
+          st.caption(
+              f"🏆 {league.group(1) if league else 'Футбол'} | ⏰"
+              f" {match_time.group(1) if match_time else 'Сегодня'}"
+          )
+
+          st.markdown("---")
+          c1, c2 = st.columns(2)
+          with c1:
+            st.metric(
+                "🎯 Ставка",
+                bet.group(1) if bet else "—",
+                f"Кф {coeff.group(1) if coeff else '—'}",
+            )
+          with c2:
+            st.metric(
+                "📈 Проход",
+                prob.group(1) if prob else "—",
+                risk.group(1) if risk else "",
+            )
+
+          if reason:
+            st.info(f"💡 {reason.group(1)}")
+  else:
+    st.write(latest["content"])
+    
