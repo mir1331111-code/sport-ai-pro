@@ -163,10 +163,21 @@ def call_gemini_api(api_key, prompt_text):
   return None
 
 
-# Sidebar
-st.sidebar.title("⚙️ Интеллект ИИ (Двухъядерный)")
-groq_api_key = st.sidebar.text_input("1. Ключ Groq API", type="password")
-gemini_api_key = st.sidebar.text_input("2. Ключ Gemini API", type="password")
+# --- БОКОВАЯ ПАНЕЛЬ С ВЫБОРОМ РЕЖИМА ---
+st.sidebar.title("⚙️ Настройки ИИ")
+
+ai_mode = st.sidebar.radio(
+    "Режим анализа:",
+    [
+        "🧠 Только Groq AI",
+        "✨ Только Gemini AI",
+        "🤖🤖 Консилиум (Groq + Gemini)",
+    ],
+    index=0,
+)
+
+groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
+gemini_api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
 
 def fetch_active_groq_models(api_key):
@@ -191,7 +202,7 @@ if groq_api_key:
   models_list = fetch_active_groq_models(groq_api_key)
   selected_groq_model = st.sidebar.selectbox("Модель Groq", models_list, index=0)
 
-# Statistics calculation
+# Расчет статистики
 total_wins = 0
 total_losses = 0
 total_pending = 0
@@ -213,7 +224,7 @@ for item in st.session_state.history:
 total_finished = total_wins + total_losses
 win_rate = (total_wins / total_finished * 100) if total_finished > 0 else 0.0
 
-st.title("⚡ Auto-Sniper: Консилиум Groq + Gemini")
+st.title("⚡ Auto-Sniper: Анализ Матчей")
 
 s_c1, s_c2, s_c3, s_c4, s_c5 = st.columns(5)
 s_c1.metric("📊 Win Rate", f"{win_rate:.1f}%")
@@ -251,7 +262,7 @@ if s_c5.button("🔄 Обновить счета LIVE", use_container_width=True
 st.markdown("---")
 
 tab_current, tab_history = st.tabs(
-    ["🔥 Генерировать Прогнозы (Два ИИ)", "📜 Умный Архив & История Счетов"]
+    ["🔥 Генерировать Прогнозы", "📜 Умный Архив & История Счетов"]
 )
 
 with tab_current:
@@ -263,15 +274,27 @@ with tab_current:
     num_signals = st.slider("Сколько матчей проанализировать:", 1, 4, 2)
   with c_input2:
     btn_search = st.button(
-        "🧠 Консилиум и Расчет", type="primary", use_container_width=True
+        f"🚀 Анализ ({ai_mode.split()[1]})",
+        type="primary",
+        use_container_width=True,
     )
 
   if btn_search:
-    if not groq_api_key and not gemini_api_key:
-      st.error("⚠️ Введите хотя бы один API ключ (Groq или Gemini) слева!")
+    # Проверки наличия ключей под выбранный режим
+    if ai_mode == "🧠 Только Groq AI" and not groq_api_key:
+      st.error("⚠️ Укажите API ключ Groq в левом меню!")
+    elif ai_mode == "✨ Только Gemini AI" and not gemini_api_key:
+      st.error("⚠️ Укажите API ключ Gemini в левом меню!")
+    elif (
+        ai_mode == "🤖🤖 Консилиум (Groq + Gemini)"
+        and (not groq_api_key or not gemini_api_key)
+    ):
+      st.error(
+          "⚠️ Для режима Консилиума нужны ОБА ключа: и Groq API, и Gemini API!"
+      )
     else:
       with st.spinner(
-          "Запуск совместного разума Groq + Gemini и сбор матчей..."
+          f"Запуск {ai_mode} и сбор свежей статистики спортивных событий..."
       ):
         try:
           real_matches = fetch_all_sports_matches()
@@ -316,7 +339,7 @@ with tab_current:
 Выбери {num_signals} самых надежных матча. Проанализируй формы команд, личные встречи и текущий счет.
 Дай точную ставку (Тотал, Фора, Победитель, Обе Забьют).
 
-Верни СТРОГО JSON формата:
+Верни СТРОГО JSON формата и ничего лишнего:
 {{
   "matches": [
     {{
@@ -336,41 +359,33 @@ with tab_current:
 }}
 """
 
-          parsed_json = None
-          used_ai = "Single AI"
+          raw_response = ""
 
-          if groq_api_key and gemini_api_key:
-            used_ai = "🤖🤖 Консенсус Groq + Gemini"
-            gemini_raw = call_gemini_api(gemini_api_key, base_prompt)
-
-            consensus_prompt = (
-                base_prompt
-                + f"\n\nМнение модели Gemini:\n{gemini_raw}\nСинтезируй общее окончательное решение в формате JSON!"
-            )
-
-            client = Groq(api_key=groq_api_key)
-            comp = client.chat.completions.create(
-                model=selected_groq_model or "llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": consensus_prompt}],
-                temperature=0.2,
-                response_format={"type": "json_object"},
-            )
-            raw_response = comp.choices[0].message.content
-
-          elif groq_api_key:
-            used_ai = "🧠 Groq AI"
+          if ai_mode == "🧠 Только Groq AI":
             client = Groq(api_key=groq_api_key)
             comp = client.chat.completions.create(
                 model=selected_groq_model or "llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": base_prompt}],
                 temperature=0.2,
-                response_format={"type": "json_object"},
             )
             raw_response = comp.choices[0].message.content
 
-          else:
-            used_ai = "✨ Gemini AI"
+          elif ai_mode == "✨ Только Gemini AI":
             raw_response = call_gemini_api(gemini_api_key, base_prompt)
+
+          else:  # Консилиум
+            gemini_raw = call_gemini_api(gemini_api_key, base_prompt)
+            consensus_prompt = (
+                base_prompt
+                + f"\n\nМнение модели Gemini:\n{gemini_raw}\nСинтезируй общее окончательное решение и верни СТРОГО JSON формата!"
+            )
+            client = Groq(api_key=groq_api_key)
+            comp = client.chat.completions.create(
+                model=selected_groq_model or "llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": consensus_prompt}],
+                temperature=0.2,
+            )
+            raw_response = comp.choices[0].message.content
 
           cleaned = re.sub(
               r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
@@ -413,12 +428,12 @@ with tab_current:
           new_entry = {
               "id": str(time.time()),
               "date": f"{today_date} {current_time}",
-              "ai_source": used_ai,
+              "ai_source": ai_mode,
               "data": parsed_matches,
           }
           st.session_state.history.insert(0, new_entry)
           save_history(st.session_state.history)
-          st.success(f"Прогноз сформирован! Источник: {used_ai}")
+          st.success(f"Прогноз сформирован! Режим: {ai_mode}")
 
         except Exception as e:
           st.error(f"Ошибка анализа: {e}")
@@ -444,7 +459,7 @@ with tab_current:
               prev_sc = card.get("prev_score", "0:0")
               curr_sc = card.get("score", "0:0")
               st.markdown(
-                  f"<div class='score-badge'>🔥 ГОЛ / СЧЕТ ИЗМЕНИЛСЯ: {prev_sc} ➔ {curr_sc}</div>",
+                  f"<div class='score-badge'>🔥 СЧЕТ ИЗМЕНИЛСЯ: {prev_sc} ➔ {curr_sc}</div>",
                   unsafe_allow_html=True,
               )
 
@@ -581,6 +596,4 @@ with tab_history:
             if hc3.button("⏳", key=f"hist_pend_{entry['id']}_{idx}"):
               card["status"] = "⌛ Ожидание"
               save_history(st.session_state.history)
-              st.rerun()
-
-      st.markdown("---")
+              
