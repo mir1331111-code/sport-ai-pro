@@ -15,9 +15,7 @@ if 'history' not in st.session_state:
 st.sidebar.header("⚙️ Настройки и Статистика")
 api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 
-if not api_key:
-    st.sidebar.warning("⚠️ Укажите ключ для работы ИИ!")
-else:
+if api_key:
     genai.configure(api_key=api_key)
 
 total_finished = 0
@@ -54,15 +52,16 @@ if st.button("🔍 Авто-поиск матчей с Flashscore/SofaScore и �
     else:
         with st.spinner("Ищем матчи на Flashscore/SofaScore, анализируем мнения экспертов в сети..."):
             try:
+                # Используем стандартный инструмент поиска для google-generativeai
                 model = genai.GenerativeModel(
-                    model_name='gemini-3.6-flash',
-                    tools=[{"google_search": {}}]
+                    model_name='gemini-1.5-flash',
+                    tools='google_search_retrieval'
                 )
                 
                 prompt = (
                     f"Сегодня {today_date}, текущее время {current_time} МСК. "
                     "Ты профессиональный спортивный аналитик, скаут и беттор. "
-                    "Используй поиск в интернете (Google Search), чтобы найти реальные матчи, которые идут прямо сейчас в лайве или начнутся в ближайшее время сегодня на спортивных порталах Flashscore и SofaScore (футбол, теннис, баскетбол, волейбол и др.). "
+                    "Используй поиск в интернете, чтобы найти реальные матчи, которые идут прямо сейчас в лайве или начнутся в ближайшее время сегодня на спортивных порталах Flashscore и SofaScore (футбол, теннис, баскетбол, волейбол и др.). "
                     "Также изучи актуальные мнения, прогнозы и аналитику спортивных экспертов и капперов по этим матчам в сети. "
                     f"На основе реальных данных из поиска выбери {num_signals} самых надежных матча с высокой вероятностью прохода. "
                     "Для каждого сигнала укажи: "
