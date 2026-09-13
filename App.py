@@ -662,7 +662,7 @@ with tab_current:
             cols = st.columns(3)
             for idx, card in enumerate(matches_data):
                 col_idx = idx % 3
-                with cols[col_idx]:
+                st.subheader(f"🔥 Сессия ({latest['date']}) — {latest.get('ai_source', 'ИИ')}")
                     with st.container(border=True):
                         tag = card.get("value_tag", "💎 Валуй")
                         phase_str = card.get("game_phase", "до перерыва").upper()
