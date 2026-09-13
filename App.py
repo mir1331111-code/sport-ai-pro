@@ -357,8 +357,17 @@ if st.sidebar.button("🔄 Сбросить симулятор"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.title("⚙️ Настройки ИИ")
-ai_mode = st.sidebar.radio("Режим анализа:", ["🧠 Только Groq AI", "✨ Только Gemini AI"], index=0)
+st.sidebar.title("⚙️ Настройки ИИ и Синдиката")
+ai_mode = st.sidebar.radio(
+    "Режим анализа:",
+    [
+        "🧠 Только Groq AI",
+        "✨ Только Gemini AI",
+        "🤖🤖 Консилиум (Groq + Gemini)",
+    ],
+    index=0,
+)
+
 groq_api_key = st.sidebar.text_input("Ключ Groq API", type="password")
 gemini_api_key = st.sidebar.text_input("Ключ Gemini API", type="password")
 telegram_token = st.sidebar.text_input("Telegram Bot Token", type="password")
@@ -392,7 +401,7 @@ fc4.metric("🏆 Винрейт", f"{simulator_winrate}% ({total_wins}/{total_se
 fc5.metric("⚡ Beat CLV", f"{clv_rate}%")
 st.markdown("---")
 
-# ==================== МОДУЛЬ PLAYER PROPS (ИСПРАВЛЕННЫЙ БЕЗ ОШИБОК) ====================
+# ==================== МОДУЛЬ PLAYER PROPS ====================
 if selected_window == "🎯 Player Props (Индивидуальная статистика)":
     st.markdown("## 🎯 Модуль Player Props AI (Индивидуальные тоталы)")
     st.markdown("Поиск плюсовых рынков по индивидуальной статистике: эйсы в теннисе, броски в хоккее/футболе, очки в баскетболе.")
@@ -409,7 +418,7 @@ if selected_window == "🎯 Player Props (Индивидуальная стат�
 
     if st.button("🚀 Найти аномалии в Player Props"):
         try:
-            with st.spinner("Анализ линий и поиск аномалий без ошибок..."):
+            with st.spinner("Анализ линий и поиск аномалий..."):
                 
                 def safe_str(val):
                     return "" if val is None else str(val).strip()
@@ -426,7 +435,6 @@ if selected_window == "🎯 Player Props (Индивидуальная стат�
                             return 0.0
                     return 0.0
 
-                # Тестовые защищенные данные с возможными None во избежание падений
                 raw_data = [
                     {"player": "Даниил Медведев", "team": "АТР", "line": "10.5", "ai_projection": "13.2", "stat": "12.0"},
                     {"player": None, "team": "N/A", "line": None, "ai_projection": "8.5", "stat": "7.1"},
@@ -447,12 +455,25 @@ if selected_window == "🎯 Player Props (Индивидуальная стат�
                 ai_analysis_text = "AI-анализ не запущен (проверьте API ключи)."
                 prompt = f"Проанализируй пропсы для {sport_prop}:\n{anomalies_df.to_string()}"
                 
-                if "Groq" in ai_mode and groq_api_key:
+                # Обработка выбора ИИ (включая Консилиум)
+                if "Groq" in ai_mode:
                     res = call_groq_api(groq_api_key, selected_groq_model, prompt)
                     if res: ai_analysis_text = res
-                elif gemini_api_key:
+                elif "Gemini" in ai_mode:
                     res = call_gemini_api(gemini_api_key, prompt)
                     if res: ai_analysis_text = res
+                elif "Консилиум" in ai_mode:
+                    parts = []
+                    if groq_api_key:
+                        rg = call_groq_api(groq_api_key, selected_groq_model, prompt)
+                        if rg: parts.append(f"### 🧠 Мнение Groq AI:\n{rg}")
+                    if gemini_api_key:
+                        re_gem = call_gemini_api(gemini_api_key, prompt)
+                        if re_gem: parts.append(f"### ✨ Мнение Gemini AI:\n{re_gem}")
+                    if parts:
+                        ai_analysis_text = "\n\n---\n\n".join(parts)
+                    else:
+                        ai_analysis_text = "Консилиум недоступен: укажите ключи Groq и/или Gemini API."
 
                 st.session_state['active_props'] = anomalies_df
                 st.session_state['ai_report'] = ai_analysis_text
