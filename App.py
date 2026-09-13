@@ -240,7 +240,7 @@ def send_telegram_message(token, chat_id, text):
   try:
     resp = requests.post(url, json=payload, timeout=5)
     return resp.status_code == 200
-  end except Exception:
+  except Exception:
     return False
 
 
