@@ -185,7 +185,7 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # Попытка 1: Через Groq (микстраль)
+  # Попытка 1: Через Groq
   if groq_key:
     try:
       client = Groq(api_key=groq_key)
@@ -198,12 +198,12 @@ def fetch_and_analyze_matches(
     except Exception:
       pass
 
-  # Попытка 2: Если Groq недоступен или не настроен, используем Gemini!
+  # Попытка 2: Через Gemini (с обновленной моделью gemini-3.6-flash)
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
       response = g_client.models.generate_content(
-          model="gemini-2.5-flash",
+          model="gemini-3.6-flash",
           contents=(
               prompt
               + "\nВерни ТОЛЬКО чистый JSON без какого-либо дополнительного"
@@ -253,7 +253,7 @@ def fetch_and_analyze_matches(
         try:
           gemini_client = genai.Client(api_key=gemini_key)
           resp = gemini_client.models.generate_content(
-              model="gemini-2.5-flash",
+              model="gemini-3.6-flash",
               contents=(
                   f"Дай статистическое обоснование для ставки ({bet}) на матч"
                   f" {t1} vs {t2}. Ровно 2 предложения."
