@@ -4,6 +4,14 @@ import os
 import random
 import re
 
+# Безопасный импорт PIL для работы со скриншотами
+try:
+  from PIL import Image
+
+  HAS_PIL = True
+except ImportError:
+  HAS_PIL = False
+
 # Безопасный импорт автообновления
 try:
   from streamlit_autorefresh import st_autorefresh
@@ -191,7 +199,7 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ С УПОРУМОМ НА ПРОХОД И ГЛУБОКУЮ АНАЛИТИКУ ---
+# --- АНАЛИЗ МАТЧЕЙ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -200,11 +208,11 @@ def fetch_and_analyze_matches(
 
     prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    Твоя главная цель — найти актуальные матчи в категории "{sport_title} ({sport_desc})" (используй веб-данные ниже или свои глубокие знания календаря текущего сезона, если в сети мало данных).
+    Твоя главная цель — найти актуальные матчи в категории "{sport_title} ({sport_desc})".
     
-    ВНИМАНИЕ К ПРИОРИТЕТАМ:
-    1. Коэффициенты НЕ важны. Главное — ПРОХОД, максимальная вероятность победы (надежные ставки, «железо»). Выбирай фаворитов или наиболее вероятные исходы с высокой проходимостью (вероятность прохода от 75% и выше).
-    2. ДЕТАЛЬНАЯ АНАЛИТИКА: Для каждого матча напиши развернутый аналитический обоснованный прогноз (текущая форма команд, мотивация, кадровые потери, тактические расклады). Если ставка не зайдет, аналитика должна честно объяснять факторы риска и причины.
+    ПРИОРИТЕТЫ:
+    1. Коэффициенты НЕ важны. Главное — ПРОХОД, максимальная вероятность победы (надежные ставки, «железо» от 75%+).
+    2. ДЕТАЛЬНАЯ АНАЛИТИКА: Для каждого матча напиши развернутый аналитический обоснованный прогноз, текущую форму, факторы риска и причины на случай непредвиденного результата.
     
     Реальные данные из сети:
     {web_context}
@@ -220,7 +228,7 @@ def fetch_and_analyze_matches(
           "bookmaker": "Fonbet",
           "recommended_bet": "Победа 1 с форой (0)",
           "expert_probability": 85,
-          "groq_analysis": "Подробный аналитический разбор: почему эта ставка надежна, текущая серия побед, статистика и возможные риски."
+          "groq_analysis": "Подробный аналитический разбор: почему эта ставка надежна, статистика и риски."
         }}
       ]
     }}
@@ -228,7 +236,6 @@ def fetch_and_analyze_matches(
 
     raw_text = ""
 
-    # 1. Сначала пробуем Groq
     if groq_key:
       try:
         client = Groq(api_key=groq_key)
@@ -249,7 +256,6 @@ def fetch_and_analyze_matches(
       except Exception:
         pass
 
-    # 2. Если Groq нет/не ответил, используем Gemini
     if not raw_text and gemini_key:
       try:
         g_client = genai.Client(api_key=gemini_key)
@@ -268,8 +274,8 @@ def fetch_and_analyze_matches(
               break
           except Exception:
             continue
-      except Exception as e:
-        st.warning(f"⚠️ Не удалось подключиться к Gemini: {e}")
+      except Exception:
+        pass
 
     if not raw_text:
       return []
@@ -321,6 +327,86 @@ def fetch_and_analyze_matches(
     return []
 
 
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА (2 МОЗГА) ---
+def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
+  if not gemini_key:
+    return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
+
+  try:
+    g_client = genai.Client(api_key=gemini_key)
+
+    prompt = """
+    Ты профессиональный спортивный аналитик и каппер. Перед тобой скриншот матча / линии / статистики.
+    Проанализируй этот скриншот предельно внимательно. Определи команды, текущие показатели и вынеси железобетонный вердикт на что ставить с максимальной вероятностью прохода (от 80%).
+    Также напиши подробную аналитику: почему именно эта ставка, какие есть риски и факторы в случае неудачного исхода.
+    
+    Верни строго JSON объект следующей структуры:
+    {
+      "team1": "Название первой команды",
+      "team2": "Название второй команды",
+      "sport": "Вид спорта",
+      "recommended_bet": "Точная рекомендация ставки",
+      "coefficient": 1.65,
+      "probability": 88,
+      "bookmaker": "Название БК или Скрин",
+      "analysis": "Двойной аналитический разбор (Мозг 1 + Мозг 2): детальное обоснование выбора и разбор рисков."
+    }
+    """
+
+    # Мозг 1: Gemini Vision считывает скриншот
+    raw_text = ""
+    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+    for g_model in gemini_models:
+      try:
+        response = g_client.models.generate_content(
+            model=g_model,
+            contents=[image, prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        if response and response.text:
+          raw_text = response.text.strip()
+          break
+      except Exception:
+        continue
+
+    if not raw_text:
+      return None, "Не удалось распознать скриншот через Gemini Vision."
+
+    parsed = extract_json_safely(raw_text)
+    if not parsed:
+      return None, "Ошибка обработки ответа ИИ."
+
+    # Мозг 2: Перепроверка через Groq (если доступен), иначе дорабатываем результат
+    analysis_text = parsed.get("analysis", "Анализ завершен.")
+    if groq_key:
+      try:
+        c_groq = Groq(api_key=groq_key)
+        refine_prompt = (
+            f"Перепроверь и усиль аналитику спортивного матча: {parsed.get('team1')} vs {parsed.get('team2')}. "
+            f"Ставка: {parsed.get('recommended_bet')}. "
+            f"Добавь жесткую аргументацию по проходу и возможным рискам."
+        )
+        comp = c_groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": refine_prompt}],
+            temperature=0.2,
+        )
+        if comp.choices and comp.choices[0].message.content:
+          analysis_text = (
+              f"🧠 [Мозг 1 - Зрение + Мозг 2 - Верификация Llama]: "
+              f"{comp.choices[0].message.content}"
+          )
+      except Exception:
+        analysis_text = f"🧠 [Мозг 1 - Gemini Vision]: {analysis_text}"
+    else:
+      analysis_text = f"🧠 [Мозг 1 - Gemini Vision]: {analysis_text}"
+
+    parsed["analysis"] = analysis_text
+    return parsed, None
+  except Exception as e:
+    return None, f"Ошибка мультимодального анализа: {e}"
+
+
 # --- САЙДБАР ---
 st.sidebar.title("🎛️ Настройки терминала")
 theme_choice = st.sidebar.selectbox(
@@ -334,7 +420,9 @@ groq_api_key = st.sidebar.text_input(
     "Groq API Key (Рекомендуется)", type="password", placeholder="gsk_..."
 )
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (Резерв)", type="password", placeholder="AIzaSy..."
+    "Gemini API Key (Обязателен для фото)",
+    type="password",
+    placeholder="AIzaSy...",
 )
 
 st.sidebar.title("🤖 Настройки Telegram")
@@ -347,6 +435,7 @@ selected_window = st.sidebar.radio(
     "Переключение терминала:",
     [
         "🌍 Глобальный омниссканер",
+        "📸 Скрин-аналитик (2 мозга)",
         "🎯 Стратегия: Камбэк фаворита (0:1)",
         "📥 Ручной инжектор",
         "⚽ Футбол (Клубы и Сборные)",
@@ -386,15 +475,14 @@ if selected_window in window_mapping:
   active_sport_cat = window_mapping[selected_window][1]["category"]
 apply_custom_styles(theme_choice, active_sport_cat)
 
-st.markdown("### ⚡ Терминал прогнозов Совета ИИ (Фокус на Проход)")
+st.markdown("### ⚡ Терминал прогнозов Совета ИИ (Скрин-аналитик)")
 st.markdown("---")
 
 
 def render_match_cards(entry, session_key_prefix):
   if not entry.get("data"):
     st.info(
-        "ℹ️ Список пуст. Нажмите кнопку запуска поиска выше, чтобы ИИ подобрал"
-        " надежные варианты."
+        "ℹ️ Список пуст. Загрузите скриншот или запустите сканирование выше."
     )
     return
 
@@ -421,12 +509,12 @@ def render_match_cards(entry, session_key_prefix):
       st.markdown(
           f"""
                 <div class="{status_class}">
-                    <span class="value-badge">💎 Надежный выбор ({prob_val}%)</span><br>
+                    <span class="value-badge">💎 2 Мозга / Проход ({prob_val}%)</span><br>
                     <b>{team1_val} vs {team2_val}</b><br>
                     <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:6px 0;">
                     <b>Рекомендуемая ставка:</b> {bet_val}<br>
                     <b>Вероятность прохода:</b> <b>{prob_val}%</b> (Кф: {coef_val})<br><br>
-                    <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;">
+                    <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; font-size: 0.9rem;">
                         {analysis_val}
                     </div>
                 </div>
@@ -452,7 +540,7 @@ def render_match_cards(entry, session_key_prefix):
           key=f"{session_key_prefix}_tg_{entry['timestamp']}_{idx}",
       ):
         msg = (
-            f"🎯 *Прогноз ИИ (Макс. проход)* ({sport_lbl})\n"
+            f"🎯 *Прогноз 2 Мозгов (Скрин-анализ)* ({sport_lbl})\n"
             f"⚔️ {team1_val} vs {team2_val}\n"
             f"📌 Ставка: *{bet_val}*\n"
             f"📈 Вероятность: {prob_val}% (Кф: `{coef_val}`)\n"
@@ -514,6 +602,72 @@ if selected_window == "🌍 Глобальный омниссканер":
       if e.get("sport") == "🌍 Глобальный рынок"
   ]:
     render_match_cards(entry, "glob")
+
+elif selected_window == "📸 Скрин-аналитик (2 мозга)":
+  st.header("📸 Загрузка скриншота матча (Анализ 2 мозгами)")
+  st.markdown(
+      "Загрузите скриншот из БК, приложения или сайта со статистикой. Два"
+      " ИИ-мозга (Gemini Vision + Llama) изучат картинку, распознают матч,"
+      " просчитают риски и выдадут рекомендацию."
+  )
+
+  uploaded_file = st.file_uploader(
+      "Выберите скриншот (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"]
+  )
+
+  if uploaded_file is not None and HAS_PIL:
+    image = Image.open(uploaded_file)
+    st.image(
+        image,
+        caption="Загруженный скриншот для анализа",
+        use_container_width=True,
+    )
+
+    if st.button("🧠 Запустить 2 мозга на анализ скриншота", use_container_width=True):
+      if not gemini_api_key:
+        st.error(
+            "Для работы скрин-аналитика обязательно укажите Gemini API Key в"
+            " сайдбаре!"
+        )
+      else:
+        with st.spinner(
+            "Два ИИ изучают скриншот, сверяют статистику и оценивают"
+            " риски..."
+        ):
+          result_dict, err_msg = analyze_screenshot_with_two_brains(
+              gemini_api_key, groq_api_key, image
+          )
+          if err_msg:
+            st.error(err_msg)
+          elif result_dict:
+            card = {
+                "sport_label": f"📸 Скриншот: {result_dict.get('sport', 'Спорт')}",
+                "team1": result_dict.get("team1", "Хозяева"),
+                "team2": result_dict.get("team2", "Гости"),
+                "bet": result_dict.get("recommended_bet", "Победа 1"),
+                "coefficient": float(result_dict.get("coefficient", 1.50)),
+                "probability": int(result_dict.get("probability", 85)),
+                "bookmaker": result_dict.get("bookmaker", "Скриншот"),
+                "status": "⌛ Ожидание",
+                "analysis": result_dict.get("analysis", ""),
+            }
+
+            st.session_state.history.insert(
+                0,
+                {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "sport": "📸 Скрин-анализ",
+                    "data": [card],
+                },
+            )
+            save_history(st.session_state.history)
+            st.success("Анализ скриншота успешно завершен!")
+            st.rerun()
+
+  for entry in [
+      e for e in st.session_state.history if e.get("sport") == "📸 Скрин-анализ"
+  ]:
+    render_match_cards(entry, "screen")
 
 elif selected_window == "🎯 Стратегия: Камбэк фаворита (0:1)":
   st.header("🎯 Стратегия Live-камбэков с высокой проходимостью")
@@ -578,7 +732,7 @@ elif selected_window == "📥 Ручной инжектор":
     )
     manual_analysis = st.text_area(
         "Аналитическое обоснование / Риски",
-        "Команда на голову сильнее, отличная домашняя статистика...",
+        "Команда на голову сильнее, отличная форма...",
     )
     submitted = st.form_submit_button("⚡ Сохранить прогноз")
 
