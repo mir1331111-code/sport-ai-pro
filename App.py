@@ -304,10 +304,16 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         })
     return parsed_matches
 
-# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ ОШИБОК ---
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА С ЗАЩИТОЙ ОТ ОШИБОК КЛЮЧЕЙ ---
 def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
+    if gemini_key and gemini_key.startswith("gsk_") and not groq_key:
+        groq_key = gemini_key
+        gemini_key = ""
+
     if not gemini_key:
-        return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
+        if groq_key:
+            return None, "⚠️ В поле Gemini API Key обнаружен ключ Groq (начинается с gsk_). Для анализа скриншотов нужен именно Gemini API Key из Google AI Studio (начинается с AIza...)."
+        return None, "⚠️ Не указан Gemini API Key в боковой панели слева! Получите его бесплатно в Google AI Studio."
 
     learning_prompt_addition = get_self_learning_context()
 
@@ -351,6 +357,8 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
                 continue
 
         if not raw_text:
+            if "API_KEY_INVALID" in last_error or "not valid" in last_error:
+                return None, "❌ Ошибка: Указанный Gemini API Key недействителен. Проверьте правильность ключа в Google AI Studio."
             return None, f"Ошибка Gemini API: {last_error or 'Модель не вернула ответ'}"
 
         parsed = extract_json_safely(raw_text)
@@ -359,7 +367,10 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
 
         return parsed, None
     except Exception as e:
-        return None, f"Критическая ошибка мультимодального анализа: {e}"
+        err_str = str(e)
+        if "API_KEY_INVALID" in err_str or "not valid" in err_str:
+            return None, "❌ Ошибка: Неверный Gemini API Key. Убедитесь, что скопировали правильный ключ."
+        return None, f"Критическая ошибка мультимодального анализа: {err_str}"
 
 # --- САЙДБАР ---
 st.sidebar.title("🎛️ Настройки терминала")
@@ -546,37 +557,34 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
         st.image(image, caption="Загруженный скриншот", use_container_width=True)
 
         if st.button("🧠 Запустить глубокий анализ скриншота", use_container_width=True):
-            if not gemini_api_key:
-                st.error("Для анализа скриншота обязательно укажите Gemini API Key в сайдбаре!")
-            else:
-                with st.spinner("ИИ проводит детальный разбор матча и коэффициентов..."):
-                    result_dict, err_msg = analyze_screenshot_with_two_brains(gemini_api_key, groq_api_key, image)
-                    if err_msg:
-                        st.error(err_msg)
-                    elif result_dict:
-                        card = {
-                            "sport_label": f"📸 Скриншот: {result_dict.get('sport', 'Спорт')}",
-                            "team1": result_dict.get("team1", "Хозяева"),
-                            "team2": result_dict.get("team2", "Гости"),
-                            "bet": result_dict.get("recommended_bet", "Победа 1"),
-                            "coefficient": float(result_dict.get("coefficient", 1.65)),
-                            "probability": int(result_dict.get("probability", 78)),
-                            "bookmaker": result_dict.get("bookmaker", "Скриншот"),
-                            "status": "⌛ Ожидание",
-                            "analysis": result_dict.get("analysis", ""),
-                        }
+            with st.spinner("ИИ проводит детальный разбор матча и коэффициентов..."):
+                result_dict, err_msg = analyze_screenshot_with_two_brains(gemini_api_key, groq_api_key, image)
+                if err_msg:
+                    st.error(err_msg)
+                elif result_dict:
+                    card = {
+                        "sport_label": f"📸 Скриншот: {result_dict.get('sport', 'Спорт')}",
+                        "team1": result_dict.get("team1", "Хозяева"),
+                        "team2": result_dict.get("team2", "Гости"),
+                        "bet": result_dict.get("recommended_bet", "Победа 1"),
+                        "coefficient": float(result_dict.get("coefficient", 1.65)),
+                        "probability": int(result_dict.get("probability", 78)),
+                        "bookmaker": result_dict.get("bookmaker", "Скриншот"),
+                        "status": "⌛ Ожидание",
+                        "analysis": result_dict.get("analysis", ""),
+                    }
 
-                        st.session_state.history.insert(
-                            0,
-                            {
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "sport": "📸 Скрин-анализ",
-                                "data": [card],
-                            },
-                        )
-                        save_history(st.session_state.history)
-                        st.success("Глубокий анализ скриншота завершен!")
-                        st.rerun()
+                    st.session_state.history.insert(
+                        0,
+                        {
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "sport": "📸 Скрин-анализ",
+                            "data": [card],
+                        },
+                    )
+                    save_history(st.session_state.history)
+                    st.success("Глубокий анализ скриншота завершен!")
+                    st.rerun()
 
     for entry in screen_entries:
         render_match_cards(entry, "screen")
