@@ -152,7 +152,7 @@ def extract_json_safely(text):
 
     return None
 
-# --- МОДУЛЬ САМООБУЧЕНИЯ (АНАЛИЗ ИСТОРИИ) ---
+# --- МОДУЛЬ САМООБУЧЕНИЯ ---
 def get_self_learning_context():
     resolved_bets = []
     wins = 0
@@ -176,15 +176,15 @@ def get_self_learning_context():
 
     context_str = f"\n\n📊 СТАТИСТИКА САМООБУЧЕНИЯ (Всего сыграно: {total}, Винрейт: {winrate:.1f}%):\n"
     if resolved_bets:
-        context_str += "Учитывай опыт последних прогнозов (анализируй, почему прошлые ставки зашли или провалились):\n"
+        context_str += "Учитывай опыт прошлых прогнозов для повышения точности:\n"
         for b in resolved_bets[-12:]:
             context_str += f"- {b}\n"
     else:
-        context_str += "История пуста. Начни делать точные прогнозы с высокой надежностью.\n"
+        context_str += "История пуста.\n"
 
     return context_str
 
-# --- ПОИСК МАТЧЕЙ (ПРИОРИТЕТ GROQ, ЗАТЕМ GEMINI) ---
+# --- ПОИСК МАТЧЕЙ (С УЧЕТОМ ВАЛУЙНОСТИ, А НЕ НИЗКИХ КЭФОВ) ---
 def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_strategy=False):
     if not gemini_key and not groq_key:
         st.error("⚠️ Укажите хотя бы один API Key (Groq или Gemini) в боковой панели слева!", icon="🔑")
@@ -194,8 +194,8 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
 
     prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    Найди актуальные матчи или топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
-    Выбери матчи с высокой вероятностью прохода.
+    Найди актуальные матчи в категории "{sport_title} ({sport_desc})".
+    ВАЖНО: Не бери слепо низкие коэффициенты на очевидных фаворитов. Проводи глубокий анализ и ищи ценность (value betting), где реальные шансы команды выше, чем дают букмекеры, либо где оправдан выбор тоталов/фор.
     {learning_prompt_addition}
     
     Верни СТРОГО JSON объект:
@@ -204,12 +204,12 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         {{
           "team1": "Название первой команды",
           "team2": "Название второй команды",
-          "coefficient_1": 1.45,
-          "coefficient_2": 3.10,
+          "coefficient_1": 1.85,
+          "coefficient_2": 2.10,
           "bookmaker": "Fonbet",
-          "recommended_bet": "Победа 1",
-          "expert_probability": 88,
-          "groq_analysis": "Детальный разбор: актуальная форма команд и обоснование ставки."
+          "recommended_bet": "Обоснованная ставка с анализом",
+          "expert_probability": 78,
+          "groq_analysis": "Глубокий разбор: анализ формы, факторов риска, почему выбран именно этот исход вместо слепой погони за низким кэфом."
         }}
       ]
     }}
@@ -227,7 +227,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
                         model=g_model,
                         messages=[{"role": "user", "content": prompt}],
                         response_format={"type": "json_object"},
-                        temperature=0.2,
+                        temperature=0.3,
                     )
                     raw_text = completion.choices[0].message.content
                     break
@@ -240,7 +240,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     if not raw_text and gemini_key:
         try:
             g_client = genai.Client(api_key=gemini_key)
-            for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
+            for g_model in ["gemini-2.5-flash", "gemini-1.5-flash"]:
                 try:
                     response = g_client.models.generate_content(
                         model=g_model,
@@ -268,26 +268,26 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         st.error(f"🚨 Ошибка получения матчей: {details}", icon="⚠️")
         return [{
             "sport_label": sport_title,
-            "team1": "⚠️ Лимит исчерпан / Ошибка",
-            "team2": "см. детали выше",
-            "bet": "Проверьте ключи и квоты",
+            "team1": "⚠️ Ошибка анализа",
+            "team2": "проверьте ключи",
+            "bet": "Нет данных",
             "coefficient": 1.0,
             "probability": 0,
             "bookmaker": "Система",
             "status": "⌛ Ожидание",
-            "analysis": f"Детали ошибки: {details}",
+            "analysis": f"Детали: {details}",
         }]
 
     parsed_matches = []
     for item in data_list:
         t1 = item.get("team1", "Хозяева")
         t2 = item.get("team2", "Гости")
-        p1 = float(item.get("coefficient_1", 1.45))
-        p2 = float(item.get("coefficient_2", 2.60))
+        p1 = float(item.get("coefficient_1", 1.85))
+        p2 = float(item.get("coefficient_2", 2.10))
         bet = item.get("recommended_bet", f"Победа 1 ({t1})")
         chosen_odds = p1 if "1" in bet or t1 in bet else p2
-        prob = int(item.get("expert_probability", 88))
-        g_text = item.get("groq_analysis", "Анализ формы и факторов победы.")
+        prob = int(item.get("expert_probability", 80))
+        g_text = item.get("groq_analysis", "Анализ формы и обоснование выбора.")
 
         parsed_matches.append({
             "sport_label": f"🎯 Стратегия / Матч: {sport_title}" if is_strategy else sport_title,
@@ -302,7 +302,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         })
     return parsed_matches
 
-# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА ---
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА (ГЛУБОКИЙ АНАЛИЗ БЕЗ СЛЕПЫХ НИЗКИХ КЭФОВ) ---
 def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     if not gemini_key:
         return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
@@ -312,26 +312,26 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     try:
         g_client = genai.Client(api_key=gemini_key)
         prompt = f"""
-        Ты профессиональный спортивный аналитик. Посмотри на этот скриншот. 
-        Убедись, что на изображении полностью видны названия (фамилии) обеих команд или соперников. 
-        Если названия команд обрезаны или неразборчивы, верни ошибку.
-        {learning_prompt_addition}
+        Ты профессиональный спортивный аналитик и каппер с глубоким пониманием тактики и поиска валуйных (выгодных) ставок.
+        Внимательно изучи этот скриншот букмекерской конторы (на нем видны команды, коэффициенты на исход, периоды, тоталы и т.д.).
+        НЕ ГОНИСЬ за самыми низкими коэффициентами и слепыми фаворитами! Проанализируй текущую ситуацию, форму, статистику рынков (победы, тоталы, форы, периоды) и найди **самую валуйную, обоснованную и интересную ставку** с точки зрения реальной логики игры, а не просто меньшего кэфа.
         
-        Верни СТРОГО JSON объект:
+        Верни результат СТРОГО в формате JSON без какого-либо лишнего текста:
         {{
-          "team1": "Команда 1",
-          "team2": "Команда 2",
-          "sport": "Вид спорта",
-          "recommended_bet": "Рекомендация ставки",
-          "coefficient": 1.55,
-          "probability": 90,
-          "bookmaker": "БК со скриншота",
-          "analysis": "Обоснование прогноза по данным на скриншоте."
+          "team1": "Название первой команды или игрока",
+          "team2": "Название второй команды или игрока",
+          "sport": "Вид спорта (например, Хоккей, Футбол, Теннис)",
+          "recommended_bet": "Конкретная ставка с учетом анализа (например, ТБ (4.5) или Фора, а не просто самый дешевый исход)",
+          "coefficient": 1.75,
+          "probability": 78,
+          "bookmaker": "Название БК со скриншота",
+          "analysis": "Глубокий аналитический разбор: почему именно эта ставка выгодна (value), какая форма у команд, почему выбран этот вариант."
         }}
+        {learning_prompt_addition}
         """
 
         raw_text = ""
-        for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
+        for g_model in ["gemini-2.5-flash", "gemini-1.5-flash"]:
             try:
                 response = g_client.models.generate_content(
                     model=g_model,
@@ -345,7 +345,7 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
 
         parsed = extract_json_safely(raw_text)
         if not parsed:
-            return None, "Не удалось распознать матч. Убедитесь, что в кадр полностью попадают имена игроков/команд."
+            return None, f"Не удалось распарсить ответ ИИ. Сырой текст: {raw_text[:150]}"
 
         return parsed, None
     except Exception as e:
@@ -432,14 +432,14 @@ def render_match_cards(entry, session_key_prefix):
         bk_val = card.get("bookmaker", "")
         bet_val = card.get("bet", "")
         coef_val = card.get("coefficient", 1.0)
-        prob_val = card.get("probability", 85)
+        prob_val = card.get("probability", 80)
         analysis_val = card.get("analysis", "")
 
         with cols[idx % 2]:
             st.markdown(
                 f"""
                 <div class="{status_class}">
-                    <span class="value-badge">💎 Надежный выбор ({prob_val}%)</span><br>
+                    <span class="value-badge">💎 Валуй / Анализ ({prob_val}%)</span><br>
                     <b>{team1_val} vs {team2_val}</b><br>
                     <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:6px 0;">
                     <b>Рекомендуемая ставка:</b> {bet_val}<br>
@@ -507,22 +507,14 @@ if selected_window == "🌍 Глобальный омниссканер":
                     },
                 )
                 save_history(st.session_state.history)
-                st.success(f"Анализ завершен! Найдено надежных матчей: {len(all_global)}")
+                st.success(f"Анализ завершен! Найдено матчей: {len(all_global)}")
                 st.rerun()
 
     for entry in [e for e in st.session_state.history if e.get("sport") == "🌍 Глобальный рынок"]:
         render_match_cards(entry, "glob")
 
 elif selected_window == "📸 Скрин-аналитик (2 мозга)":
-    col_h1, col_h2 = st.columns([3, 1])
-    with col_h1:
-        st.header("📸 Загрузка скриншота матча (С отдельной статистикой)")
-    with col_h2:
-        if st.button("🗑 Сбросить скриншоты", use_container_width=True):
-            st.session_state.history = [e for e in st.session_state.history if e.get("sport") != "📸 Скрин-анализ"]
-            save_history(st.session_state.history)
-            st.success("История скриншотов очищена!")
-            st.rerun()
+    st.header("📸 Загрузка скриншота матча (Глубокий анализ)")
 
     screen_entries = [e for e in st.session_state.history if e.get("sport") == "📸 Скрин-анализ"]
     total_screens = sum(len(e.get("data", [])) for e in screen_entries)
@@ -537,17 +529,17 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
     sc4.markdown(f'<div class="stat-box"><b>Винрейт скриншотов</b><br><h2>{screen_winrate:.1f}%</h2></div>', unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("Выберите полный скриншот (PNG, JPG, JPEG) с именами игроков", type=["png", "jpg", "jpeg"])
+    uploaded_file = st.file_uploader("Выберите скриншот (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"])
 
     if uploaded_file is not None and HAS_PIL:
         image = Image.open(uploaded_file)
         st.image(image, caption="Загруженный скриншот", use_container_width=True)
 
-        if st.button("🧠 Запустить анализ скриншота с самообучением", use_container_width=True):
+        if st.button("🧠 Запустить глубокий анализ скриншота", use_container_width=True):
             if not gemini_api_key:
                 st.error("Для анализа скриншота обязательно укажите Gemini API Key в сайдбаре!")
             else:
-                with st.spinner("ИИ изучает скриншот..."):
+                with st.spinner("ИИ проводит детальный разбор матча и коэффициентов..."):
                     result_dict, err_msg = analyze_screenshot_with_two_brains(gemini_api_key, groq_api_key, image)
                     if err_msg:
                         st.error(err_msg)
@@ -557,8 +549,8 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
                             "team1": result_dict.get("team1", "Хозяева"),
                             "team2": result_dict.get("team2", "Гости"),
                             "bet": result_dict.get("recommended_bet", "Победа 1"),
-                            "coefficient": float(result_dict.get("coefficient", 1.50)),
-                            "probability": int(result_dict.get("probability", 88)),
+                            "coefficient": float(result_dict.get("coefficient", 1.65)),
+                            "probability": int(result_dict.get("probability", 78)),
                             "bookmaker": result_dict.get("bookmaker", "Скриншот"),
                             "status": "⌛ Ожидание",
                             "analysis": result_dict.get("analysis", ""),
@@ -573,7 +565,7 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
                             },
                         )
                         save_history(st.session_state.history)
-                        st.success("Анализ скриншота успешно завершен!")
+                        st.success("Глубокий анализ скриншота завершен!")
                         st.rerun()
 
     for entry in screen_entries:
@@ -615,16 +607,16 @@ elif selected_window == "📥 Ручной инжектор":
     with st.form("manual_form"):
         c1, c2 = st.columns(2)
         with c1:
-            t1 = st.text_input("Хозяева / Фаворит", "")
-            o1 = st.number_input("Коэффициент", min_value=1.01, value=1.40)
+            t1 = st.text_input("Хозяева / Первая команда", "")
+            o1 = st.number_input("Коэффициент", min_value=1.01, value=1.75)
         with c2:
-            t2 = st.text_input("Гости / Андердог", "")
-            o2 = st.number_input("Коэффициент (резерв)", min_value=1.01, value=3.00)
+            t2 = st.text_input("Гости / Вторая команда", "")
+            o2 = st.number_input("Коэффициент (резерв)", min_value=1.01, value=2.10)
         sport_lbl = st.selectbox(
             "Вид спорта",
             ["⚽ Футбол", "🏒 Хоккей", "🏀 Баскетбол", "🎾 Теннис", "🏐 Волейбол", "🤾 Гандбол", "🎮 Киберспорт"],
         )
-        manual_analysis = st.text_area("Аналитическое обоснование / Риски", "Анализ матча...")
+        manual_analysis = st.text_area("Аналитическое обоснование / Риски", "Валуйный анализ матча...")
         submitted = st.form_submit_button("⚡ Сохранить прогноз в базу обучения")
 
         if submitted:
@@ -632,9 +624,9 @@ elif selected_window == "📥 Ручной инжектор":
                 "sport_label": sport_lbl,
                 "team1": t1,
                 "team2": t2,
-                "bet": f"Победа 1 ({t1})",
+                "bet": f"Выбор по анализу ({t1})",
                 "coefficient": o1,
-                "probability": 90,
+                "probability": 80,
                 "bookmaker": "Ручной ввод",
                 "status": "⌛ Ожидание",
                 "analysis": f"📊 Ручной разбор: {manual_analysis}",
@@ -658,8 +650,8 @@ elif selected_window in window_mapping:
     sport_title, sport_data = window_mapping[selected_window]
     st.header(f"Терминал: {sport_title}")
 
-    if st.button(f"🚀 Найти надежные исходы ({sport_title}) с самообучением", use_container_width=True):
-        with st.spinner(f"Поиск матчей ({sport_title})..."):
+    if st.button(f"🚀 Найти валуйные исходы ({sport_title})", use_container_width=True):
+        with st.spinner(f"Анализ матчей ({sport_title})..."):
             matches = fetch_and_analyze_matches(
                 groq_api_key,
                 gemini_api_key,
@@ -677,7 +669,7 @@ elif selected_window in window_mapping:
                     },
                 )
                 save_history(st.session_state.history)
-                st.success(f"Поиск завершен. Найдено прогнозов: {len(matches)}")
+                st.success(f"Анализ завершен. Найдено прогнозов: {len(matches)}")
                 st.rerun()
 
     for entry in [e for e in st.session_state.history if e.get("sport") == sport_title]:
