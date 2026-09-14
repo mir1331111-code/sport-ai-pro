@@ -333,9 +333,42 @@ with tab2:
     st.json(history_data["weights"])
     
     st.markdown("---")
-    st.markdown("#### История ставок:")
-    for real_idx, b in enumerate(history_data["bets"]):
-        st.write(f"**{b['match']}** | Выбор: **{b['pick']}** ({b['odd']}) | Статус: **{b['status']}**")
+    st.markdown("#### 📊 Интерактивная статистика и фильтр прогнозов:")
+    
+    if "history_filter" not in st.session_state:
+        st.session_state.history_filter = "all"
+        
+    bets_list = history_data["bets"]
+    total_count = len(bets_list)
+    wins_count = len([b for b in bets_list if b["status"] == "won"])
+    losses_count = len([b for b in bets_list if b["status"] == "lost"])
+    pending_count = len([b for b in bets_list if b["status"] == "pending"])
+    
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    with col_s1:
+        if st.button(f"📋 Всего: {total_count}", use_container_width=True):
+            st.session_state.history_filter = "all"
+    with col_s2:
+        if st.button(f"🟢 Победы: {wins_count}", use_container_width=True):
+            st.session_state.history_filter = "won"
+    with col_s3:
+        if st.button(f"🔴 Поражения: {losses_count}", use_container_width=True):
+            st.session_state.history_filter = "lost"
+    with col_s4:
+        if st.button(f"⏳ В процессе: {pending_count}", use_container_width=True):
+            st.session_state.history_filter = "pending"
+            
+    current_filter = st.session_state.history_filter
+    st.info(f"📁 Показаны записи в категории: **{current_filter.upper()}**")
+    
+    filtered_bets = [b for b in bets_list if current_filter == "all" or b["status"] == current_filter]
+    
+    if not filtered_bets:
+        st.write("В этой категории пока нет записей.")
+    else:
+        for real_idx, b in enumerate(filtered_bets):
+            status_color = "🟢" if b['status'] == 'won' else ("🔴" if b['status'] == 'lost' else "⏳")
+            st.write(f"{status_color} **{b['match']}** | Выбор: **{b['pick']}** (Кэф: {b.get('odd', 0)}) | Статус: **{b['status']}**")
 
 with tab3:
     st.markdown("### ℹ️ О системе")
