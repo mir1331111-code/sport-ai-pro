@@ -40,7 +40,6 @@ grok_api_key = st.sidebar.text_input("Grok API Key (опционально)", ty
 
 st.sidebar.markdown("---")
 st.sidebar.header("⏱️ Фильтр времени матчей")
-# Бегунок для выбора временного диапазона (в часах)
 hours_ahead = st.sidebar.slider("Искать матчи на сколько часов вперед?", min_value=6, max_value=72, value=24, step=6)
 st.sidebar.write(f"Диапазон: **ближайшие {hours_ahead} часа(-ов)**")
 
@@ -67,9 +66,19 @@ class UltimateBot:
         self.elo_ratings = {}
 
     def fetch_fixtures(self):
-        leagues = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one']
-        board = []
+        # Расширенный список лиг: Топ-5 Европы + США (MLS) + Бразилия + Россия (РПЛ)
+        leagues = [
+            'soccer_epl',                # АПЛ (Англия)
+            'soccer_spain_la_liga',      # Ла Лига (Испания)
+            'soccer_italy_serie_a',      # Серия А (Италия)
+            'soccer_germany_bundesliga', # Бундеслига (Германия)
+            'soccer_france_ligue_one',   # Лига 1 (Франция)
+            'soccer_usa_mls',            # MLS (США)
+            'soccer_brazil_campeonato',  # Бразилия (Серия А)
+            'soccer_russia_premier_league' # РПЛ (Россия)
+        ]
         
+        board = []
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         max_time = now_utc + datetime.timedelta(hours=self.hours_limit)
 
@@ -82,10 +91,9 @@ class UltimateBot:
                     for ev in res.json():
                         commence_time_str = ev.get('commence_time')
                         if commence_time_str:
-                            # Проверяем попадание матча в выбранный бегунком временной диапазон
                             match_time = datetime.datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
                             if not (now_utc <= match_time <= max_time):
-                                continue # Пропускаем матчи вне диапазона
+                                continue
 
                         home, away = ev['home_team'], ev['away_team']
                         books = ev.get('bookmakers', [])
@@ -104,7 +112,7 @@ class UltimateBot:
 
     def prepare_model(self):
         np.random.seed(42)
-        teams = ['Arsenal', 'Chelsea', 'Real Madrid', 'Barcelona', 'Bayern', 'Dortmund', 'Inter', 'Milan', 'PSG', 'Marseille']
+        teams = ['Arsenal', 'Chelsea', 'Real Madrid', 'Barcelona', 'Bayern', 'Dortmund', 'Inter', 'Milan', 'PSG', 'Marseille', 'Zenit', 'Flamengo', 'LA Galaxy']
         data = {'HomeTeam': np.random.choice(teams, 300), 'AwayTeam': np.random.choice(teams, 300),
                 'FTHG': np.random.poisson(1.5, 300), 'FTAG': np.random.poisson(1.1, 300)}
         self.df_history = pd.DataFrame(data)
@@ -134,7 +142,7 @@ with tab1:
         if not odds_api_key:
             st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
         else:
-            with st.spinner(f"Поиск матчей на ближайшие {hours_ahead} ч. и расчет нейросетей..."):
+            with st.spinner(f"Поиск матчей в топ-лигах, США, Бразилии и РПЛ на ближайшие {hours_ahead} ч..."):
                 bot = UltimateBot(odds_api_key, hours_ahead)
                 bot.prepare_model()
                 matches = bot.fetch_fixtures()
@@ -171,7 +179,7 @@ with tab1:
                             ai_text = "💎 Gemini & ⚡ Grok: Математического перевеса нет. Нейросети рекомендуют пропустить матч."
 
                         analyzed_matches.append({
-                            'home': home, 'away': away, 'time': m.get('time', ''),
+                            'home': home, 'away': away, 'league': m.get('league', ''), 'time': m.get('time', ''),
                             'bh': bh, 'bd': bd, 'ba': ba,
                             'p_h': p_h, 'p_d': p_d, 'p_a': p_a, 'best_edge': best_edge,
                             'status': status, 'ai_text': ai_text
@@ -183,7 +191,7 @@ with tab1:
                     st.success(f"Найдено матчей в выбранном диапазоне: {len(analyzed_matches)}")
                     st.session_state.current_board = analyzed_matches
                 else:
-                    st.info(f"В выбранном диапазоне (ближайшие {hours_ahead} ч.) матчей в топ-лигах не обнаружено.")
+                    st.info(f"В выбранном диапазоне (ближайшие {hours_ahead} ч.) матчей не обнаружено.")
 
     # Вывод карточек матчей
     if "current_board" in st.session_state:
@@ -206,7 +214,7 @@ with tab1:
 
             st.markdown(f"""
             <div style="background-color: {box_color}; border-left: 6px solid {border_color}; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
-                <h4>{idx+1}. {m['home']} vs {m['away']}</h4>
+                <h4>{idx+1}. {m['home']} vs {m['away']} <span style="font-size: 12px; color: gray;">({m['league']})</span></h4>
                 <p><b>Время матча (UTC):</b> {m['time']} | <b>Статус ИИ:</b> {badge}</p>
                 <p><b>Котировки:</b> П1: {m['bh']} | Х: {m['bd']} | П2: {m['ba']}</p>
                 <p><b>Модель (Пуассон):</b> Хозяева: {m['p_h']*100:.1f}% | Ничья: {m['p_d']*100:.1f}% | Гости: {m['p_a']*100:.1f}%</p>
@@ -278,7 +286,8 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ Как работает система")
     st.write("""
-    - **Бегунок времени:** Позволяет отфильтровать матчи строго на выбранный период (например, на ближайшие 12-24 часа).
+    - **Широкий охват:** Топ-лиги Европы, MLS (США), Бразилия и РПЛ (Россия).
+    - **Бегунок времени:** Фильтрация матчей строго на выбранный период (например, на ближайшие 12-24 часа).
     - **Цветовая индикация:** 🟢 Зеленый — одобрено ИИ, 🔵 Синий — сомнения/риск, 🔴 Красный — отказ.
-    - **Банк и история:** Виртуальный банк 10,000 у.е. Данные сохраняются локально, история не стирается.
+    - **Банк и история:** Виртуальный банк 10,000 у.е. Данные сохраняются локально в `history.json` и не стираются при перезагрузках.
     """)
