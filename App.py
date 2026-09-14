@@ -177,7 +177,6 @@ def get_self_learning_context():
     context_str = f"\n\n📊 СТАТИСТИКА САМООБУЧЕНИЯ (Всего сыграно: {total}, Винрейт: {winrate:.1f}%):\n"
     if resolved_bets:
         context_str += "Учитывай опыт последних прогнозов (анализируй, почему прошлые ставки зашли или провалились):\n"
-        # Исправлен отсутствующий символ комментария
         for b in resolved_bets[-12:]:
             context_str += f"- {b}\n"
     else:
@@ -222,7 +221,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     if gemini_key:
         try:
             g_client = genai.Client(api_key=gemini_key)
-            for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
+            for g_model in ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash-latest"]:
                 try:
                     response = g_client.models.generate_content(
                         model=g_model,
@@ -243,7 +242,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     if not raw_text and groq_key:
         try:
             client = Groq(api_key=groq_key)
-            for g_model in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+            for g_model in ["llama3-70b-8192", "mixtral-8x7b-32768", "llama3-8b-8192"]:
                 try:
                     completion = client.chat.completions.create(
                         model=g_model,
@@ -331,7 +330,7 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
         """
 
         raw_text = ""
-        for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
+        for g_model in ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash-latest"]:
             try:
                 response = g_client.models.generate_content(
                     model=g_model,
