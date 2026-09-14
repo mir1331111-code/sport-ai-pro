@@ -177,37 +177,27 @@ def extract_json_safely(text):
   return None
 
 
-# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (GEMINI) ---
+# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (С ДИАГНОСТИКОЙ ОШИБОК) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
   if not gemini_key and not groq_key:
-    return [{
-        "sport_label": sport_title,
-        "team1": "⚠️ Требуется API-ключ",
-        "team2": "в сайдбаре слева",
-        "bet": "Укажите Gemini Key",
-        "coefficient": 1.0,
-        "probability": 0,
-        "bookmaker": "Система",
-        "status": "⌛ Ожидание",
-        "analysis": (
-            "⚠️ Введите Gemini API Key в боковой панели. Встроенный поиск Google"
-            " использует его для нахождения реальных матчей."
-        ),
-    }]
+    st.error(
+        "⚠️ Укажите Gemini API Key в боковой панели слева!", icon="🔑"
+    )
+    return []
 
   prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    Используй поиск Google, чтобы найти реальные текущие матчи или главные топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
+    Используй поиск Google, чтобы найти реальные текущие матчи или топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
     Выбери матчи с высокой вероятностью прохода.
     
-    Верни СТРОГО JSON объект без лишнего текста:
+    Верни СТРОГО JSON объект (можно обернуть в ```json ... ```):
     {{
       "matches": [
         {{
-          "team1": "Реальное название первой команды",
-          "team2": "Реальное название второй команды",
+          "team1": "Название первой команды",
+          "team2": "Название второй команды",
           "coefficient_1": 1.45,
           "coefficient_2": 3.10,
           "bookmaker": "Fonbet",
@@ -220,8 +210,9 @@ def fetch_and_analyze_matches(
     """
 
   raw_text = ""
+  error_log = []
 
-  # Приоритет: Gemini со встроенным поиском Google (Grounding)
+  # Приоритет: Gemini со встроенным поиском Google
   if gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
@@ -231,18 +222,19 @@ def fetch_and_analyze_matches(
               model=g_model,
               contents=prompt,
               config=types.GenerateContentConfig(
-                  tools=[{"google_search": {}}], response_mime_type="application/json"
+                  tools=[{"google_search": {}}]
               ),
           )
           if response and response.text:
             raw_text = response.text.strip()
             break
-        except Exception:
+        except Exception as e:
+          error_log.append(f"Gemini ({g_model}): {e}")
           continue
-    except Exception:
-      pass
+    except Exception as e:
+      error_log.append(f"Gemini Init Error: {e}")
 
-  # Резерв через Groq, если Gemini не задан
+  # Резерв через Groq, если Gemini не отдал текст
   if not raw_text and groq_key:
     try:
       client = Groq(api_key=groq_key)
@@ -253,8 +245,8 @@ def fetch_and_analyze_matches(
           temperature=0.2,
       )
       raw_text = completion.choices[0].message.content
-    except Exception:
-      pass
+    except Exception as e:
+      error_log.append(f"Groq Error: {e}")
 
   parsed_data = extract_json_safely(raw_text)
   data_list = []
@@ -262,19 +254,22 @@ def fetch_and_analyze_matches(
     data_list = parsed_data.get("matches", [])
 
   if not data_list:
+    details = (
+        " | ".join(error_log)
+        if error_log
+        else "Модель не вернула JSON с матчами."
+    )
+    st.error(f"🚨 Ошибка получения матчей: {details}", icon="⚠️")
     return [{
         "sport_label": sport_title,
-        "team1": "⚠️ Матчи не найдены",
-        "team2": "проверьте ключ Gemini",
-        "bet": "Попробуйте позже",
+        "team1": "⚠️ Ошибка запроса",
+        "team2": "см. детали выше",
+        "bet": "Проверьте ключ",
         "coefficient": 1.0,
         "probability": 0,
         "bookmaker": "Система",
         "status": "⌛ Ожидание",
-        "analysis": (
-            "⚠️ Не удалось получить матчи. Убедитесь, что введен валидный Gemini"
-            " API Key (поиск Google работает через него)."
-        ),
+        "analysis": f"Детали ошибки: {details}",
     }]
 
   parsed_matches = []
@@ -334,7 +329,6 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
         response = g_client.models.generate_content(
             model=g_model,
             contents=[image, prompt],
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         if response and response.text:
           raw_text = response.text.strip()
@@ -514,10 +508,7 @@ if selected_window == "🌍 Глобальный омниссканер":
       "🚀 Запустить глобальный сканер (Фокус на проход)",
       use_container_width=True,
   ):
-    with st.spinner(
-        "Сканирование топ-рынков через Google и формирование"
-        " железобетонных ставок..."
-    ):
+    with st.spinner("Сканирование топ-рынков через Google..."):
       all_global = []
       for sport_name, sport_info in SPORT_GROUPS.items():
         matches = fetch_and_analyze_matches(
@@ -529,17 +520,18 @@ if selected_window == "🌍 Глобальный омниссканер":
         )
         all_global.extend(matches)
 
-      st.session_state.history.insert(
-          0,
-          {
-              "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-              "sport": "🌍 Глобальный рынок",
-              "data": all_global,
-          },
-      )
-      save_history(st.session_state.history)
-      st.success(f"Анализ завершен! Найдено надежных матчей: {len(all_global)}")
-      st.rerun()
+      if all_global:
+        st.session_state.history.insert(
+            0,
+            {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sport": "🌍 Глобальный рынок",
+                "data": all_global,
+            },
+        )
+        save_history(st.session_state.history)
+        st.success(f"Анализ завершен! Найдено надежных матчей: {len(all_global)}")
+        st.rerun()
 
   for entry in [
       e
@@ -618,17 +610,18 @@ elif selected_window == "🎯 Стратегия: Камбэк фаворита 
         )
         strategy_matches.extend(matches)
 
-      st.session_state.history.insert(
-          0,
-          {
-              "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-              "sport": "🎯 Стратегия Камбэк",
-              "data": strategy_matches,
-          },
-      )
-      save_history(st.session_state.history)
-      st.success(f"Найдено ситуаций: {len(strategy_matches)}")
-      st.rerun()
+      if strategy_matches:
+        st.session_state.history.insert(
+            0,
+            {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sport": "🎯 Стратегия Камбэк",
+                "data": strategy_matches,
+            },
+        )
+        save_history(st.session_state.history)
+        st.success(f"Найдено ситуаций: {len(strategy_matches)}")
+        st.rerun()
 
   for entry in [
       e
@@ -708,17 +701,18 @@ elif selected_window in window_mapping:
           sport_data["label"],
           is_strategy=False,
       )
-      st.session_state.history.insert(
-          0,
-          {
-              "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-              "sport": sport_title,
-              "data": matches,
-          },
-      )
-      save_history(st.session_state.history)
-      st.success(f"Поиск завершен. Найдено прогнозов: {len(matches)}")
-      st.rerun()
+      if matches:
+        st.session_state.history.insert(
+            0,
+            {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sport": sport_title,
+                "data": matches,
+            },
+        )
+        save_history(st.session_state.history)
+        st.success(f"Поиск завершен. Найдено прогнозов: {len(matches)}")
+        st.rerun()
 
   for entry in [
       e for e in st.session_state.history if e.get("sport") == sport_title
