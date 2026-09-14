@@ -138,7 +138,6 @@ def send_telegram_message(token, chat_id, message):
 
 def fetch_real_web_data(sport_title):
   current_date_str = "14 сентября 2026"
-  # Жестко нацеливаем поиск на спортивные календари и расписания
   query = (
       f"расписание матчей {sport_title} на сегодня {current_date_str}"
       " championat sports.ru"
