@@ -3,6 +3,7 @@ from duckduckgo_search import DDGS
 import json
 import os
 import random
+import re
 from google import genai
 from google.genai import types
 from groq import Groq
@@ -145,7 +146,35 @@ def fetch_real_web_data(sport_title):
     return ""
 
 
-# --- АНАЛИЗ С АВТОМАТИЧЕСКИМ ПОДБОРОМ МОДЕЛИ GROQ ---
+def extract_json_safely(text):
+  if not text:
+    return None
+  # 1. Прямая попытка парсинга
+  try:
+    return json.loads(text)
+  except Exception:
+    pass
+
+  # 2. Попытка вырезать из блоков ```json ... ```
+  match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+  if match:
+    try:
+      return json.loads(match.group(1))
+    except Exception:
+      pass
+
+  # 3. Поиск первой '{' и последней '}'
+  try:
+    start = text.index("{")
+    end = text.rindex("}") + 1
+    return json.loads(text[start:end])
+  except Exception:
+    pass
+
+  return None
+
+
+# --- АНАЛИЗ С БЕЗОПАСНЫМ ПАРСИНГОМ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -159,7 +188,7 @@ def fetch_and_analyze_matches(
     Данные из сети:
     {web_context}
     
-    Верни СТРОГО чистый JSON без маркдауна и без лишнего текста, содержащий массив matches со следующей структурой:
+    Верни СТРОГО валидный JSON без маркдауна (без ```json и без ```) со следующей структурой:
     {{
       "matches": [
         {{
@@ -199,12 +228,12 @@ def fetch_and_analyze_matches(
       except Exception:
         continue
 
-  # 2. Резерв на Gemini (если ключи Groq не подошли или произошел сбой)
+  # 2. Резерв на Gemini
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
       response = g_client.models.generate_content(
-          model="gemini-3.6-flash",
+          model="gemini-2.5-flash",
           contents=prompt,
       )
       if response and response.text:
@@ -227,50 +256,47 @@ def fetch_and_analyze_matches(
     )
     return []
 
-  try:
-    clean_json = raw_text.strip()
-    if clean_json.startswith("```"):
-      clean_json = clean_json.split("```")[1]
-      if clean_json.startswith("json"):
-        clean_json = clean_json[4:]
-
-    parsed_data = json.loads(clean_json.strip())
-    data_list = (
-        parsed_data.get("matches", [])
-        if isinstance(parsed_data, dict)
-        else parsed_data
+  parsed_data = extract_json_safely(raw_text)
+  if not parsed_data:
+    st.error(
+        "Ошибка обработки данных: ИИ вернул ответ в неверном формате. Попробуйте"
+        " еще раз."
     )
-
-    parsed_matches = []
-    for item in data_list:
-      t1 = item.get("team1", "Команда 1")
-      t2 = item.get("team2", "Команда 2")
-      p1 = float(item.get("coefficient_1", 1.85))
-      p2 = float(item.get("coefficient_2", 2.10))
-      bet = item.get("recommended_bet", f"Победа 1 ({t1})")
-      chosen_odds = p1 if "1" in bet or t1 in bet else p2
-      prob = int(item.get("expert_probability", 70))
-      g_text = item.get("groq_analysis", "Анализ формы.")
-
-      analysis_comment = f"🌐 Web-данные + ИИ: {g_text}"
-
-      parsed_matches.append({
-          "sport_label": (
-              f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
-          ),
-          "team1": t1,
-          "team2": t2,
-          "bet": bet,
-          "coefficient": chosen_odds,
-          "probability": prob,
-          "bookmaker": item.get("bookmaker", "БК"),
-          "status": "⌛ Ожидание",
-          "analysis": analysis_comment,
-      })
-    return parsed_matches
-  except Exception as e:
-    st.error(f"Ошибка обработки данных: {e}")
     return []
+
+  data_list = (
+      parsed_data.get("matches", [])
+      if isinstance(parsed_data, dict)
+      else parsed_data
+  )
+
+  parsed_matches = []
+  for item in data_list:
+    t1 = item.get("team1", "Команда 1")
+    t2 = item.get("team2", "Команда 2")
+    p1 = float(item.get("coefficient_1", 1.85))
+    p2 = float(item.get("coefficient_2", 2.10))
+    bet = item.get("recommended_bet", f"Победа 1 ({t1})")
+    chosen_odds = p1 if "1" in bet or t1 in bet else p2
+    prob = int(item.get("expert_probability", 70))
+    g_text = item.get("groq_analysis", "Анализ формы.")
+
+    analysis_comment = f"🌐 Web-данные + ИИ: {g_text}"
+
+    parsed_matches.append({
+        "sport_label": (
+            f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
+        ),
+        "team1": t1,
+        "team2": t2,
+        "bet": bet,
+        "coefficient": chosen_odds,
+        "probability": prob,
+        "bookmaker": item.get("bookmaker", "БК"),
+        "status": "⌛ Ожидание",
+        "analysis": analysis_comment,
+    })
+  return parsed_matches
 
 
 # --- САЙДБАР ---
