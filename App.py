@@ -131,24 +131,26 @@ def send_telegram_message(token, chat_id, message):
 def extract_json_safely(text):
     if not text:
         return None
+    text = text.strip()
     try:
         return json.loads(text)
     except Exception:
         pass
 
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    # Убираем markdown бэктики если есть
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        return json.loads(cleaned.strip())
+    except Exception:
+        pass
+
+    match = re.search(r"(\{.*\})", text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group(1))
         except Exception:
             pass
-
-    try:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        return json.loads(text[start:end])
-    except Exception:
-        pass
 
     return None
 
@@ -176,7 +178,7 @@ def get_self_learning_context():
 
     context_str = f"\n\n📊 СТАТИСТИКА САМООБУЧЕНИЯ (Всего сыграно: {total}, Винрейт: {winrate:.1f}%):\n"
     if resolved_bets:
-        context_str += "Учитывай опыт прошлых прогнозов для повышения точности:\n"
+        context_str += "Учитывай опыт прошлых прогнозов:\n"
         for b in resolved_bets[-12:]:
             context_str += f"- {b}\n"
     else:
@@ -184,7 +186,7 @@ def get_self_learning_context():
 
     return context_str
 
-# --- ПОИСК МАТЧЕЙ (С УЧЕТОМ ВАЛУЙНОСТИ, А НЕ НИЗКИХ КЭФОВ) ---
+# --- ПОИСК МАТЧЕЙ ---
 def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_strategy=False):
     if not gemini_key and not groq_key:
         st.error("⚠️ Укажите хотя бы один API Key (Groq или Gemini) в боковой панели слева!", icon="🔑")
@@ -195,7 +197,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     prompt = f"""
     Сегодня 14 сентября 2026 года. 
     Найди актуальные матчи в категории "{sport_title} ({sport_desc})".
-    ВАЖНО: Не бери слепо низкие коэффициенты на очевидных фаворитов. Проводи глубокий анализ и ищи ценность (value betting), где реальные шансы команды выше, чем дают букмекеры, либо где оправдан выбор тоталов/фор.
+    ВАЖНО: Ищи ценность (value betting), глубоко анализируй форму, а не гонись за слепыми низкими коэффициентами.
     {learning_prompt_addition}
     
     Верни СТРОГО JSON объект:
@@ -207,9 +209,9 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
           "coefficient_1": 1.85,
           "coefficient_2": 2.10,
           "bookmaker": "Fonbet",
-          "recommended_bet": "Обоснованная ставка с анализом",
+          "recommended_bet": "Обоснованная ставка",
           "expert_probability": 78,
-          "groq_analysis": "Глубокий разбор: анализ формы, факторов риска, почему выбран именно этот исход вместо слепой погони за низким кэфом."
+          "groq_analysis": "Глубокий разбор: анализ формы, факторов риска и обоснование."
         }}
       ]
     }}
@@ -246,7 +248,8 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
                         model=g_model,
                         contents=prompt,
                         config=types.GenerateContentConfig(
-                            tools=[{"google_search": {}}]
+                            tools=[{"google_search": {}}],
+                            response_mime_type="application/json"
                         ),
                     )
                     if response and response.text:
@@ -264,7 +267,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         data_list = parsed_data.get("matches", [])
 
     if not data_list:
-        details = " | ".join(error_log) if error_log else "Модель не вернула JSON с матчами."
+        details = " | ".join(error_log) if error_log else f"Сырой текст: {raw_text[:120]}"
         st.error(f"🚨 Ошибка получения матчей: {details}", icon="⚠️")
         return [{
             "sport_label": sport_title,
@@ -302,7 +305,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         })
     return parsed_matches
 
-# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА (ГЛУБОКИЙ АНАЛИЗ БЕЗ СЛЕПЫХ НИЗКИХ КЭФОВ) ---
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА С СТРОГИМ JSON ---
 def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     if not gemini_key:
         return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
@@ -312,20 +315,20 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     try:
         g_client = genai.Client(api_key=gemini_key)
         prompt = f"""
-        Ты профессиональный спортивный аналитик и каппер с глубоким пониманием тактики и поиска валуйных (выгодных) ставок.
-        Внимательно изучи этот скриншот букмекерской конторы (на нем видны команды, коэффициенты на исход, периоды, тоталы и т.д.).
-        НЕ ГОНИСЬ за самыми низкими коэффициентами и слепыми фаворитами! Проанализируй текущую ситуацию, форму, статистику рынков (победы, тоталы, форы, периоды) и найди **самую валуйную, обоснованную и интересную ставку** с точки зрения реальной логики игры, а не просто меньшего кэфа.
+        Ты профессиональный спортивный аналитик и каппер.
+        Внимательно изучи этот скриншот букмекерской конторы (найди названия команд, например ХК Норильск, Югра, коэффициенты, тоталы и рынки).
+        НЕ ГОНИСЬ за самыми низкими коэффициентами. Проанализируй ситуацию, форму и найди самую валуйную и обоснованную ставку.
         
-        Верни результат СТРОГО в формате JSON без какого-либо лишнего текста:
+        Верни результат СТРОГО в формате JSON без каких-либо вводных слов и пояснений снаружи:
         {{
-          "team1": "Название первой команды или игрока",
-          "team2": "Название второй команды или игрока",
-          "sport": "Вид спорта (например, Хоккей, Футбол, Теннис)",
-          "recommended_bet": "Конкретная ставка с учетом анализа (например, ТБ (4.5) или Фора, а не просто самый дешевый исход)",
+          "team1": "Название первой команды",
+          "team2": "Название второй команды",
+          "sport": "Вид спорта (например, Хоккей)",
+          "recommended_bet": "Ставка с учетом анализа и коэффициентов со скриншота",
           "coefficient": 1.75,
           "probability": 78,
           "bookmaker": "Название БК со скриншота",
-          "analysis": "Глубокий аналитический разбор: почему именно эта ставка выгодна (value), какая форма у команд, почему выбран этот вариант."
+          "analysis": "Глубокий аналитический разбор: почему именно эта ставка выгодна и что видно на скриншоте."
         }}
         {learning_prompt_addition}
         """
@@ -336,6 +339,9 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
                 response = g_client.models.generate_content(
                     model=g_model,
                     contents=[image, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
                 )
                 if response and response.text:
                     raw_text = response.text.strip()
