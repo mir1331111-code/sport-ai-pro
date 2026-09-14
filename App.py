@@ -128,20 +128,22 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
     Ты — ведущий аналитический спортивный сканер. Текущая дата: сентябрь 2026 года.
     Составь список из 4-5 АКТУАЛЬНЫХ, РЕАЛЬНЫХ матчей, которые пройдут в ближайшие дни в категории: "{sport_title} ({sport_desc})".
     Для каждого матча укажи реальные команды, актуальные букмекерские коэффициенты и дай детальный аналитический прогноз.
-    Ответ выдай СТРОГО в формате JSON-массива объектов (без маркдауна, чистый JSON):
-    [
-      {{
-        "team1": "Название команды 1",
-        "team2": "Название команды 2",
-        "coefficient_1": 1.85,
-        "coefficient_2": 3.90,
-        "bookmaker": "Fonbet / Pinnacle",
-        "recommended_bet": "Победа 1 (название)",
-        "expert_probability": 72,
-        "groq_analysis": "Разбор формы и мотивации от Groq (2 предложения)",
-        "gemini_analysis": "Статистический разбор и выводы от Gemini (2 предложения)"
-      }}
-    ]
+    Ответ выдай СТРОГО в формате JSON-объекта с ключом "matches", содержащим массив (без маркдауна, чистый JSON):
+    {{
+      "matches": [
+        {{
+          "team1": "Название команды 1",
+          "team2": "Название команды 2",
+          "coefficient_1": 1.85,
+          "coefficient_2": 3.90,
+          "bookmaker": "Fonbet / Pinnacle",
+          "recommended_bet": "Победа 1 (название)",
+          "expert_probability": 72,
+          "groq_analysis": "Разбор формы и мотивации от Groq (2 предложения)",
+          "gemini_analysis": "Статистический разбор и выводы от Gemini (2 предложения)"
+        }}
+      ]
+    }}
     """
 
   raw_text = ""
@@ -162,7 +164,7 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
     try:
       client = genai.Client(api_key=gemini_key)
       response = client.models.generate_content(
-          model="gemini-2.5-flash",
+          model="gemini-1.5-flash",
           contents=prompt,
           config=types.GenerateContentConfig(response_mime_type="application/json"),
       )
@@ -179,40 +181,44 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
       clean_json = clean_json.split("```")[1]
       if clean_json.startswith("json"):
         clean_json = clean_json[4:]
-    data_list = json.loads(clean_json)
+    parsed_data = json.loads(clean_json)
 
-    if isinstance(data_list, dict):
-      for k, v in data_list.items():
-        if isinstance(v, list):
-          data_list = v
-          break
+    data_list = []
+    if isinstance(parsed_data, dict):
+      data_list = parsed_data.get("matches", [])
+      if not data_list:
+        for k, v in parsed_data.items():
+          if isinstance(v, list):
+            data_list = v
+            break
+    elif isinstance(parsed_data, list):
+      data_list = parsed_data
 
     parsed_matches = []
-    if isinstance(data_list, list):
-      for item in data_list:
-        t1 = item.get("team1", "Команда 1")
-        t2 = item.get("team2", "Команда 2")
-        p1 = float(item.get("coefficient_1", 1.85))
-        p2 = float(item.get("coefficient_2", 2.10))
-        bet = item.get("recommended_bet", f"Победа 1 ({t1})")
-        chosen_odds = p1 if "1" in bet or t1 in bet else p2
-        prob = int(item.get("expert_probability", 70))
+    for item in data_list:
+      t1 = item.get("team1", "Команда 1")
+      t2 = item.get("team2", "Команда 2")
+      p1 = float(item.get("coefficient_1", 1.85))
+      p2 = float(item.get("coefficient_2", 2.10))
+      bet = item.get("recommended_bet", f"Победа 1 ({t1})")
+      chosen_odds = p1 if "1" in bet or t1 in bet else p2
+      prob = int(item.get("expert_probability", 70))
 
-        g_text = item.get("groq_analysis", "Анализ формы команд.")
-        gem_text = item.get("gemini_analysis", "Статистический расчет.")
-        analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
+      g_text = item.get("groq_analysis", "Анализ формы команд.")
+      gem_text = item.get("gemini_analysis", "Статистический расчет.")
+      analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
 
-        parsed_matches.append({
-            "sport_label": sport_title,
-            "team1": t1,
-            "team2": t2,
-            "bet": bet,
-            "coefficient": chosen_odds,
-            "probability": prob,
-            "bookmaker": item.get("bookmaker", "БК"),
-            "status": "⌛ Ожидание",
-            "analysis": analysis_comment,
-        })
+      parsed_matches.append({
+          "sport_label": sport_title,
+          "team1": t1,
+          "team2": t2,
+          "bet": bet,
+          "coefficient": chosen_odds,
+          "probability": prob,
+          "bookmaker": item.get("bookmaker", "БК"),
+          "status": "⌛ Ожидание",
+          "analysis": analysis_comment,
+      })
     return parsed_matches
   except Exception:
     return []
@@ -354,7 +360,7 @@ if selected_window == "🌍 Глобальный омниссканер":
       ):
         all_global_matches = []
         for sport_name, sport_info in SPORT_GROUPS.items():
-          matches = real_matches = fetch_real_matches_consensus(
+          real_matches = fetch_real_matches_consensus(
               groq_api_key,
               gemini_api_key,
               sport_name,
@@ -415,7 +421,7 @@ elif selected_window == "📥 Ручной инжектор":
     if submitted:
       single_prompt = f"""
             Проанализируй матч: {t1} vs {t2} ({sport_lbl}). Коэффициенты: П1={o1}, П2={o2}.
-            Верни СТРОГО JSON без маркдауна:
+            Верни СТРОГО JSON-объект без маркдауна:
             {{
               "recommended_bet": "Победа 1 ({t1})",
               "expert_probability": 72,
@@ -441,7 +447,7 @@ elif selected_window == "📥 Ручной инжектор":
         try:
           client = genai.Client(api_key=gemini_api_key)
           resp = client.models.generate_content(
-              model="gemini-2.5-flash",
+              model="gemini-1.5-flash",
               contents=single_prompt,
               config=types.GenerateContentConfig(response_mime_type="application/json"),
           )
