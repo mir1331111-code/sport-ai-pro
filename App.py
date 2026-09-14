@@ -2,8 +2,6 @@ from datetime import datetime, timezone
 import json
 import os
 import random
-from google import genai
-from google.genai import types
 from groq import Groq
 import requests
 import streamlit as st
@@ -38,7 +36,7 @@ def save_history(history_data):
 
 
 st.set_page_config(
-    page_title="Syndicate Pro: Clean Dual-AI Terminal", page_icon="⚡", layout="wide"
+    page_title="Syndicate Pro: Groq Match Scanner", page_icon="⚡", layout="wide"
 )
 
 if "history" not in st.session_state:
@@ -119,16 +117,17 @@ def apply_custom_styles(theme_mode, sport_type="default"):
   st.markdown(css_code, unsafe_allow_html=True)
 
 
-# --- ПОИСК АКТУАЛЬНЫХ МАТЧЕЙ И КОНСЕНСУС ИИ ---
-def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
-  if not groq_key and not gemini_key:
+# --- ПОИСК МАТЧЕЙ И АНАЛИЗ ЧЕРЕЗ GROQ ---
+def fetch_real_matches_consensus(groq_key, sport_title, sport_desc):
+  if not groq_key:
+    st.warning("Введите Groq API ключ в сайдбаре слева!")
     return []
 
   prompt = f"""
-    Ты — ведущий аналитический спортивный сканер. Текущая дата: сентябрь 2026 года.
-    Составь список из 4-5 АКТУАЛЬНЫХ, РЕАЛЬНЫХ матчей, которые пройдут в ближайшие дни в категории: "{sport_title} ({sport_desc})".
-    Для каждого матча укажи реальные команды, актуальные букмекерские коэффициенты и дай детальный аналитический прогноз.
-    Ответ выдай СТРОГО в формате JSON-объекта с ключом "matches", содержащим массив (без маркдауна, чистый JSON):
+    Ты — главный спортивный сканер и аналитический ИИ. Текущая дата: сентябрь 2026 года.
+    Найди и составь список из 4-5 АКТУАЛЬНЫХ матчей, которые пройдут в ближайшие дни в категории: "{sport_title} ({sport_desc})".
+    Для каждого матча укажи реальные команды, актуальные букмекерские коэффициенты, рекомендуемую ставку, вероятность прохода (%) и подробный аналитический разбор.
+    Верни СТРОГО чистый JSON (без маркдауна, без тегов ```json), в виде объекта с ключом "matches":
     {{
       "matches": [
         {{
@@ -139,40 +138,27 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
           "bookmaker": "Fonbet / Pinnacle",
           "recommended_bet": "Победа 1 (название)",
           "expert_probability": 72,
-          "groq_analysis": "Разбор формы и мотивации от Groq (2 предложения)",
-          "gemini_analysis": "Статистический разбор и выводы от Gemini (2 предложения)"
+          "groq_analysis": "Тактический анализ формы и мотивации команд (2 предложения)",
+          "gemini_analysis": "Статистический разбор и оценка рисков (2 предложения)"
         }}
       ]
     }}
     """
 
-  raw_text = ""
-  if groq_key:
-    try:
-      client = Groq(api_key=groq_key)
-      completion = client.chat.completions.create(
-          model="llama-3.3-70b-versatile",
-          messages=[{"role": "user", "content": prompt}],
-          temperature=0.3,
-          response_format={"type": "json_object"},
-      )
-      raw_text = completion.choices[0].message.content
-    except Exception:
-      pass
-
-  if not raw_text and gemini_key:
-    try:
-      client = genai.Client(api_key=gemini_key)
-      response = client.models.generate_content(
-          model="gemini-1.5-flash",
-          contents=prompt,
-          config=types.GenerateContentConfig(response_mime_type="application/json"),
-      )
-      raw_text = response.text
-    except Exception:
-      pass
+  try:
+    client = Groq(api_key=groq_key)
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+    raw_text = completion.choices[0].message.content
+  except Exception as e:
+    st.error(f"Ошибка подключения к Groq API: {e}")
+    return []
 
   if not raw_text:
+    st.error("Groq вернул пустой ответ.")
     return []
 
   try:
@@ -181,7 +167,8 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
       clean_json = clean_json.split("```")[1]
       if clean_json.startswith("json"):
         clean_json = clean_json[4:]
-    parsed_data = json.loads(clean_json)
+
+    parsed_data = json.loads(clean_json.strip())
 
     data_list = []
     if isinstance(parsed_data, dict):
@@ -206,7 +193,7 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
 
       g_text = item.get("groq_analysis", "Анализ формы команд.")
       gem_text = item.get("gemini_analysis", "Статистический расчет.")
-      analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
+      analysis_comment = f"🤖 Groq: {g_text} | 💎 Аналитик: {gem_text}"
 
       parsed_matches.append({
           "sport_label": sport_title,
@@ -220,7 +207,8 @@ def fetch_real_matches_consensus(groq_key, gemini_key, sport_title, sport_desc):
           "analysis": analysis_comment,
       })
     return parsed_matches
-  except Exception:
+  except Exception as e:
+    st.error(f"Ошибка обработки ответа ИИ: {e}")
     return []
 
 
@@ -232,12 +220,9 @@ theme_choice = st.sidebar.selectbox(
     index=0,
 )
 
-st.sidebar.title("🔑 API-ключи Совета ИИ")
+st.sidebar.title("🔑 API-ключ Groq")
 groq_api_key = st.sidebar.text_input(
     "Groq API Key (Llama 3.3)", type="password", placeholder="gsk_..."
-)
-gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key", type="password", placeholder="AIzaSy..."
 )
 
 selected_window = st.sidebar.radio(
@@ -282,7 +267,7 @@ if selected_window in window_mapping:
   active_sport_cat = window_mapping[selected_window][1]["category"]
 apply_custom_styles(theme_choice, active_sport_cat)
 
-st.markdown("### ⚡ Терминал прогнозов Совета ИИ (Groq + Gemini)")
+st.markdown("### ⚡ Терминал сканирования матчей (Groq Llama 3.3)")
 st.markdown("---")
 
 
@@ -303,247 +288,4 @@ def render_match_cards(entry, session_key_prefix):
     bk_val = card.get("bookmaker", "")
     bet_val = card.get("bet", "")
     coef_val = card.get("coefficient", 1.0)
-    prob_val = card.get("probability", 70)
-    analysis_val = card.get("analysis", "")
-
-    with cols[idx % 2]:
-      st.markdown(
-          f"""
-                <div class="{status_class}">
-                    <span class="value-badge">⚡ Консенсус Совет ИИ (Groq + Gemini)</span><br>
-                    <b>{team1_val} vs {team2_val}</b><br>
-                    <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:6px 0;">
-                    <b>Рекомендуемая ставка:</b> {bet_val}<br>
-                    <b>Коэффициент:</b> {coef_val} | <b>Вероятность:</b> {prob_val}%<br>
-                    <i>🤖💎 Совместная аналитика:<br>{analysis_val}</i>
-                </div>
-                """,
-          unsafe_allow_html=True,
-      )
-      c1, c2, c3 = st.columns(3)
-      if c1.button(
-          "✅ Зашло", key=f"{session_key_prefix}_w_{entry['timestamp']}_{idx}"
-      ):
-        card["status"] = "✅ Проход"
-        save_history(st.session_state.history)
-        st.rerun()
-      if c2.button(
-          "❌ Мимо", key=f"{session_key_prefix}_l_{entry['timestamp']}_{idx}"
-      ):
-        card["status"] = "❌ Проигрыш"
-        save_history(st.session_state.history)
-        st.rerun()
-      if c3.button(
-          "🗑 Удалить",
-          key=f"{session_key_prefix}_d_{entry['timestamp']}_{idx}",
-      ):
-        entry["data"].remove(card)
-        save_history(st.session_state.history)
-        st.rerun()
-      st.markdown("<br>", unsafe_allow_html=True)
-
-
-# --- ВКЛАДКИ ---
-if selected_window == "🌍 Глобальный омниссканер":
-  st.header("🌍 Глобальный поиск актуальных матчей")
-  st.info(
-      "Сканирует топ-события по всем видам спорта на текущую неделю и выдает"
-      " консенсус-прогнозы."
-  )
-
-  if st.button("🚀 Найти актуальные матчи со всеми ИИ", use_container_width=True):
-    if not groq_api_key and not gemini_api_key:
-      st.error("Введите хотя бы один API ключ (Groq или Gemini) в сайдбаре!")
-    else:
-      with st.spinner(
-          "ИИ ищет актуальные матчи и проводит совместный анализ..."
-      ):
-        all_global_matches = []
-        for sport_name, sport_info in SPORT_GROUPS.items():
-          real_matches = fetch_real_matches_consensus(
-              groq_api_key,
-              gemini_api_key,
-              sport_name,
-              sport_info["label"],
-          )
-          all_global_matches.extend(real_matches)
-
-        if all_global_matches:
-          st.session_state.history.insert(
-              0,
-              {
-                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                  "sport": "🌍 Глобальный рынок",
-                  "data": all_global_matches,
-              },
-          )
-          save_history(st.session_state.history)
-          st.success(f"Найдено актуальных матчей: {len(all_global_matches)}")
-          st.rerun()
-        else:
-          st.warning("Не удалось получить матчи. Проверьте API ключи.")
-
-  for entry in [
-      e
-      for e in st.session_state.history
-      if e.get("sport") == "🌍 Глобальный рынок"
-  ]:
-    st.caption(f"📅 Сформировано: {entry.get('timestamp')}")
-    render_match_cards(entry, "glob")
-    st.markdown("---")
-
-elif selected_window == "📥 Ручной инжектор":
-  st.header("📥 Ручной ввод матча")
-  with st.form("manual_form"):
-    c1, c2 = st.columns(2)
-    with c1:
-      t1 = st.text_input("Хозяева / Игрок 1", "Реал Мадрид")
-      o1 = st.number_input("Коэффициент П1", min_value=1.01, value=1.75)
-    with c2:
-      t2 = st.text_input("Гости / Игрок 2", "Барселона")
-      o2 = st.number_input("Коэффициент П2", min_value=1.01, value=4.20)
-    sport_lbl = st.selectbox(
-        "Вид спорта",
-        [
-            "⚽ Футбол",
-            "🏒 Хоккей",
-            "🏀 Баскетбол",
-            "🎾 Теннис",
-            "🏐 Волейбол",
-            "🤾 Гандбол",
-            "🎮 Киберспорт",
-        ],
-    )
-    submitted = st.form_submit_button(
-        "⚡ Запросить консенсус Groq + Gemini и разобрать"
-    )
-
-    if submitted:
-      single_prompt = f"""
-            Проанализируй матч: {t1} vs {t2} ({sport_lbl}). Коэффициенты: П1={o1}, П2={o2}.
-            Верни СТРОГО JSON-объект без маркдауна:
-            {{
-              "recommended_bet": "Победа 1 ({t1})",
-              "expert_probability": 72,
-              "groq_analysis": "Краткий аргумент Groq.",
-              "gemini_analysis": "Краткий аргумент Gemini."
-            }}
-            """
-      res_text = ""
-      if groq_api_key:
-        try:
-          client = Groq(api_key=groq_api_key)
-          comp = client.chat.completions.create(
-              model="llama-3.3-70b-versatile",
-              messages=[{"role": "user", "content": single_prompt}],
-              temperature=0.2,
-              response_format={"type": "json_object"},
-          )
-          res_text = comp.choices[0].message.content
-        except Exception:
-          pass
-
-      if not res_text and gemini_api_key:
-        try:
-          client = genai.Client(api_key=gemini_api_key)
-          resp = client.models.generate_content(
-              model="gemini-1.5-flash",
-              contents=single_prompt,
-              config=types.GenerateContentConfig(response_mime_type="application/json"),
-          )
-          res_text = resp.text
-        except Exception:
-          pass
-
-      try:
-        res_json = json.loads(res_text.strip())
-        bet_choice = res_json.get("recommended_bet", f"Победа 1 ({t1})")
-        chosen_odds = o1 if "1" in bet_choice or t1 in bet_choice else o2
-        prob = int(res_json.get("expert_probability", 70))
-        g_txt = res_json.get("groq_analysis", "")
-        gem_txt = res_json.get("gemini_analysis", "")
-        analysis_text = f"🤖 Groq: {g_txt} | 💎 Gemini: {gem_txt}"
-      except Exception:
-        bet_choice = f"Победа 1 ({t1})"
-        chosen_odds = o1
-        prob = 70
-        analysis_text = "Аналитический консенсус ИИ."
-
-      card = {
-          "sport_label": sport_lbl,
-          "team1": t1,
-          "team2": t2,
-          "bet": bet_choice,
-          "coefficient": chosen_odds,
-          "probability": prob,
-          "bookmaker": "Ручной ввод",
-          "status": "⌛ Ожидание",
-          "analysis": analysis_text,
-      }
-      st.session_state.history.insert(
-          0,
-          {
-              "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-              "sport": "📥 Ручной ввод",
-              "data": [card],
-          },
-      )
-      save_history(st.session_state.history)
-      st.success("Матч успешно проанализирован!")
-      st.rerun()
-
-  for entry in [
-      e for e in st.session_state.history if e.get("sport") == "📥 Ручной ввод"
-  ]:
-    render_match_cards(entry, "man")
-
-elif selected_window in window_mapping:
-  sport_title, sport_data = window_mapping[selected_window]
-  st.header(f"Терминал: {sport_title}")
-
-  if st.button(
-      f"🚀 Найти актуальные матчи ({sport_title})", use_container_width=True
-  ):
-    if not groq_api_key and not gemini_api_key:
-      st.error("Введите API ключ Groq или Gemini в сайдбаре!")
-    else:
-      with st.spinner(f"Запрос актуальных матчей по направлению {sport_title}..."):
-        matches = fetch_real_matches_consensus(
-            groq_api_key, gemini_api_key, sport_title, sport_data["label"]
-        )
-
-        if matches:
-          st.session_state.history.insert(
-              0,
-              {
-                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                  "sport": sport_title,
-                  "data": matches,
-              },
-          )
-          save_history(st.session_state.history)
-          st.success(f"Найдено актуальных матчей: {len(matches)}")
-          st.rerun()
-        else:
-          st.warning("Не удалось получить матчи. Проверьте ключи.")
-
-  for entry in [
-      e for e in st.session_state.history if e.get("sport") == sport_title
-  ]:
-    render_match_cards(entry, "sp")
-
-elif selected_window == "📜 Общий Архив":
-  st.subheader("📜 История и архив прогнозов")
-  if st.button("🗑 Очистить архив"):
-    st.session_state.history = []
-    if os.path.exists(HISTORY_FILE):
-      os.remove(HISTORY_FILE)
-    st.rerun()
-
-  for entry in st.session_state.history:
-    st.caption(
-        f"📅 Спортивная сессия от: {entry.get('timestamp')} | Раздел:"
-        f" {entry.get('sport')}"
-    )
-    render_match_cards(entry, "arch")
-    st.markdown("---")
+    
