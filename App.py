@@ -20,13 +20,6 @@ try:
 except ImportError:
   HAS_AUTOREFRESH = False
 
-try:
-  from duckduckgo_search import DDGS
-
-  HAS_DDGS = True
-except ImportError:
-  HAS_DDGS = False
-
 from google import genai
 from google.genai import types
 from groq import Groq
@@ -159,21 +152,6 @@ def send_telegram_message(token, chat_id, message):
     return False, f"Ошибка сети: {e}"
 
 
-def fetch_real_web_data(sport_title):
-  if not HAS_DDGS:
-    return ""
-  current_date_str = "14 сентября 2026"
-  query = (
-      f"календарь матчей {sport_title} топ турниры на сегодня {current_date_str}"
-  )
-  try:
-    results = DDGS().text(query, max_results=6)
-    snippets = [r.get("body", "") for r in results]
-    return "\n".join(snippets)
-  except Exception:
-    return ""
-
-
 def extract_json_safely(text):
   if not text:
     return None
@@ -199,36 +177,30 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ РЕАЛЬНЫХ МАТЧЕЙ (БЕЗ ФЕЙКОВЫХ ЗАГЛУШЕК) ---
+# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (GEMINI) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
-  if not groq_key and not gemini_key:
+  if not gemini_key and not groq_key:
     return [{
         "sport_label": sport_title,
         "team1": "⚠️ Требуется API-ключ",
         "team2": "в сайдбаре слева",
-        "bet": "Укажите Groq или Gemini Key",
+        "bet": "Укажите Gemini Key",
         "coefficient": 1.0,
         "probability": 0,
         "bookmaker": "Система",
         "status": "⌛ Ожидание",
         "analysis": (
-            "⚠️ Введите Groq API Key или Gemini API Key в боковой панели, чтобы"
-            " ИИ мог искать актуальные матчи в реальном времени."
+            "⚠️ Введите Gemini API Key в боковой панели. Встроенный поиск Google"
+            " использует его для нахождения реальных матчей."
         ),
     }]
 
-  try:
-    web_context = fetch_real_web_data(sport_title)
-
-    prompt = f"""
+  prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    Найди и выдай реальные актуальные матчи (или главные топ-противостояния текущего сезона) в категории "{sport_title} ({sport_desc})".
-    Выбери матчи с высокой вероятностью прохода (от 80%).
-    
-    Данные из поиска:
-    {web_context}
+    Используй поиск Google, чтобы найти реальные текущие матчи или главные топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
+    Выбери матчи с высокой вероятностью прохода.
     
     Верни СТРОГО JSON объект без лишнего текста:
     {{
@@ -239,112 +211,97 @@ def fetch_and_analyze_matches(
           "coefficient_1": 1.45,
           "coefficient_2": 3.10,
           "bookmaker": "Fonbet",
-          "recommended_bet": "Победа 1 с форой (0)",
+          "recommended_bet": "Победа 1",
           "expert_probability": 88,
-          "groq_analysis": "Детальный разбор: текущая форма, статистика и обоснование ставки."
+          "groq_analysis": "Детальный разбор: актуальная форма команд и обоснование ставки."
         }}
       ]
     }}
     """
 
-    raw_text = ""
+  raw_text = ""
 
-    # Пробуем Groq
-    if groq_key:
-      try:
-        client = Groq(api_key=groq_key)
-        for model_name in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
-          try:
-            completion = client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-            )
-            raw_text = completion.choices[0].message.content
-            if raw_text:
-              break
-          except Exception:
-            continue
-      except Exception:
-        pass
+  # Приоритет: Gemini со встроенным поиском Google (Grounding)
+  if gemini_key:
+    try:
+      g_client = genai.Client(api_key=gemini_key)
+      for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+        try:
+          response = g_client.models.generate_content(
+              model=g_model,
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  tools=[{"google_search": {}}], response_mime_type="application/json"
+              ),
+          )
+          if response and response.text:
+            raw_text = response.text.strip()
+            break
+        except Exception:
+          continue
+    except Exception:
+      pass
 
-    # Пробуем Gemini, если Groq не ответил
-    if not raw_text and gemini_key:
-      try:
-        g_client = genai.Client(api_key=gemini_key)
-        for g_model in [
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-2.5-flash",
-        ]:
-          try:
-            response = g_client.models.generate_content(
-                model=g_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            if response and response.text:
-              raw_text = response.text.strip()
-              break
-          except Exception:
-            continue
-      except Exception:
-        pass
+  # Резерв через Groq, если Gemini не задан
+  if not raw_text and groq_key:
+    try:
+      client = Groq(api_key=groq_key)
+      completion = client.chat.completions.create(
+          model="llama-3.3-70b-versatile",
+          messages=[{"role": "user", "content": prompt}],
+          response_format={"type": "json_object"},
+          temperature=0.2,
+      )
+      raw_text = completion.choices[0].message.content
+    except Exception:
+      pass
 
-    parsed_data = extract_json_safely(raw_text)
-    data_list = []
-    if parsed_data and isinstance(parsed_data, dict):
-      data_list = parsed_data.get("matches", [])
+  parsed_data = extract_json_safely(raw_text)
+  data_list = []
+  if parsed_data and isinstance(parsed_data, dict):
+    data_list = parsed_data.get("matches", [])
 
-    if not data_list:
-      return [{
-          "sport_label": sport_title,
-          "team1": "⚠️ Матчи не найдены",
-          "team2": "или сеть заблокировала поиск",
-          "bet": "Попробуйте позже",
-          "coefficient": 1.0,
-          "probability": 0,
-          "bookmaker": "Система",
-          "status": "⌛ Ожидание",
-          "analysis": (
-              "⚠️ Не удалось получить список матчей через поисковик. Проверьте"
-              " валидность API-ключа."
-          ),
-      }]
+  if not data_list:
+    return [{
+        "sport_label": sport_title,
+        "team1": "⚠️ Матчи не найдены",
+        "team2": "проверьте ключ Gemini",
+        "bet": "Попробуйте позже",
+        "coefficient": 1.0,
+        "probability": 0,
+        "bookmaker": "Система",
+        "status": "⌛ Ожидание",
+        "analysis": (
+            "⚠️ Не удалось получить матчи. Убедитесь, что введен валидный Gemini"
+            " API Key (поиск Google работает через него)."
+        ),
+    }]
 
-    parsed_matches = []
-    for item in data_list:
-      t1 = item.get("team1", "Хозяева")
-      t2 = item.get("team2", "Гости")
-      p1 = float(item.get("coefficient_1", 1.45))
-      p2 = float(item.get("coefficient_2", 2.60))
-      bet = item.get("recommended_bet", f"Победа 1 ({t1})")
-      chosen_odds = p1 if "1" in bet or t1 in bet else p2
-      prob = int(item.get("expert_probability", 88))
-      g_text = item.get("groq_analysis", "Анализ формы и факторов победы.")
+  parsed_matches = []
+  for item in data_list:
+    t1 = item.get("team1", "Хозяева")
+    t2 = item.get("team2", "Гости")
+    p1 = float(item.get("coefficient_1", 1.45))
+    p2 = float(item.get("coefficient_2", 2.60))
+    bet = item.get("recommended_bet", f"Победа 1 ({t1})")
+    chosen_odds = p1 if "1" in bet or t1 in bet else p2
+    prob = int(item.get("expert_probability", 88))
+    g_text = item.get("groq_analysis", "Анализ формы и факторов победы.")
 
-      parsed_matches.append({
-          "sport_label": (
-              f"🎯 Стратегия / Матч: {sport_title}"
-              if is_strategy
-              else sport_title
-          ),
-          "team1": t1,
-          "team2": t2,
-          "bet": bet,
-          "coefficient": chosen_odds,
-          "probability": prob,
-          "bookmaker": item.get("bookmaker", "БК"),
-          "status": "⌛ Ожидание",
-          "analysis": f"📊 Аналитика ИИ: {g_text}",
-      })
-    return parsed_matches
-  except Exception as e:
-    st.error(f"Ошибка: {e}")
-    return []
+    parsed_matches.append({
+        "sport_label": (
+            f"🎯 Стратегия / Матч: {sport_title}" if is_strategy else sport_title
+        ),
+        "team1": t1,
+        "team2": t2,
+        "bet": bet,
+        "coefficient": chosen_odds,
+        "probability": prob,
+        "bookmaker": item.get("bookmaker", "БК"),
+        "status": "⌛ Ожидание",
+        "analysis": f"📊 Аналитика ИИ: {g_text}",
+    })
+  return parsed_matches
 
 
 # --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА ---
@@ -372,7 +329,7 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     """
 
     raw_text = ""
-    for g_model in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]:
+    for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
       try:
         response = g_client.models.generate_content(
             model=g_model,
@@ -410,7 +367,7 @@ groq_api_key = st.sidebar.text_input(
     "Groq API Key (Рекомендуется)", type="password", placeholder="gsk_..."
 )
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (Для фото и резерва)",
+    "Gemini API Key (Обязательно для поиска Google)",
     type="password",
     placeholder="AIzaSy...",
 )
@@ -558,7 +515,8 @@ if selected_window == "🌍 Глобальный омниссканер":
       use_container_width=True,
   ):
     with st.spinner(
-        "Сканирование топ-рынков и формирование железобетонных ставок..."
+        "Сканирование топ-рынков через Google и формирование"
+        " железобетонных ставок..."
     ):
       all_global = []
       for sport_name, sport_info in SPORT_GROUPS.items():
@@ -648,7 +606,7 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
 elif selected_window == "🎯 Стратегия: Камбэк фаворита (0:1)":
   st.header("🎯 Стратегия Live-камбэков с высокой проходимостью")
   if st.button("🚀 Найти ситуации для камбэка", use_container_width=True):
-    with st.spinner("Сканирование Live-ситуаций..."):
+    with st.spinner("Сканирование Live-ситуаций через Google..."):
       strategy_matches = []
       for s_name in ["🎾 Теннис", "🏐 Волейбол", "🏒 Хоккей"]:
         matches = fetch_and_analyze_matches(
@@ -742,7 +700,7 @@ elif selected_window in window_mapping:
   if st.button(
       f"🚀 Найти надежные исходы ({sport_title})", use_container_width=True
   ):
-    with st.spinner(f"Поиск матчей с высокой проходимостью ({sport_title})..."):
+    with st.spinner(f"Поиск матчей через Google ({sport_title})..."):
       matches = fetch_and_analyze_matches(
           groq_api_key,
           gemini_api_key,
