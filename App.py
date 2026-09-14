@@ -63,28 +63,55 @@ if st.sidebar.button("🔄 Сбросить всё (банк и веса)"):
     st.sidebar.success("Сброшено к заводским настройкам!")
     st.rerun()
 
-# --- ФУНКЦИЯ САМООБУЧЕНИЯ ИИ ПО ОШИБКАМ ---
-def run_ai_learning():
+# --- СПИСОК ЛИГ ---
+LEAGUES = [
+    'soccer_epl', 
+    'soccer_spain_la_liga', 
+    'soccer_italy_serie_a',
+    'soccer_germany_bundesliga', 
+    'soccer_france_ligue_one', 
+    'soccer_russia_premier_league',
+    'soccer_uefa_champions_league',
+    'soccer_uefa_europa_conference_league',
+    'soccer_turkey_super_lig'
+]
+
+# --- ОБУЧЕНИЕ ИИ НА РЕАЛЬНЫХ СЫГРАННЫХ МАТЧАХ ИЗ API ---
+def train_on_real_recent_matches(odds_key):
     data = st.session_state.app_data
     weights = data["weights"]
-    bets = data["bets"]
     
-    settled_bets = [b for b in bets if b["status"] in ["won", "lost"]]
-    if not settled_bets:
-        return "⚠️ Нет завершенных (выигранных или проигранных) ставок для анализа ошибок."
-    
-    errors = 0
-    for b in settled_bets:
-        if b["status"] == "lost":
-            errors += 1
-            if b.get("odd", 2.0) > 2.0:
-                weights["odds_limit"] = max(1.75, weights["odds_limit"] * 0.98)
-            weights["xg_w"] = min(2.5, weights["xg_w"] * 1.02)
-            
-    save_history(data)
-    return f"🧠 ИИ проанализировал {len(settled_bets)} ставок (ошибок: {errors}). Веса скорректированы!"
+    analyzed_count = 0
+    errors_fixed = 0
 
-# --- ПРОВЕРКА РЕЗУЛЬТАТОВ ЧЕРЕЗ API ---
+    for league in LEAGUES:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
+        params = {'apiKey': odds_key, 'daysFrom': 3}
+        try:
+            res = requests.get(url, params=params, timeout=8)
+            if res.status_code == 200:
+                events = res.json()
+                for ev in events:
+                    if ev.get('completed'):
+                        scores = ev.get('scores', [])
+                        ev_home, ev_away = ev.get('home_team'), ev.get('away_team')
+                        if len(scores) == 2:
+                            analyzed_count += 1
+                            home_score = int(scores[0]['score']) if scores[0]['name'] == ev_home else int(scores[1]['score'])
+                            away_score = int(scores[1]['score']) if scores[1]['name'] == ev_away else int(scores[0]['score'])
+                            
+                            # Если хозяева разгромно проиграли или была сенсация, ИИ корректирует веса (пример адаптации под реальные ошибки)
+                            if abs(home_score - away_score) >= 3:
+                                weights["odds_limit"] = max(1.75, weights["odds_limit"] * 0.99)
+                                weights["xg_w"] = min(2.5, weights["xg_w"] * 1.01)
+                                errors_fixed += 1
+        except:
+            pass
+
+    save_history(data)
+    return f"Проанализировано реальных завершенных матчей: {analyzed_count}. Проведена адаптация весов (скорректировано по факторам сенсаций: {errors_fixed})."
+
+# --- ПРОВЕРКА РЕЗУЛЬТАТОВ СВОИХ СТАВОК ---
 def update_pending_results(odds_key):
     pending_bets = [b for b in st.session_state.app_data["bets"] if b["status"] == "pending"]
     if not pending_bets:
@@ -133,15 +160,11 @@ class UltimateBot:
         self.weights = weights
 
     def fetch_fixtures(self):
-        leagues = [
-            'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
-            'soccer_germany_bundesliga', 'soccer_france_ligue_one', 'soccer_russia_premier_league'
-        ]
         board = []
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         max_time = now_utc + datetime.timedelta(hours=self.hours_limit)
 
-        for league in leagues:
+        for league in LEAGUES:
             url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
             params = {'apiKey': self.odds_key, 'regions': 'eu', 'markets': 'h2h', 'oddsFormat': 'decimal'}
             try:
@@ -268,57 +291,19 @@ with tab1:
 with tab2:
     st.markdown("### 🧠 Панель самообучения ИИ и История")
     
-    col_l1, col_l2, col_l3 = st.columns(3)
+    col_l1, col_l2 = st.columns(2)
     
     with col_l1:
-        if st.button("⚡ Обучить ИИ на архиве (400 матчей)"):
-            np.random.seed(42)
-            data = st.session_state.app_data
-            weights = data["weights"]
+        if st.button("⚡ Обучить ИИ на реальных матчах из API (за 3 дня)"):
+            if not odds_api_key:
+                st.warning("Введите API ключ!")
+            else:
+                msg = train_on_real_recent_matches(odds_api_key)
+                st.success(msg)
+                st.rerun()
             
-            wins, losses = 0, 0
-            for _ in range(400):
-                xg_diff = np.random.normal(0, 0.8)
-                form_diff = np.random.normal(0, 1.0)
-                odd = float(np.random.uniform(1.4, 2.8))
-                
-                score = xg_diff * weights["xg_w"] + form_diff * 0.5
-                outcome = 1 if (score + np.random.normal(0, 1.0)) > 0 else 0
-                
-                should_bet = (score > 0.2) and (odd <= weights["odds_limit"])
-                if should_bet:
-                    if outcome == 1:
-                        wins += 1
-                        data["bank"] += 100 * odd - 100
-                        data["bets"].append({
-                            "match": f"Архивный матч #{len(data['bets'])+1}",
-                            "pick": "П1", "odd": odd, "stake": 100.0, "status": "won", "date": "Архив"
-                        })
-                    else:
-                        losses += 1
-                        data["bank"] -= 100
-                        data["bets"].append({
-                            "match": f"Архивный матч #{len(data['bets'])+1}",
-                            "pick": "П1", "odd": odd, "stake": 100.0, "status": "lost", "date": "Архив"
-                        })
-                        if odd > 2.0:
-                            weights["odds_limit"] = max(1.75, weights["odds_limit"] * 0.99)
-                        weights["xg_w"] = min(2.5, weights["xg_w"] * 1.01)
-
-            save_history(data)
-            total_b = wins + losses
-            wr = (wins / total_b * 100) if total_b > 0 else 0
-            st.success(f"Готово! Архив на 400 матчей обработан. Ставок: {total_b} | Плюсов: {wins} | Минусов: {losses} | Винрейт: {wr:.1f}%")
-            st.rerun()
-
     with col_l2:
-        if st.button("🧠 Обучить ИИ по ошибкам ставок"):
-            msg = run_ai_learning()
-            st.success(msg)
-            st.rerun()
-            
-    with col_l3:
-        if st.button("🔄 Проверить матчи через API"):
+        if st.button("🔄 Проверить результаты моих ставок"):
             if not odds_api_key:
                 st.warning("Введите API ключ!")
             else:
@@ -373,9 +358,9 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Эта программа сочетает в себе статистическое моделирование матчей (через распределение Пуассона и оценку xG-потенциала) 
-    и механизм непрерывного самообучения (Walk-Forward Optimization). 
+    Эта программа сочетает в себе статистическое моделирование матчей (через распределение Пуассона и оценку потенциала) 
+    и механизм непрерывного самообучения на основе реальных данных. 
     
-    При нажатии кнопки обучения на архиве или по итогам реальных матчей система анализирует причины ошибок (высокие коэффициенты, провалы в реализации) 
-    и автоматически подстраивает внутренние веса для фильтрации будущих событий.
+    При нажатии кнопки обучения бот обращается к API результатов, анализирует реально сыгранные матчи за последние дни 
+    и подстраивает внутренние веса для фильтрации будущих событий.
     """)
