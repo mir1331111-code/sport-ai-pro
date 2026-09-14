@@ -145,7 +145,7 @@ def fetch_real_web_data(sport_title):
     return ""
 
 
-# --- АНАЛИЗ С АКТУАЛЬНОЙ МОДЕЛЬЮ GROQ ---
+# --- АНАЛИЗ С УНИВЕРСАЛЬНОЙ МОДЕЛЬЮ GROQ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -178,12 +178,12 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Используем актуальную модель Groq (llama-3.3-70b-versatile)
+  # 1. Используем универсальную и стабильную модель Groq (llama-3.1-8b-instant)
   if groq_key:
     try:
       client = Groq(api_key=groq_key)
       completion = client.chat.completions.create(
-          model="llama-3.3-70b-versatile",
+          model="llama-3.1-8b-instant",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.2,
       )
