@@ -112,7 +112,7 @@ def apply_custom_styles(theme_mode, sport_type="default"):
                 color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif;
             }}
             .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
-            .value-badge {{ color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; display: inline-block; margin-bottom: 6px; background: #3b82f6; }}
+            .value-badge {{ color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.80rem; display: inline-block; margin-bottom: 6px; background: #3b82f6; }}
             .card-win {{ background: rgba(16, 185, 129, 0.15) !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 14px; }}
             .card-loss {{ background: rgba(239, 68, 68, 0.15) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 14px; }}
             .card-default {{ background: rgba(30, 41, 59, 0.7) !important; border: 2px solid #475569 !important; border-radius: 12px; padding: 14px; }}
@@ -137,9 +137,13 @@ def send_telegram_message(token, chat_id, message):
 
 
 def fetch_real_web_data(sport_title):
-  query = f"матчи {sport_title} расписание коэффициенты сегодня прогноз"
+  current_date_str = "14 сентября 2026"
+  query = (
+      f"матчи {sport_title} расписание коэффициенты на сегодня"
+      f" {current_date_str} прогноз"
+  )
   try:
-    results = DDGS().text(query, max_results=4)
+    results = DDGS().text(query, max_results=5)
     snippets = [r.get("body", "") for r in results]
     return "\n".join(snippets)
   except Exception:
@@ -171,16 +175,21 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ С ПРИНУДИТЕЛЬНЫМ JSON ОТВЕТОМ ---
+# --- АНАЛИЗ С АКТУАЛЬНОЙ ДАТОЙ И МОДЕЛЬЮ GEMINI 3.6 ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
   web_context = fetch_real_web_data(sport_title)
   if not web_context:
-    web_context = "Используй самые свежие известные реальные матчи текущей недели."
+    web_context = (
+        "Используй реальные актуальные матчи на текущую дату 14 сентября 2026"
+        " года."
+    )
 
   prompt = f"""
-    Ты — главный спортивный сканер. Запрещено выдумывать команды! Бери матчи ТОЛЬКО на основе реальных данных из интернета ниже.
+    Текстовая инструкция: Сегодня 14 сентября 2026 года. 
+    Ты — главный спортивный сканер. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать команды или брать матчи из прошлого/будущего! 
+    Бери матчи ТОЛЬКО на основе реальных данных из интернета ниже на текущую дату (14 сентября 2026).
     Категория: "{sport_title} ({sport_desc})".
     Данные из сети:
     {web_context}
@@ -196,7 +205,7 @@ def fetch_and_analyze_matches(
           "bookmaker": "Fonbet",
           "recommended_bet": "Победа 1",
           "expert_probability": 72,
-          "groq_analysis": "Краткий тактический разбор и статистическое обоснование ставки на основе текущей формы."
+          "groq_analysis": "Краткий тактический разбор и статистическое обоснование ставки."
         }}
       ]
     }}
@@ -204,7 +213,7 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Пробуем Groq с принудительным JSON-форматом ответа
+  # 1. Пробуем Groq
   if groq_key:
     client = Groq(api_key=groq_key)
     models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
@@ -214,7 +223,7 @@ def fetch_and_analyze_matches(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            temperature=0.2,
+            temperature=0.1,
         )
         raw_text = completion.choices[0].message.content
         if raw_text:
@@ -222,12 +231,12 @@ def fetch_and_analyze_matches(
       except Exception:
         continue
 
-  # 2. Резерв на Gemini с принудительным JSON
+  # 2. Резерв на Gemini с актуальной моделью gemini-3.6-flash
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
       response = g_client.models.generate_content(
-          model="gemini-2.5-flash",
+          model="gemini-3.6-flash",
           contents=prompt,
           config=types.GenerateContentConfig(
               response_mime_type="application/json"
@@ -248,8 +257,8 @@ def fetch_and_analyze_matches(
 
   if not raw_text:
     st.error(
-        "Не удалось получить данные ни от одной модели Groq/Gemini. Проверьте"
-        " правильность введенного Groq API Key в сайдбаре."
+        "Не удалось получить данные ни от одной модели. Проверьте правильность"
+        " введенного API-ключа в сайдбаре."
     )
     return []
 
@@ -278,7 +287,7 @@ def fetch_and_analyze_matches(
     prob = int(item.get("expert_probability", 70))
     g_text = item.get("groq_analysis", "Анализ формы.")
 
-    analysis_comment = f"🌐 Web-данные + ИИ: {g_text}"
+    analysis_comment = f"🌐 Web-данные (14.09.2026) + ИИ: {g_text}"
 
     parsed_matches.append({
         "sport_label": (
@@ -447,7 +456,7 @@ if selected_window == "🌍 Глобальный омниссканер":
     if not groq_api_key and not gemini_api_key:
       st.error("Введите API ключ (рекомендуется Groq) в сайдбаре!")
     else:
-      with st.spinner("Поиск реальных матчей в сети..."):
+      with st.spinner("Поиск реальных матчей на сегодня..."):
         all_global = []
         for sport_name, sport_info in SPORT_GROUPS.items():
           matches = fetch_and_analyze_matches(
