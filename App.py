@@ -116,6 +116,7 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             .card-win { background: #ecfdf5 !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 14px; }
             .card-loss { background: #fef2f2 !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 14px; }
             .card-default { background: #ffffff !important; border: 2px solid #cbd5e1 !important; border-radius: 12px; padding: 14px; }
+            .stat-box { background: #ffffff; border: 1px solid #cbd5e1; padding: 12px; border-radius: 10px; text-align: center; }
         </style>
         """
   else:
@@ -132,6 +133,7 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             .card-win {{ background: rgba(16, 185, 129, 0.15) !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 14px; }}
             .card-loss {{ background: rgba(239, 68, 68, 0.15) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 14px; }}
             .card-default {{ background: rgba(30, 41, 59, 0.7) !important; border: 2px solid #475569 !important; border-radius: 12px; padding: 14px; }}
+            .stat-box {{ background: rgba(30, 41, 59, 0.8); border: 1px solid #475569; padding: 12px; border-radius: 10px; text-align: center; }}
         </style>
         """
   st.markdown(css_code, unsafe_allow_html=True)
@@ -177,7 +179,47 @@ def extract_json_safely(text):
   return None
 
 
-# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (С АКТУАЛЬНЫМИ МОДЕЛЯМИ) ---
+# --- МОДУЛЬ САМООБУЧЕНИЯ (АНАЛИЗ ИСТОРИИ) ---
+def get_self_learning_context():
+  resolved_bets = []
+  wins = 0
+  losses = 0
+  for entry in st.session_state.history:
+    for card in entry.get("data", []):
+      status = card.get("status")
+      if status == "✅ Проход":
+        wins += 1
+        resolved_bets.append(
+            f"[УСПЕХ] Матч: {card.get('team1')} vs {card.get('team2')} | Ставка:"
+            f" {card.get('bet')}"
+        )
+      elif status == "❌ Проигрыш":
+        losses += 1
+        resolved_bets.append(
+            f"[ОШИБКА] Матч: {card.get('team1')} vs {card.get('team2')} |"
+            f" Ставка: {card.get('bet')}"
+        )
+
+  total = wins + losses
+  winrate = (wins / total * 100) if total > 0 else 0
+
+  context_str = f"\n\n📊 СТАТИСТИКА САМООБУЧЕНИЯ (Всего сыграно: {total}, Винрейт: {winrate:.1f}%):\n"
+  if resolved_bets:
+    context_str += (
+        "Учитывай опыт последних прогнозов (анализируй, почему прошлые ставки"
+        " зашли или провалились):\n"
+    )
+    for b in resolved_bets[-12:]:  ерем последние 12 результатов
+      context_str += f"- {b}\n"
+  else:
+    context_str += (
+        "История пуста. Начни делать точные прогнозы с высокой надежностью.\n"
+    )
+
+  return context_str
+
+
+# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (С САМООБУЧЕНИЕМ) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -185,10 +227,13 @@ def fetch_and_analyze_matches(
     st.error("⚠️ Укажите Gemini API Key в боковой панели слева!", icon="🔑")
     return []
 
+  learning_prompt_addition = get_self_learning_context()
+
   prompt = f"""
     Сегодня 14 сентября 2026 года. 
     Используй поиск Google, чтобы найти реальные текущие матчи или топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
     Выбери матчи с высокой вероятностью прохода.
+    {learning_prompt_addition}
     
     Верни СТРОГО JSON объект:
     {{
@@ -201,7 +246,7 @@ def fetch_and_analyze_matches(
           "bookmaker": "Fonbet",
           "recommended_bet": "Победа 1",
           "expert_probability": 88,
-          "groq_analysis": "Детальный разбор: актуальная форма команд и обоснование ставки."
+          "groq_analysis": "Детальный разбор: актуальная форма команд и обоснование ставки с учетом опыта."
         }}
       ]
     }}
@@ -210,11 +255,10 @@ def fetch_and_analyze_matches(
   raw_text = ""
   error_log = []
 
-  # Приоритет: Gemini со встроенным поиском Google (используем gemini-3.6-flash)
   if gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
-      for g_model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+      for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
         try:
           response = g_client.models.generate_content(
               model=g_model,
@@ -232,19 +276,24 @@ def fetch_and_analyze_matches(
     except Exception as e:
       error_log.append(f"Gemini Init Error: {e}")
 
-  # Резерв через Groq
   if not raw_text and groq_key:
     try:
       client = Groq(api_key=groq_key)
-      completion = client.chat.completions.create(
-          model="llama-3.1-70b-versatile",
-          messages=[{"role": "user", "content": prompt}],
-          response_format={"type": "json_object"},
-          temperature=0.2,
-      )
-      raw_text = completion.choices[0].message.content
+      for g_model in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+        try:
+          completion = client.chat.completions.create(
+              model=g_model,
+              messages=[{"role": "user", "content": prompt}],
+              response_format={"type": "json_object"},
+              temperature=0.2,
+          )
+          raw_text = completion.choices[0].message.content
+          break
+        except Exception as e:
+          error_log.append(f"Groq ({g_model}): {e}")
+          continue
     except Exception as e:
-      error_log.append(f"Groq Error: {e}")
+      error_log.append(f"Groq Init Error: {e}")
 
   parsed_data = extract_json_safely(raw_text)
   data_list = []
@@ -292,7 +341,7 @@ def fetch_and_analyze_matches(
         "probability": prob,
         "bookmaker": item.get("bookmaker", "БК"),
         "status": "⌛ Ожидание",
-        "analysis": f"📊 Аналитика ИИ: {g_text}",
+        "analysis": f"📊 Аналитика ИИ (Самообучение): {g_text}",
     })
   return parsed_matches
 
@@ -302,14 +351,17 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
   if not gemini_key:
     return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
 
+  learning_prompt_addition = get_self_learning_context()
+
   try:
     g_client = genai.Client(api_key=gemini_key)
-    prompt = """
+    prompt = f"""
     Ты профессиональный спортивный аналитик. Посмотри на этот скриншот. 
     Распознай реальные команды, турнир и вынеси обоснованный прогноз.
+    {learning_prompt_addition}
     
     Верни СТРОГО JSON объект:
-    {
+    {{
       "team1": "Команда 1",
       "team2": "Команда 2",
       "sport": "Вид спорта",
@@ -317,12 +369,12 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
       "coefficient": 1.55,
       "probability": 90,
       "bookmaker": "БК со скриншота",
-      "analysis": "Обоснование прогноза по данным на скриншоте."
-    }
+      "analysis": "Обоснование прогноза по данным на скриншоте с учетом самообучения."
+    }}
     """
 
     raw_text = ""
-    for g_model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+    for g_model in ["gemini-3.6-flash", "gemini-1.5-flash"]:
       try:
         response = g_client.models.generate_content(
             model=g_model,
@@ -356,12 +408,10 @@ theme_choice = st.sidebar.selectbox(
 
 st.sidebar.title("🔑 API-ключи ИИ")
 groq_api_key = st.sidebar.text_input(
-    "Groq API Key (Рекомендуется)", type="password", placeholder="gsk_..."
+    "Groq API Key", type="password", placeholder="gsk_..."
 )
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (Обязательно для поиска Google)",
-    type="password",
-    placeholder="AIzaSy...",
+    "Gemini API Key (Обязательно)", type="password", placeholder="AIzaSy..."
 )
 
 st.sidebar.title("🤖 Настройки Telegram")
@@ -414,7 +464,7 @@ if selected_window in window_mapping:
   active_sport_cat = window_mapping[selected_window][1]["category"]
 apply_custom_styles(theme_choice, active_sport_cat)
 
-st.markdown("### ⚡ Терминал прогнозов Совета ИИ (Фокус на Проход)")
+st.markdown("### ⚡ Терминал прогнозов Совета ИИ + Самообучение")
 st.markdown("---")
 
 
@@ -503,7 +553,7 @@ def render_match_cards(entry, session_key_prefix):
 if selected_window == "🌍 Глобальный омниссканер":
   st.header("🌍 Глобальный поиск надежных исходов")
   if st.button(
-      "🚀 Запустить глобальный сканер (Фокус на проход)",
+      "🚀 Запустить глобальный сканер (с учетом самообучения)",
       use_container_width=True,
   ):
     with st.spinner("Сканирование топ-рынков через Google..."):
@@ -539,8 +589,49 @@ if selected_window == "🌍 Глобальный омниссканер":
     render_match_cards(entry, "glob")
 
 elif selected_window == "📸 Скрин-аналитик (2 мозга)":
-  st.header("📸 Загрузка скриншота матча (Анализ 2 мозгами)")
-  st.markdown("Загрузите скриншот из БК. ИИ распознает команды и выдаст разбор.")
+  st.header("📸 Загрузка скриншота матча (С отдельной статистикой)")
+
+  # --- ОТДЕЛЬНАЯ СТАТИСТИКА ПО СКРИНШОТАМ ---
+  screen_entries = [
+      e for e in st.session_state.history if e.get("sport") == "📸 Скрин-анализ"
+  ]
+  total_screens = sum(len(e.get("data", [])) for e in screen_entries)
+  screen_wins = sum(
+      1
+      for e in screen_entries
+      for c in e.get("data", [])
+      if c.get("status") == "✅ Проход"
+  ]
+  screen_losses = sum(
+      1
+      for e in screen_entries
+      for c in e.get("data", [])
+      if c.get("status") == "❌ Проигрыш"
+  ]
+  screen_winrate = (
+      (screen_wins / (screen_wins + screen_losses) * 100)
+      if (screen_wins + screen_losses) > 0
+      else 0
+  )
+
+  sc1, sc2, sc3, sc4 = st.columns(4)
+  sc1.markdown(
+      f'<div class="stat-box"><b>Всего скриншотов</b><br><h2>{total_screens}</h2></div>',
+      unsafe_allow_html=True,
+  )
+  sc2.markdown(
+      f'<div class="stat-box"><b>Зашло (Win)</b><br><h2 style="color:#10b981;">{screen_wins}</h2></div>',
+      unsafe_allow_html=True,
+  )
+  sc3.markdown(
+      f'<div class="stat-box"><b>Мимо (Loss)</b><br><h2 style="color:#ef4444;">{screen_losses}</h2></div>',
+      unsafe_allow_html=True,
+  )
+  sc4.markdown(
+      f'<div class="stat-box"><b>Винрейт скриншотов</b><br><h2>{screen_winrate:.1f}%</h2></div>',
+      unsafe_allow_html=True,
+  )
+  st.markdown("<br>", unsafe_allow_html=True)
 
   uploaded_file = st.file_uploader(
       "Выберите скриншот (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"]
@@ -550,14 +641,16 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
     image = Image.open(uploaded_file)
     st.image(image, caption="Загруженный скриншот", use_container_width=True)
 
-    if st.button("🧠 Запустить анализ скриншота", use_container_width=True):
+    if st.button(
+        "🧠 Запустить анализ скриншота с самообучением", use_container_width=True
+    ):
       if not gemini_api_key:
         st.error(
             "Для анализа скриншота обязательно укажите Gemini API Key в"
             " сайдбаре!"
         )
       else:
-        with st.spinner("ИИ изучает скриншот и формирует точный прогноз..."):
+        with st.spinner("ИИ изучает скриншот и применяет опыт прошлых ставок..."):
           result_dict, err_msg = analyze_screenshot_with_two_brains(
               gemini_api_key, groq_api_key, image
           )
@@ -588,14 +681,14 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
             st.success("Анализ скриншота успешно завершен!")
             st.rerun()
 
-  for entry in [
-      e for e in st.session_state.history if e.get("sport") == "📸 Скрин-анализ"
-  ]:
+  for entry in screen_entries:
     render_match_cards(entry, "screen")
 
 elif selected_window == "🎯 Стратегия: Камбэк фаворита (0:1)":
-  st.header("🎯 Стратегия Live-камбэков с высокой проходимостью")
-  if st.button("🚀 Найти ситуации для камбэка", use_container_width=True):
+  st.header("🎯 Стратегия Live-камбэков с самообучением")
+  if st.button(
+      "🚀 Найти ситуации для камбэка (с учетом опыта)", use_container_width=True
+  ):
     with st.spinner("Сканирование Live-ситуаций через Google..."):
       strategy_matches = []
       for s_name in ["🎾 Теннис", "🏐 Волейбол", "🏒 Хоккей"]:
@@ -653,7 +746,7 @@ elif selected_window == "📥 Ручной инжектор":
     manual_analysis = st.text_area(
         "Аналитическое обоснование / Риски", "Анализ матча..."
     )
-    submitted = st.form_submit_button("⚡ Сохранить прогноз")
+    submitted = st.form_submit_button("⚡ Сохранить прогноз в базу обучения")
 
     if submitted:
       card = {
@@ -676,7 +769,7 @@ elif selected_window == "📥 Ручной инжектор":
           },
       )
       save_history(st.session_state.history)
-      st.success("Прогноз добавлен!")
+      st.success("Прогноз добавлен и учтен в самообучении!")
       st.rerun()
 
   for entry in [
@@ -689,7 +782,8 @@ elif selected_window in window_mapping:
   st.header(f"Терминал: {sport_title}")
 
   if st.button(
-      f"🚀 Найти надежные исходы ({sport_title})", use_container_width=True
+      f"🚀 Найти надежные исходы ({sport_title}) с самообучением",
+      use_container_width=True,
   ):
     with st.spinner(f"Поиск матчей через Google ({sport_title})..."):
       matches = fetch_and_analyze_matches(
