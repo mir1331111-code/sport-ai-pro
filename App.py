@@ -145,7 +145,7 @@ def fetch_real_web_data(sport_title):
     return ""
 
 
-# --- БЕЗОПАСНЫЙ АНАЛИЗ С ОБРАБОТКОЙ ЛИМИТОВ ---
+# --- АНАЛИЗ С АКТУАЛЬНОЙ МОДЕЛЬЮ GROQ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -178,12 +178,12 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Сначала пробуем через Groq (рекомендуется, без жестких лимитов)
+  # 1. Используем актуальную модель Groq (llama-3.3-70b-versatile)
   if groq_key:
     try:
       client = Groq(api_key=groq_key)
       completion = client.chat.completions.create(
-          model="mixtral-8x7b-32768",
+          model="llama-3.3-70b-versatile",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.2,
       )
@@ -191,7 +191,7 @@ def fetch_and_analyze_matches(
     except Exception as e:
       st.warning(f"Ошибка Groq API: {e}")
 
-  # 2. Если Groq не дал результат, пробуем Gemini (с защитой от 429)
+  # 2. Резерв на Gemini (если ключ Groq не задан или произошел сбой)
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
@@ -206,8 +206,7 @@ def fetch_and_analyze_matches(
       if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
         st.error(
             "⚠️ Превышен лимит бесплатных запросов Gemini (ошибка 429). Пожалуйста,"
-            " введите Groq API Key в сайдбаре (он бесплатный и без таких"
-            " лимитов)."
+            " введите корректный Groq API Key в сайдбаре."
         )
       else:
         st.error(f"Ошибка Gemini: {e}")
@@ -215,8 +214,8 @@ def fetch_and_analyze_matches(
 
   if not raw_text:
     st.error(
-        "Не удалось получить данные. Пожалуйста, укажите рабочий Groq API Key в"
-        " сайдбаре."
+        "Не удалось получить данные. Проверьте правильность введенного Groq API"
+        " Key в сайдбаре."
     )
     return []
 
