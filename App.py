@@ -111,7 +111,7 @@ def apply_custom_styles(theme_mode, sport_type="default"):
             @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
             .stApp { background-color: #f8fafc !important; color: #0f172a; font-family: 'Plus Jakarta Sans', sans-serif; }
             .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }
-            .value-badge { color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; display: inline-block; margin-bottom: 6px; background: #3b82f6; }
+            .value-badge { color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; display: inline-block; margin-bottom: 6px; background: #10b981; }
             .card-win { background: #ecfdf5 !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 14px; }
             .card-loss { background: #fef2f2 !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 14px; }
             .card-default { background: #ffffff !important; border: 2px solid #cbd5e1 !important; border-radius: 12px; padding: 14px; }
@@ -127,7 +127,7 @@ def apply_custom_styles(theme_mode, sport_type="default"):
                 color: #f1f5f9; font-family: 'Plus Jakarta Sans', sans-serif;
             }}
             .block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 98%; }}
-            .value-badge {{ color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.80rem; display: inline-block; margin-bottom: 6px; background: #3b82f6; }}
+            .value-badge {{ color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.80rem; display: inline-block; margin-bottom: 6px; background: #10b981; }}
             .card-win {{ background: rgba(16, 185, 129, 0.15) !important; border: 2px solid #10b981 !important; border-radius: 12px; padding: 14px; }}
             .card-loss {{ background: rgba(239, 68, 68, 0.15) !important; border: 2px solid #ef4444 !important; border-radius: 12px; padding: 14px; }}
             .card-default {{ background: rgba(30, 41, 59, 0.7) !important; border: 2px solid #475569 !important; border-radius: 12px; padding: 14px; }}
@@ -155,9 +155,11 @@ def fetch_real_web_data(sport_title):
   if not HAS_DDGS:
     return ""
   current_date_str = "14 сентября 2026"
-  query = f"матчи {sport_title} расписание коэффициенты на сегодня {current_date_str}"
+  query = (
+      f"календарь матчей {sport_title} топ турниры на сегодня {current_date_str}"
+  )
   try:
-    results = DDGS().text(query, max_results=6)
+    results = DDGS().text(query, max_results=8)
     snippets = [r.get("body", "") for r in results]
     return "\n".join(snippets)
   except Exception:
@@ -189,7 +191,7 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ С ЗАЩИТОЙ ОТ СБОЕВ И ФАНТАСТИКИ ---
+# --- АНАЛИЗ С УПОРУМОМ НА ПРОХОД И ГЛУБОКУЮ АНАЛИТИКУ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -198,10 +200,12 @@ def fetch_and_analyze_matches(
 
     prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать матчи, команды или брать данные из головы! 
-    Используй ТОЛЬКО реальные данные из интернета, приведенные ниже. Если в тексте ниже нет конкретных матчей на сегодня, верни пустой список {{"matches": []}}. Ни в коем случае не придумывай несуществующие матчи.
+    Твоя главная цель — найти актуальные матчи в категории "{sport_title} ({sport_desc})" (используй веб-данные ниже или свои глубокие знания календаря текущего сезона, если в сети мало данных).
     
-    Категория: "{sport_title} ({sport_desc})".
+    ВНИМАНИЕ К ПРИОРИТЕТАМ:
+    1. Коэффициенты НЕ важны. Главное — ПРОХОД, максимальная вероятность победы (надежные ставки, «железо»). Выбирай фаворитов или наиболее вероятные исходы с высокой проходимостью (вероятность прохода от 75% и выше).
+    2. ДЕТАЛЬНАЯ АНАЛИТИКА: Для каждого матча напиши развернутый аналитический обоснованный прогноз (текущая форма команд, мотивация, кадровые потери, тактические расклады). Если ставка не зайдет, аналитика должна честно объяснять факторы риска и причины.
+    
     Реальные данные из сети:
     {web_context}
     
@@ -209,14 +213,14 @@ def fetch_and_analyze_matches(
     {{
       "matches": [
         {{
-          "team1": "Реальная команда 1",
-          "team2": "Реальная команда 2",
-          "coefficient_1": 1.85,
-          "coefficient_2": 3.90,
+          "team1": "Команда 1",
+          "team2": "Команда 2",
+          "coefficient_1": 1.45,
+          "coefficient_2": 3.10,
           "bookmaker": "Fonbet",
-          "recommended_bet": "Победа 1",
-          "expert_probability": 72,
-          "groq_analysis": "Краткий тактический разбор."
+          "recommended_bet": "Победа 1 с форой (0)",
+          "expert_probability": 85,
+          "groq_analysis": "Подробный аналитический разбор: почему эта ставка надежна, текущая серия побед, статистика и возможные риски."
         }}
       ]
     }}
@@ -235,7 +239,7 @@ def fetch_and_analyze_matches(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                temperature=0.1,
+                temperature=0.2,
             )
             raw_text = completion.choices[0].message.content
             if raw_text:
@@ -245,7 +249,7 @@ def fetch_and_analyze_matches(
       except Exception:
         pass
 
-    # 2. Если Groq нет/не ответил, используем Gemini с автоподбором рабочих моделей
+    # 2. Если Groq нет/не ответил, используем Gemini
     if not raw_text and gemini_key:
       try:
         g_client = genai.Client(api_key=gemini_key)
@@ -284,18 +288,23 @@ def fetch_and_analyze_matches(
     for item in data_list:
       t1 = item.get("team1", "Команда 1")
       t2 = item.get("team2", "Команда 2")
-      p1 = float(item.get("coefficient_1", 1.85))
-      p2 = float(item.get("coefficient_2", 2.10))
+      p1 = float(item.get("coefficient_1", 1.50))
+      p2 = float(item.get("coefficient_2", 2.50))
       bet = item.get("recommended_bet", f"Победа 1 ({t1})")
       chosen_odds = p1 if "1" in bet or t1 in bet else p2
-      prob = int(item.get("expert_probability", 70))
-      g_text = item.get("groq_analysis", "Анализ формы.")
+      prob = int(item.get("expert_probability", 80))
+      g_text = item.get(
+          "groq_analysis",
+          "Анализ формы, факторов победы и потенциальных рисков.",
+      )
 
-      analysis_comment = f"🌐 Реальный матч (14.09.2026): {g_text}"
+      analysis_comment = f"📊 Глубокая аналитика ИИ: {g_text}"
 
       parsed_matches.append({
           "sport_label": (
-              f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
+              f"🎯 Железо / Камбэк: {sport_title}"
+              if is_strategy
+              else sport_title
           ),
           "team1": t1,
           "team2": t2,
@@ -377,15 +386,15 @@ if selected_window in window_mapping:
   active_sport_cat = window_mapping[selected_window][1]["category"]
 apply_custom_styles(theme_choice, active_sport_cat)
 
-st.markdown("### ⚡ Терминал прогнозов Совета ИИ")
+st.markdown("### ⚡ Терминал прогнозов Совета ИИ (Фокус на Проход)")
 st.markdown("---")
 
 
 def render_match_cards(entry, session_key_prefix):
   if not entry.get("data"):
     st.info(
-        "ℹ️ На текущий момент реальных матчей по этому запросу в сети не"
-        " найдено (защита от фантастики отключила вывод вымышленных игр)."
+        "ℹ️ Список пуст. Нажмите кнопку запуска поиска выше, чтобы ИИ подобрал"
+        " надежные варианты."
     )
     return
 
@@ -405,19 +414,21 @@ def render_match_cards(entry, session_key_prefix):
     bk_val = card.get("bookmaker", "")
     bet_val = card.get("bet", "")
     coef_val = card.get("coefficient", 1.0)
-    prob_val = card.get("probability", 70)
+    prob_val = card.get("probability", 80)
     analysis_val = card.get("analysis", "")
 
     with cols[idx % 2]:
       st.markdown(
           f"""
                 <div class="{status_class}">
-                    <span class="value-badge">🌐 Реальный матч</span><br>
+                    <span class="value-badge">💎 Надежный выбор ({prob_val}%)</span><br>
                     <b>{team1_val} vs {team2_val}</b><br>
                     <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:6px 0;">
-                    <b>Ставка:</b> {bet_val}<br>
-                    <b>Кф:</b> {coef_val} | <b>Вероятность:</b> {prob_val}%<br>
-                    <i>{analysis_val}</i>
+                    <b>Рекомендуемая ставка:</b> {bet_val}<br>
+                    <b>Вероятность прохода:</b> <b>{prob_val}%</b> (Кф: {coef_val})<br><br>
+                    <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;">
+                        {analysis_val}
+                    </div>
                 </div>
                 """,
           unsafe_allow_html=True,
@@ -441,11 +452,11 @@ def render_match_cards(entry, session_key_prefix):
           key=f"{session_key_prefix}_tg_{entry['timestamp']}_{idx}",
       ):
         msg = (
-            f"🎯 *Прогноз ИИ* ({sport_lbl})\n"
+            f"🎯 *Прогноз ИИ (Макс. проход)* ({sport_lbl})\n"
             f"⚔️ {team1_val} vs {team2_val}\n"
             f"📌 Ставка: *{bet_val}*\n"
-            f"📈 Кф: `{coef_val}` | Вероятность: {prob_val}%\n"
-            f"🏦 БК: {bk_val}\n"
+            f"📈 Вероятность: {prob_val}% (Кф: `{coef_val}`)\n"
+            f"🏦 БК: {bk_val}\n\n"
             f"💡 {analysis_val}"
         )
         success, msg_res = send_telegram_message(tg_token, tg_chat_id, msg)
@@ -465,12 +476,15 @@ def render_match_cards(entry, session_key_prefix):
 
 # --- РАЗДЕЛЫ ---
 if selected_window == "🌍 Глобальный омниссканер":
-  st.header("🌍 Глобальный поиск актуальных матчей")
-  if st.button("🚀 Запустить глобальный сканер", use_container_width=True):
+  st.header("🌍 Глобальный поиск надежных исходов")
+  if st.button(
+      "🚀 Запустить глобальный сканер (Фокус на проход)",
+      use_container_width=True,
+  ):
     if not groq_api_key and not gemini_api_key:
       st.error("Введите API ключ в сайдбаре!")
     else:
-      with st.spinner("Поиск реальных матчей..."):
+      with st.spinner("Анализ рынков и поиск железобетонных вариантов..."):
         all_global = []
         for sport_name, sport_info in SPORT_GROUPS.items():
           matches = fetch_and_analyze_matches(
@@ -491,7 +505,7 @@ if selected_window == "🌍 Глобальный омниссканер":
             },
         )
         save_history(st.session_state.history)
-        st.success(f"Сканирование завершено. Найдено матчей: {len(all_global)}")
+        st.success(f"Анализ завершен. Найдено прогнозов: {len(all_global)}")
         st.rerun()
 
   for entry in [
@@ -502,7 +516,7 @@ if selected_window == "🌍 Глобальный омниссканер":
     render_match_cards(entry, "glob")
 
 elif selected_window == "🎯 Стратегия: Камбэк фаворита (0:1)":
-  st.header("🎯 Стратегия Live-камбэков")
+  st.header("🎯 Стратегия Live-камбэков с высокой проходимостью")
   if st.button("🚀 Найти ситуации для камбэка", use_container_width=True):
     if not groq_api_key and not gemini_api_key:
       st.error("Введите API ключ в сайдбаре!")
@@ -541,15 +555,15 @@ elif selected_window == "🎯 Стратегия: Камбэк фаворита 
     render_match_cards(entry, "strat")
 
 elif selected_window == "📥 Ручной инжектор":
-  st.header("📥 Ручной ввод матча")
+  st.header("📥 Ручной ввод матча и аналитики")
   with st.form("manual_form"):
     c1, c2 = st.columns(2)
     with c1:
       t1 = st.text_input("Хозяева / Фаворит", "")
-      o1 = st.number_input("Коэффициент П1", min_value=1.01, value=1.75)
+      o1 = st.number_input("Коэффициент (не важен)", min_value=1.01, value=1.40)
     with c2:
       t2 = st.text_input("Гости / Андердог", "")
-      o2 = st.number_input("Коэффициент П2", min_value=1.01, value=4.20)
+      o2 = st.number_input("Коэффициент (резерв)", min_value=1.01, value=3.00)
     sport_lbl = st.selectbox(
         "Вид спорта",
         [
@@ -562,19 +576,23 @@ elif selected_window == "📥 Ручной инжектор":
             "🎮 Киберспорт",
         ],
     )
-    submitted = st.form_submit_button("⚡ Сохранить матч")
+    manual_analysis = st.text_area(
+        "Аналитическое обоснование / Риски",
+        "Команда на голову сильнее, отличная домашняя статистика...",
+    )
+    submitted = st.form_submit_button("⚡ Сохранить прогноз")
 
     if submitted:
       card = {
           "sport_label": sport_lbl,
           "team1": t1,
           "team2": t2,
-          "bet": f"Победа 1 ({t1})",
+          "bet": f"Победа 1 ({t1}) — Надежно",
           "coefficient": o1,
-          "probability": 75,
+          "probability": 88,
           "bookmaker": "Ручной ввод",
           "status": "⌛ Ожидание",
-          "analysis": "🤖 Ручной анализ добавленного матча.",
+          "analysis": f"📊 Ручной разбор: {manual_analysis}",
       }
       st.session_state.history.insert(
           0,
@@ -585,7 +603,7 @@ elif selected_window == "📥 Ручной инжектор":
           },
       )
       save_history(st.session_state.history)
-      st.success("Матч добавлен!")
+      st.success("Прогноз добавлен!")
       st.rerun()
 
   for entry in [
@@ -597,11 +615,13 @@ elif selected_window in window_mapping:
   sport_title, sport_data = window_mapping[selected_window]
   st.header(f"Терминал: {sport_title}")
 
-  if st.button(f"🚀 Найти матчи ({sport_title})", use_container_width=True):
+  if st.button(
+      f"🚀 Найти надежные исходы ({sport_title})", use_container_width=True
+  ):
     if not groq_api_key and not gemini_api_key:
       st.error("Введите API ключ в сайдбаре!")
     else:
-      with st.spinner(f"Поиск реальных матчей ({sport_title})..."):
+      with st.spinner(f"Поиск матчей с высокой проходимостью ({sport_title})..."):
         matches = fetch_and_analyze_matches(
             groq_api_key,
             gemini_api_key,
@@ -618,7 +638,7 @@ elif selected_window in window_mapping:
             },
         )
         save_history(st.session_state.history)
-        st.success(f"Поиск завершен. Найдено матчей: {len(matches)}")
+        st.success(f"Поиск завершен. Найдено прогнозов: {len(matches)}")
         st.rerun()
 
   for entry in [
@@ -627,7 +647,7 @@ elif selected_window in window_mapping:
     render_match_cards(entry, "sp")
 
 elif selected_window == "📜 Общий Архив":
-  st.subheader("📜 История и архив прогнозов")
+  st.subheader("📜 История, результаты и аналитика проигранных матчей")
   if st.button("🗑 Очистить архив"):
     st.session_state.history = []
     if os.path.exists(HISTORY_FILE):
