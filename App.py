@@ -136,16 +136,12 @@ def send_telegram_message(token, chat_id, message):
     return False, f"Ошибка сети: {e}"
 
 
-# --- ФУНКЦИЯ ПОИСКА И АНАЛИЗА (GROQ + GEMINI) ---
+# --- УМНЫЙ ПОИСК (GROQ С ФАЛЛБЕКОМ НА GEMINI) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
-  if not groq_key:
-    st.error("Введите Groq API ключ в сайдбаре!")
-    return []
-
   if is_strategy:
-    search_prompt = f"""
+    prompt = f"""
         Ты — элитный беттинг-аналитик по стратегии Live-камбэков (фаворит проиграл 1-й сет / период). 
         Текущая дата: сентябрь 2026 года. 
         Найди 3-4 подходящих матча в категории "{sport_title}", где явный фаворит матча неожиданно проиграл первый сет / период (счет 0:1), из-за чего коэффициент на его итоговую волевую победу вырос до выгодных значений (1.60 - 2.50).
@@ -166,7 +162,7 @@ def fetch_and_analyze_matches(
         }}
         """
   else:
-    search_prompt = f"""
+    prompt = f"""
         Ты — главный спортивный сканер. Текущая дата: сентябрь 2026 года.
         Найди 4-5 АКТУАЛЬНЫХ матчей в категории: "{sport_title} ({sport_desc})".
         Для каждого матча укажи реальные команды, актуальные коэффициенты, рекомендуемую ставку и вероятность прохода (%).
@@ -187,20 +183,44 @@ def fetch_and_analyze_matches(
         }}
         """
 
-  try:
-    groq_client = Groq(api_key=groq_key)
-    completion = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": search_prompt}],
-        temperature=0.3,
-    )
-    raw_text = completion.choices[0].message.content
-  except Exception as e:
-    st.error(f"Ошибка Groq: {e}")
-    return []
+  raw_text = ""
+
+  # Попытка 1: Через Groq (микстраль)
+  if groq_key:
+    try:
+      client = Groq(api_key=groq_key)
+      completion = client.chat.completions.create(
+          model="mixtral-8x7b-32768",
+          messages=[{"role": "user", "content": prompt}],
+          temperature=0.3,
+      )
+      raw_text = completion.choices[0].message.content
+    except Exception:
+      pass
+
+  # Попытка 2: Если Groq недоступен или не настроен, используем Gemini!
+  if not raw_text and gemini_key:
+    try:
+      g_client = genai.Client(api_key=gemini_key)
+      response = g_client.models.generate_content(
+          model="gemini-2.5-flash",
+          contents=(
+              prompt
+              + "\nВерни ТОЛЬКО чистый JSON без какого-либо дополнительного"
+              " текста."
+          ),
+      )
+      if response and response.text:
+        raw_text = response.text.strip()
+    except Exception as e:
+      st.error(f"Не удалось получить данные через ИИ: {e}")
+      return []
 
   if not raw_text:
-    st.error("Groq вернул пустой результат.")
+    st.error(
+        "Не удалось получить матчи. Проверьте правильность введенных ключей"
+        " Groq или Gemini в сайдбаре."
+    )
     return []
 
   try:
@@ -228,7 +248,7 @@ def fetch_and_analyze_matches(
       prob = int(item.get("expert_probability", 70))
       g_text = item.get("groq_analysis", "Анализ формы.")
 
-      gem_text = "Статистический расчет не подключен."
+      gem_text = "Статистический расчет."
       if gemini_key:
         try:
           gemini_client = genai.Client(api_key=gemini_key)
@@ -242,9 +262,9 @@ def fetch_and_analyze_matches(
           if resp and resp.text:
             gem_text = resp.text.strip()
         except Exception:
-          gem_text = "Ошибка Gemini."
+          pass
 
-      analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
+      analysis_comment = f"🤖 ИИ-Анализ: {g_text} | 💎 Статистика: {gem_text}"
 
       parsed_matches.append({
           "sport_label": (
@@ -413,14 +433,18 @@ def render_match_cards(entry, session_key_prefix):
 if selected_window == "🌍 Глобальный омниссканер":
   st.header("🌍 Глобальный поиск актуальных матчей")
   if st.button("🚀 Запустить глобальный сканер", use_container_width=True):
-    if not groq_api_key:
-      st.error("Введите Groq API ключ!")
+    if not groq_api_key and not gemini_api_key:
+      st.error("Введите хотя бы один API ключ (Groq или Gemini) в сайдбаре!")
     else:
       with st.spinner("Идет сканирование рынков..."):
         all_global = []
         for sport_name, sport_info in SPORT_GROUPS.items():
           matches = fetch_and_analyze_matches(
-              groq_api_key, gemini_api_key, sport_name, sport_info["label"]
+              groq_api_key,
+              gemini_api_key,
+              sport_name,
+              sport_info["label"],
+              is_strategy=False,
           )
           all_global.extend(matches)
         if all_global:
@@ -453,12 +477,11 @@ elif selected_window == "🎯 Стратегия: Камбэк фаворита 
   if st.button(
       "🚀 Найти ситуации для камбэка фаворитов", use_container_width=True
   ):
-    if not groq_api_key:
-      st.error("Введите Groq API ключ!")
+    if not groq_api_key and not gemini_api_key:
+      st.error("Введите хотя бы один API ключ (Groq или Gemini) в сайдбаре!")
     else:
       with st.spinner("Анализ Live-рынков на предмет камбэков..."):
         strategy_matches = []
-        # Проверяем теннис, волейбол, хоккей
         for s_name in [
             "🎾 Теннис",
             "🏐 Волейбол",
@@ -553,12 +576,16 @@ elif selected_window in window_mapping:
   st.header(f"Терминал: {sport_title}")
 
   if st.button(f"🚀 Найти матчи ({sport_title})", use_container_width=True):
-    if not groq_api_key:
-      st.error("Введите Groq API ключ!")
+    if not groq_api_key and not gemini_api_key:
+      st.error("Введите хотя бы один API ключ (Groq или Gemini) в сайдбаре!")
     else:
       with st.spinner(f"Поиск в категории {sport_title}..."):
         matches = fetch_and_analyze_matches(
-            groq_api_key, gemini_api_key, sport_title, sport_data["label"]
+            groq_api_key,
+            gemini_api_key,
+            sport_title,
+            sport_data["label"],
+            is_strategy=False,
         )
         if matches:
           st.session_state.history.insert(
