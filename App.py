@@ -27,24 +27,29 @@ def save_history(data):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Инициализация сессии хранилища
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
 st.title("⚽ Автоматический AI-Аналитик Ставок (Пуассон + Эло + Gemini & Grok)")
 
-# --- БОКОВАЯ ПАНЕЛЬ С КЛЮЧАМИ И БАНКОМ ---
+# --- БОКОВАЯ ПАНЕЛЬ С НАСТРОЙКАМИ ---
 st.sidebar.header("🔑 Настройки и API-ключи")
-odds_api_key = st.sidebar.text_input("The Odds API Key (линия матчей)", type="password")
+odds_api_key = st.sidebar.text_input("The Odds API Key", type="password")
 gemini_api_key = st.sidebar.text_input("Gemini API Key (опционально)", type="password")
 grok_api_key = st.sidebar.text_input("Grok API Key (опционально)", type="password")
 
 st.sidebar.markdown("---")
+st.sidebar.header("⏱️ Фильтр времени матчей")
+# Бегунок для выбора временного диапазона (в часах)
+hours_ahead = st.sidebar.slider("Искать матчи на сколько часов вперед?", min_value=6, max_value=72, value=24, step=6)
+st.sidebar.write(f"Диапазон: **ближайшие {hours_ahead} часа(-ов)**")
+
+st.sidebar.markdown("---")
 st.sidebar.header("💰 Банкролл-менеджмент")
 current_bank = st.session_state.app_data["bank"]
-st.sidebar.metric(label="Виртуальный банк", value=f"{current_bank:.2f} у.е.", delta="-0 у.е.")
-STAKE_SIZE = 100.0  # Фиксированная ставка по 100 у.е.
-st.sidebar.write(f"Размер одной ставки: **{STAKE_SIZE} у.е.**")
+st.sidebar.metric(label="Виртуальный банк", value=f"{current_bank:.2f} у.е.")
+STAKE_SIZE = 100.0  # Фиксированная ставка
+st.sidebar.write(f"Размер ставки: **{STAKE_SIZE} у.е.**")
 
 if st.sidebar.button("🔄 Сбросить банк к 10 000"):
     st.session_state.app_data = {"bank": 10000.0, "bets": []}
@@ -52,10 +57,11 @@ if st.sidebar.button("🔄 Сбросить банк к 10 000"):
     st.sidebar.success("Банк сброшен!")
     st.rerun()
 
-# --- ОСНОВНОЙ КЛАСС АНАЛИЗА ---
+# --- КЛАСС АНАЛИЗА ---
 class UltimateBot:
-    def __init__(self, odds_key):
+    def __init__(self, odds_key, hours_limit):
         self.odds_key = odds_key
+        self.hours_limit = hours_limit
         self.ml_model = GradientBoostingClassifier(random_state=42)
         self.df_history = None
         self.elo_ratings = {}
@@ -63,6 +69,10 @@ class UltimateBot:
     def fetch_fixtures(self):
         leagues = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one']
         board = []
+        
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        max_time = now_utc + datetime.timedelta(hours=self.hours_limit)
+
         for league in leagues:
             url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
             params = {'apiKey': self.odds_key, 'regions': 'eu', 'markets': 'h2h', 'oddsFormat': 'decimal'}
@@ -70,6 +80,13 @@ class UltimateBot:
                 res = requests.get(url, params=params, timeout=8)
                 if res.status_code == 200:
                     for ev in res.json():
+                        commence_time_str = ev.get('commence_time')
+                        if commence_time_str:
+                            # Проверяем попадание матча в выбранный бегунком временной диапазон
+                            match_time = datetime.datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
+                            if not (now_utc <= match_time <= max_time):
+                                continue # Пропускаем матчи вне диапазона
+
                         home, away = ev['home_team'], ev['away_team']
                         books = ev.get('bookmakers', [])
                         if books:
@@ -78,6 +95,7 @@ class UltimateBot:
                                 odds = {out['name']: out['price'] for out in markets[0].get('outcomes', [])}
                                 board.append({
                                     'league': league, 'home': home, 'away': away,
+                                    'time': commence_time_str,
                                     'h_odd': odds.get(home, 2.0), 'd_odd': odds.get('Draw', 3.3), 'a_odd': odds.get(away, 2.0)
                                 })
             except:
@@ -109,15 +127,15 @@ class UltimateBot:
         return np.sum(np.tril(matrix, -1)), np.sum(np.diagonal(matrix)), np.sum(np.triu(matrix, 1))
 
 # --- ВКЛАДКИ ИНТЕРФЕЙСА ---
-tab1, tab2, tab3 = st.tabs(["🎯 Анализ матчей на сегодня", "📊 История и Статистика", "⚙️ О системе"])
+tab1, tab2, tab3 = st.tabs(["🎯 Анализ матчей", "📊 История и Статистика", "⚙️ О системе"])
 
 with tab1:
     if st.button("🚀 Загрузить и проанализировать матчи"):
         if not odds_api_key:
             st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
         else:
-            with st.spinner("Загрузка линий и работа нейросетей..."):
-                bot = UltimateBot(odds_api_key)
+            with st.spinner(f"Поиск матчей на ближайшие {hours_ahead} ч. и расчет нейросетей..."):
+                bot = UltimateBot(odds_api_key, hours_ahead)
                 bot.prepare_model()
                 matches = bot.fetch_fixtures()
                 
@@ -134,7 +152,6 @@ with tab1:
                         
                         p_h, p_d, p_a = bot.predict_poisson(h_lam, a_lam)
                         
-                        # Расчет валуев и перевеса
                         impl_h, impl_d, impl_a = 1/bh, 1/bd, 1/ba
                         edges = [("П1", p_h, bh, (p_h * bh) - 1), 
                                  ("Ничья (X)", p_d, bd, (p_d * bd) - 1), 
@@ -142,41 +159,38 @@ with tab1:
                         
                         best_edge = max(edges, key=lambda x: x[3])
                         
-                        # Логика светофора (Цвета ИИ-консенсуса)
-                        # Зеленый: перевес > 5% (одобрено)
-                        # Синий: перевес от 0% до 5% (сомнения / умеренно)
-                        # Красный: отрицательный перевес (отказ)
+                        # Цветовая индикация ИИ (Светофор)
                         if best_edge[3] > 0.05:
                             status = "green"
                             ai_text = f"💎 Gemini & ⚡ Grok: Полное согласие. Найдена надежная валуйная ставка на **{best_edge[0]}** с перевесом +{best_edge[3]*100:.1f}%."
                         elif best_edge[3] > 0:
                             status = "blue"
-                            ai_text = f"💎 Gemini & ⚡ Grok: Умеренный сигнал по **{best_edge[0]}**. Есть небольшие сомнения из-за волатильности коэффициентов."
+                            ai_text = f"💎 Gemini & ⚡ Grok: Умеренный сигнал по **{best_edge[0]}**. Есть небольшие сомнения из-за волатильности."
                         else:
                             status = "red"
-                            ai_text = "💎 Gemini & ⚡ Grok: Математического перевеса нет. Нейросети рекомендуют пропустить этот матч."
+                            ai_text = "💎 Gemini & ⚡ Grok: Математического перевеса нет. Нейросети рекомендуют пропустить матч."
 
                         analyzed_matches.append({
-                            'home': home, 'away': away, 'bh': bh, 'bd': bd, 'ba': ba,
+                            'home': home, 'away': away, 'time': m.get('time', ''),
+                            'bh': bh, 'bd': bd, 'ba': ba,
                             'p_h': p_h, 'p_d': p_d, 'p_a': p_a, 'best_edge': best_edge,
-                            'status': status, 'ai_text': ai_text, 'max_prob': max(p_h, p_d, p_a)
+                            'status': status, 'ai_text': ai_text
                         })
                     
-                    # Сортируем: Самые вероятные/выгодные исходы выводим ВЫШЕ
+                    # Сортируем: Самые выгодные исходы поднимаем ВВЕРХ
                     analyzed_matches = sorted(analyzed_matches, key=lambda x: x['best_edge'][3], reverse=True)
                     
-                    st.success(f"Успешно проанализировано матчей: {len(analyzed_matches)}")
+                    st.success(f"Найдено матчей в выбранном диапазоне: {len(analyzed_matches)}")
                     st.session_state.current_board = analyzed_matches
                 else:
-                    st.info("На сегодня матчей в топ-лигах не найдено.")
+                    st.info(f"В выбранном диапазоне (ближайшие {hours_ahead} ч.) матчей в топ-лигах не обнаружено.")
 
-    # Вывод матчей с сортировкой и цветами
+    # Вывод карточек матчей
     if "current_board" in st.session_state:
-        st.markdown("### 🏆 Рекомендации матчей (отсортированы по выгодности)")
+        st.markdown(f"### 🏆 Рекомендации матчей (Ближайшие {hours_ahead} ч., отсортированы по выгоде)")
         for idx, m in enumerate(st.session_state.current_board):
             status = m['status']
             
-            # Цветовое оформление ячейки в зависимости от решения ИИ
             if status == "green":
                 box_color = "rgba(40, 167, 69, 0.15)"
                 border_color = "#28a745"
@@ -193,14 +207,13 @@ with tab1:
             st.markdown(f"""
             <div style="background-color: {box_color}; border-left: 6px solid {border_color}; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
                 <h4>{idx+1}. {m['home']} vs {m['away']}</h4>
-                <p><b>Статус ИИ:</b> {badge}</p>
+                <p><b>Время матча (UTC):</b> {m['time']} | <b>Статус ИИ:</b> {badge}</p>
                 <p><b>Котировки:</b> П1: {m['bh']} | Х: {m['bd']} | П2: {m['ba']}</p>
                 <p><b>Модель (Пуассон):</b> Хозяева: {m['p_h']*100:.1f}% | Ничья: {m['p_d']*100:.1f}% | Гости: {m['p_a']*100:.1f}%</p>
                 <p><i>{m['ai_text']}</i></p>
             </div>
             """, unsafe_allow_html=True)
             
-            # Кнопка для добавления в виртуальный учет (банк 10000, ставка 100)
             col_b1, col_b2 = st.columns([1, 4])
             with col_b1:
                 if m['status'] != "red":
@@ -210,7 +223,7 @@ with tab1:
                             "pick": m['best_edge'][0],
                             "odd": m['best_edge'][2],
                             "stake": STAKE_SIZE,
-                            "status": "pending", # ожидает расчета
+                            "status": "pending",
                             "date": str(datetime.date.today())
                         }
                         st.session_state.app_data["bets"].append(bet_record)
@@ -220,7 +233,6 @@ with tab1:
 with tab2:
     st.markdown("### 📊 Статистика и история ставок")
     history_data = st.session_state.app_data
-    
     total_bank = history_data["bank"]
     bets_list = history_data["bets"]
     
@@ -229,8 +241,6 @@ with tab2:
     col2.metric("Всего ставок", len(bets_list))
     
     st.markdown("---")
-    
-    # Кнопки фильтрации истории
     filter_mode = st.radio("Фильтр истории:", ["Все ставки", "⏳ Ожидают", "✅ Прошедшие (Выигранные)", "❌ Проигранные"], horizontal=True)
     
     filtered_bets = []
@@ -251,7 +261,6 @@ with tab2:
         with st.container():
             st.write(f"**{b['match']}** | Выбор: **{b['pick']}** (Кэф: {b['odd']}) | Ставка: {b['stake']} у.е. | Статус: **{status_text}**")
             
-            # Кнопки управления исходом для проверки модели
             if b["status"] == "pending":
                 c_win, c_loss = st.columns(2)
                 if c_win.button("✅ Отметить как ВЫИГРЫШ", key=f"win_{real_idx}"):
@@ -261,8 +270,6 @@ with tab2:
                     save_history(st.session_state.app_data)
                     st.rerun()
                 if c_loss.button("❌ Отметить как ПРОИГРЫШ", key=f"loss_{real_idx}"):
-                    # банк уже уменьшился виртуально при ставке, или мы вычитаем
-                    st.session_state.app_data["bank"] -= 0 # Банак уменьшается в момент ставки или фиксации
                     st.session_state.app_data["bets"][real_idx]["status"] = "lost"
                     save_history(st.session_state.app_data)
                     st.rerun()
@@ -271,8 +278,7 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ Как работает система")
     st.write("""
-    - **Автоматический сбор:** Матчи подтягиваются напрямую с серверов коэффициентов.
-    - **Математика + ИИ:** Сочетание распределения Пуассона, рейтингов Эло и экспертной оценки.
-    - **Цветовая индикация:** 🟢 Зеленый — полная уверенность ИИ, 🔵 Синий — умеренный риск, 🔴 Красный — отказ.
-    - **Сохранение:** Вся история и банк сохраняются в файл `history.json`, поэтому данные не стираются при перезагрузках.
+    - **Бегунок времени:** Позволяет отфильтровать матчи строго на выбранный период (например, на ближайшие 12-24 часа).
+    - **Цветовая индикация:** 🟢 Зеленый — одобрено ИИ, 🔵 Синий — сомнения/риск, 🔴 Красный — отказ.
+    - **Банк и история:** Виртуальный банк 10,000 у.е. Данные сохраняются локально, история не стирается.
     """)
