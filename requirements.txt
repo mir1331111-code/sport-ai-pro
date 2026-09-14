@@ -1,5 +1,6 @@
 streamlit
-streamlit-autorefresh
-groq
-google-genai
+pandas
+numpy
+scipy
+scikit-learn
 requests
