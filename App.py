@@ -241,7 +241,8 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     if not raw_text and gemini_key:
         try:
             g_client = genai.Client(api_key=gemini_key)
-            for g_model in ["gemini-2.0-flash"]:
+            # ОБНОВЛЕННАЯ АКТУАЛЬНАЯ МОДЕЛЬ GOOGLE
+            for g_model in ["gemini-3.6-flash"]:
                 try:
                     response = g_client.models.generate_content(
                         model=g_model,
@@ -340,7 +341,8 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
 
         raw_text = ""
         last_error = ""
-        for g_model in ["gemini-2.0-flash"]:
+        # ОБНОВЛЕННАЯ АКТУАЛЬНАЯ МОДЕЛЬ GOOGLE
+        for g_model in ["gemini-3.6-flash"]:
             try:
                 response = g_client.models.generate_content(
                     model=g_model,
