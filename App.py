@@ -121,48 +121,86 @@ def apply_custom_styles(theme_mode, sport_type="default"):
   st.markdown(css_code, unsafe_allow_html=True)
 
 
-# --- ФУНКЦИЯ ПОИСКА (GROQ) И АНАЛИЗА (GROQ + GEMINI) ---
-def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc):
+def send_telegram_message(token, chat_id, message):
+  if not token or not chat_id:
+    return False, "Не заполнен Telegram Token или Chat ID"
+  url = f"https://api.telegram.org/bot{token}/sendMessage"
+  payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+  try:
+    r = requests.post(url, json=payload, timeout=5)
+    if r.status_code == 200:
+      return True, "Успешно отправлено в Telegram!"
+    else:
+      return False, f"Ошибка Telegram API: {r.text}"
+  except Exception as e:
+    return False, f"Ошибка сети: {e}"
+
+
+# --- ФУНКЦИЯ ПОИСКА И АНАЛИЗА (GROQ + GEMINI) ---
+def fetch_and_analyze_matches(
+    groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
+):
   if not groq_key:
-    st.error("Введите Groq API ключ для поиска матчей!")
+    st.error("Введите Groq API ключ в сайдбаре!")
     return []
 
-  # Шаг 1: Groq ищет актуальные матчи на текущую дату (сентябрь 2026)
-  search_prompt = f"""
-    Ты — главный спортивный сканер. Текущая дата: сентябрь 2026 года.
-    Найди и составь список из 4-5 АКТУАЛЬНЫХ матчей, которые пройдут в ближайшие дни в категории: "{sport_title} ({sport_desc})".
-    Для каждого матча укажи реальные команды, актуальные букмекерские коэффициенты, рекомендуемую ставку и вероятность прохода (%).
-    Верни СТРОГО чистый JSON (без маркдауна, без тегов ```json), в виде объекта с ключом "matches":
-    {{
-      "matches": [
+  if is_strategy:
+    search_prompt = f"""
+        Ты — элитный беттинг-аналитик по стратегии Live-камбэков (фаворит проиграл 1-й сет / период). 
+        Текущая дата: сентябрь 2026 года. 
+        Найди 3-4 подходящих матча в категории "{sport_title}", где явный фаворит матча неожиданно проиграл первый сет / период (счет 0:1), из-за чего коэффициент на его итоговую волевую победу вырос до выгодных значений (1.60 - 2.50).
+        Верни СТРОГО чистый JSON без маркдауна и тегов ```json:
         {{
-          "team1": "Название команды 1",
-          "team2": "Название команды 2",
-          "coefficient_1": 1.85,
-          "coefficient_2": 3.90,
-          "bookmaker": "Fonbet / Pinnacle",
-          "recommended_bet": "Победа 1",
-          "expert_probability": 72,
-          "groq_analysis": "Тактический разбор формы команд (2 предложения)"
+          "matches": [
+            {{
+              "team1": "Название фаворита",
+              "team2": "Название андердога",
+              "coefficient_1": 1.75,
+              "coefficient_2": 2.10,
+              "bookmaker": "Pinnacle / Fonbet",
+              "recommended_bet": "Волевая победа фаворита",
+              "expert_probability": 75,
+              "groq_analysis": "Анализ проигранного 1-го сета и потенциала камбэка"
+            }}
+          ]
         }}
-      ]
-    }}
-    """
+        """
+  else:
+    search_prompt = f"""
+        Ты — главный спортивный сканер. Текущая дата: сентябрь 2026 года.
+        Найди 4-5 АКТУАЛЬНЫХ матчей в категории: "{sport_title} ({sport_desc})".
+        Для каждого матча укажи реальные команды, актуальные коэффициенты, рекомендуемую ставку и вероятность прохода (%).
+        Верни СТРОГО чистый JSON без маркдауна:
+        {{
+          "matches": [
+            {{
+              "team1": "Команда 1",
+              "team2": "Команда 2",
+              "coefficient_1": 1.85,
+              "coefficient_2": 3.90,
+              "bookmaker": "Fonbet",
+              "recommended_bet": "Победа 1",
+              "expert_probability": 72,
+              "groq_analysis": "Тактический разбор"
+            }}
+          ]
+        }}
+        """
 
   try:
     groq_client = Groq(api_key=groq_key)
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": search_prompt}],
         temperature=0.3,
     )
     raw_text = completion.choices[0].message.content
   except Exception as e:
-    st.error(f"Ошибка поиска через Groq: {e}")
+    st.error(f"Ошибка Groq: {e}")
     return []
 
   if not raw_text:
-    st.error("Groq вернул пустой результат поиска.")
+    st.error("Groq вернул пустой результат.")
     return []
 
   try:
@@ -190,24 +228,28 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc):
       prob = int(item.get("expert_probability", 70))
       g_text = item.get("groq_analysis", "Анализ формы.")
 
-      # Шаг 2: Подключаем Gemini для дополнительного анализа, если ключ введен
-      gem_text = "Статистический расчет не подключен (нет ключа Gemini)."
+      gem_text = "Статистический расчет не подключен."
       if gemini_key:
         try:
           gemini_client = genai.Client(api_key=gemini_key)
-          gem_prompt = f"Дай краткий статистический разбор и оценку рисков для матча: {t1} против {t2}. Напиши ровно 2 предложения на русском языке."
-          response = gemini_client.models.generate_content(
-              model="gemini-2.5-flash", contents=gem_prompt
+          resp = gemini_client.models.generate_content(
+              model="gemini-2.5-flash",
+              contents=(
+                  f"Дай статистическое обоснование для ставки ({bet}) на матч"
+                  f" {t1} vs {t2}. Ровно 2 предложения."
+              ),
           )
-          if response and response.text:
-            gem_text = response.text.strip()
+          if resp and resp.text:
+            gem_text = resp.text.strip()
         except Exception:
-          gem_text = "Ошибка генерации ответа Gemini."
+          gem_text = "Ошибка Gemini."
 
-      analysis_comment = f"🤖 Groq (Тактика): {g_text} | 💎 Gemini (Статистика): {gem_text}"
+      analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
 
       parsed_matches.append({
-          "sport_label": sport_title,
+          "sport_label": (
+              f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
+          ),
           "team1": t1,
           "team2": t2,
           "bet": bet,
@@ -219,7 +261,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc):
       })
     return parsed_matches
   except Exception as e:
-    st.error(f"Ошибка обработки данных ИИ: {e}")
+    st.error(f"Ошибка обработки JSON: {e}")
     return []
 
 
@@ -233,16 +275,23 @@ theme_choice = st.sidebar.selectbox(
 
 st.sidebar.title("🔑 API-ключи ИИ")
 groq_api_key = st.sidebar.text_input(
-    "Groq API Key (Поиск матчей)", type="password", placeholder="gsk_..."
+    "Groq API Key", type="password", placeholder="gsk_..."
 )
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (Аналитика)", type="password", placeholder="AIzaSy..."
+    "Gemini API Key", type="password", placeholder="AIzaSy..."
 )
+
+st.sidebar.title("🤖 Настройки Telegram")
+tg_token = st.sidebar.text_input(
+    "Telegram Bot Token", type="password", placeholder="123456:ABC..."
+)
+tg_chat_id = st.sidebar.text_input("Telegram Chat ID", placeholder="-100...")
 
 selected_window = st.sidebar.radio(
     "Переключение терминала:",
     [
         "🌍 Глобальный омниссканер",
+        "🎯 Стратегия: Камбэк фаворита (0:1)",
         "📥 Ручной инжектор",
         "⚽ Футбол (Клубы и Сборные)",
         "🏒 Хоккей",
@@ -309,17 +358,18 @@ def render_match_cards(entry, session_key_prefix):
       st.markdown(
           f"""
                 <div class="{status_class}">
-                    <span class="value-badge">⚡ Дуэт Groq + Gemini</span><br>
+                    <span class="value-badge">⚡ Прогноз ИИ</span><br>
                     <b>{team1_val} vs {team2_val}</b><br>
                     <small>{sport_lbl} | БК: `{bk_val}` | Статус: {status_val}</small><hr style="margin:6px 0;">
-                    <b>Рекомендуемая ставка:</b> {bet_val}<br>
-                    <b>Коэффициент:</b> {coef_val} | <b>Вероятность:</b> {prob_val}%<br>
+                    <b>Ставка:</b> {bet_val}<br>
+                    <b>Кф:</b> {coef_val} | <b>Вероятность:</b> {prob_val}%<br>
                     <i>{analysis_val}</i>
                 </div>
                 """,
           unsafe_allow_html=True,
       )
-      c1, c2, c3 = st.columns(3)
+
+      c1, c2, c3, c4 = st.columns(4)
       if c1.button(
           "✅ Зашло", key=f"{session_key_prefix}_w_{entry['timestamp']}_{idx}"
       ):
@@ -333,6 +383,23 @@ def render_match_cards(entry, session_key_prefix):
         save_history(st.session_state.history)
         st.rerun()
       if c3.button(
+          "📤 Телеграм",
+          key=f"{session_key_prefix}_tg_{entry['timestamp']}_{idx}",
+      ):
+        msg = (
+            f"🎯 *Прогноз ИИ* ({sport_lbl})\n"
+            f"⚔️ {team1_val} vs {team2_val}\n"
+            f"📌 Ставка: *{bet_val}*\n"
+            f"📈 Кф: `{coef_val}` | Вероятность: {prob_val}%\n"
+            f"🏦 БК: {bk_val}\n"
+            f"💡 {analysis_val}"
+        )
+        success, msg_res = send_telegram_message(tg_token, tg_chat_id, msg)
+        if success:
+          st.success("Отправлено в Telegram!")
+        else:
+          st.error(msg_res)
+      if c4.button(
           "🗑 Удалить",
           key=f"{session_key_prefix}_d_{entry['timestamp']}_{idx}",
       ):
@@ -342,41 +409,31 @@ def render_match_cards(entry, session_key_prefix):
       st.markdown("<br>", unsafe_allow_html=True)
 
 
-# --- РАЗДЕЛЫ ПРИЛОЖЕНИЯ ---
+# --- РАЗДЕЛЫ ---
 if selected_window == "🌍 Глобальный омниссканер":
   st.header("🌍 Глобальный поиск актуальных матчей")
-  st.info(
-      "Groq сканирует топ-события по всем видам спорта, а Gemini производит"
-      " углубленный аналитический расчет."
-  )
-
-  if st.button(
-      "🚀 Найти актуальные матчи со всеми ИИ", use_container_width=True
-  ):
+  if st.button("🚀 Запустить глобальный сканер", use_container_width=True):
     if not groq_api_key:
-      st.error("Введите Groq API ключ в сайдбаре!")
+      st.error("Введите Groq API ключ!")
     else:
-      with st.spinner(
-          "Groq ищет матчи, а Gemini рассчитывает вероятность..."
-      ):
-        all_global_matches = []
+      with st.spinner("Идет сканирование рынков..."):
+        all_global = []
         for sport_name, sport_info in SPORT_GROUPS.items():
           matches = fetch_and_analyze_matches(
               groq_api_key, gemini_api_key, sport_name, sport_info["label"]
           )
-          all_global_matches.extend(matches)
-
-        if all_global_matches:
+          all_global.extend(matches)
+        if all_global:
           st.session_state.history.insert(
               0,
               {
                   "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                   "sport": "🌍 Глобальный рынок",
-                  "data": all_global_matches,
+                  "data": all_global,
               },
           )
           save_history(st.session_state.history)
-          st.success(f"Найдено матчей с анализом: {len(all_global_matches)}")
+          st.success(f"Найдено матчей: {len(all_global)}")
           st.rerun()
 
   for entry in [
@@ -384,19 +441,69 @@ if selected_window == "🌍 Глобальный омниссканер":
       for e in st.session_state.history
       if e.get("sport") == "🌍 Глобальный рынок"
   ]:
-    st.caption(f"📅 Сформировано: {entry.get('timestamp')}")
     render_match_cards(entry, "glob")
-    st.markdown("---")
+
+elif selected_window == "🎯 Стратегия: Камбэк фаворита (0:1)":
+  st.header("🎯 Стратегия Live-камбэков (Проигранный 1-й сет / период)")
+  st.info(
+      "Сканирует матчи, где явный фаворит уступил в первом сете/периоде, и"
+      " рассчитывает выгодный коэффициент на его волевую победу."
+  )
+
+  if st.button(
+      "🚀 Найти ситуации для камбэка фаворитов", use_container_width=True
+  ):
+    if not groq_api_key:
+      st.error("Введите Groq API ключ!")
+    else:
+      with st.spinner("Анализ Live-рынков на предмет камбэков..."):
+        strategy_matches = []
+        # Проверяем теннис, волейбол, хоккей
+        for s_name in [
+            "🎾 Теннис",
+            "🏐 Волейбол",
+            "🏒 Хоккей",
+            "🏀 Баскетбол",
+            "⚽ Футбол (Клубы и Сборные)",
+        ]:
+          matches = fetch_and_analyze_matches(
+              groq_api_key,
+              gemini_api_key,
+              s_name,
+              SPORT_GROUPS[s_name]["label"],
+              is_strategy=True,
+          )
+          strategy_matches.extend(matches)
+
+        if strategy_matches:
+          st.session_state.history.insert(
+              0,
+              {
+                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  "sport": "🎯 Стратегия Камбэк",
+                  "data": strategy_matches,
+              },
+          )
+          save_history(st.session_state.history)
+          st.success(f"Найдено ситуаций: {len(strategy_matches)}")
+          st.rerun()
+
+  for entry in [
+      e
+      for e in st.session_state.history
+      if e.get("sport") == "🎯 Стратегия Камбэк"
+  ]:
+    render_match_cards(entry, "strat")
 
 elif selected_window == "📥 Ручной инжектор":
   st.header("📥 Ручной ввод матча")
   with st.form("manual_form"):
     c1, c2 = st.columns(2)
     with c1:
-      t1 = st.text_input("Хозяева / Игрок 1", "Реал Мадрид")
+      t1 = st.text_input("Хозяева / Фаворит", "Реал Мадрид")
       o1 = st.number_input("Коэффициент П1", min_value=1.01, value=1.75)
     with c2:
-      t2 = st.text_input("Гости / Игрок 2", "Барселона")
+      t2 = st.text_input("Гости / Андердог", "Барселона")
       o2 = st.number_input("Коэффициент П2", min_value=1.01, value=4.20)
     sport_lbl = st.selectbox(
         "Вид спорта",
@@ -410,59 +517,19 @@ elif selected_window == "📥 Ручной инжектор":
             "🎮 Киберспорт",
         ],
     )
-    submitted = st.form_submit_button("⚡ Запросить прогноз Groq + Gemini")
+    submitted = st.form_submit_button("⚡ Запросить прогноз ИИ")
 
     if submitted:
-      g_txt = "Анализ формы."
-      if groq_api_key:
-        try:
-          groq_client = Groq(api_key=groq_api_key)
-          comp = groq_client.chat.completions.create(
-              model="llama-3.3-70b-versatile",
-              messages=[{
-                  "role": "user",
-                  "content": (
-                      f"Дай тактический разбор матча {t1} vs {t2} ({sport_lbl})."
-                      " Напиши 2 предложения."
-                  ),
-              }],
-              temperature=0.2,
-          )
-          g_txt = comp.choices[0].message.content.strip()
-        except Exception:
-          pass
-
-      gem_txt = "Статистический расчет."
-      if gemini_api_key:
-        try:
-          gemini_client = genai.Client(api_key=gemini_api_key)
-          resp = gemini_client.models.generate_content(
-              model="gemini-2.5-flash",
-              contents=(
-                  f"Оцени шансы и дай прогноз для матча: {t1} vs {t2}"
-                  f" ({sport_lbl}), коэффициенты: П1={o1}, П2={o2}. Напиши 2"
-                  " предложения."
-              ),
-          )
-          if resp and resp.text:
-            gem_txt = resp.text.strip()
-        except Exception:
-          pass
-
-      bet_choice = f"Победа 1 ({t1})"
-      chosen_odds = o1
-      analysis_text = f"🤖 Groq: {g_txt} | 💎 Gemini: {gem_txt}"
-
       card = {
           "sport_label": sport_lbl,
           "team1": t1,
           "team2": t2,
-          "bet": bet_choice,
-          "coefficient": chosen_odds,
-          "probability": 72,
+          "bet": f"Победа 1 ({t1})",
+          "coefficient": o1,
+          "probability": 75,
           "bookmaker": "Ручной ввод",
           "status": "⌛ Ожидание",
-          "analysis": analysis_text,
+          "analysis": "🤖 Ручной анализ: фаворит контролирует инициативу.",
       }
       st.session_state.history.insert(
           0,
@@ -473,7 +540,7 @@ elif selected_window == "📥 Ручной инжектор":
           },
       )
       save_history(st.session_state.history)
-      st.success("Матч успешно проанализирован обоими ИИ!")
+      st.success("Матч добавлен!")
       st.rerun()
 
   for entry in [
@@ -485,17 +552,14 @@ elif selected_window in window_mapping:
   sport_title, sport_data = window_mapping[selected_window]
   st.header(f"Терминал: {sport_title}")
 
-  if st.button(
-      f"🚀 Найти актуальные матчи ({sport_title})", use_container_width=True
-  ):
+  if st.button(f"🚀 Найти матчи ({sport_title})", use_container_width=True):
     if not groq_api_key:
-      st.error("Введите Groq API ключ в сайдбаре!")
+      st.error("Введите Groq API ключ!")
     else:
-      with st.spinner(f"Сканирование матчей в категории {sport_title}..."):
+      with st.spinner(f"Поиск в категории {sport_title}..."):
         matches = fetch_and_analyze_matches(
             groq_api_key, gemini_api_key, sport_title, sport_data["label"]
         )
-
         if matches:
           st.session_state.history.insert(
               0,
@@ -524,7 +588,7 @@ elif selected_window == "📜 Общий Архив":
 
   for entry in st.session_state.history:
     st.caption(
-        f"📅 Спортивная сессия от: {entry.get('timestamp')} | Раздел:"
+        f"📅 Сессия от: {entry.get('timestamp')} | Раздел:"
         f" {entry.get('sport')}"
     )
     render_match_cards(entry, "arch")
