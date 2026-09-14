@@ -137,7 +137,6 @@ def extract_json_safely(text):
     except Exception:
         pass
 
-    # Убираем markdown бэктики если есть
     cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
     try:
@@ -242,7 +241,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
     if not raw_text and gemini_key:
         try:
             g_client = genai.Client(api_key=gemini_key)
-            for g_model in ["gemini-2.5-flash", "gemini-1.5-flash"]:
+            for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
                     response = g_client.models.generate_content(
                         model=g_model,
@@ -305,7 +304,7 @@ def fetch_and_analyze_matches(groq_key, gemini_key, sport_title, sport_desc, is_
         })
     return parsed_matches
 
-# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА С СТРОГИМ JSON ---
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ ОШИБОК ---
 def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     if not gemini_key:
         return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
@@ -316,15 +315,15 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
         g_client = genai.Client(api_key=gemini_key)
         prompt = f"""
         Ты профессиональный спортивный аналитик и каппер.
-        Внимательно изучи этот скриншот букмекерской конторы (найди названия команд, например ХК Норильск, Югра, коэффициенты, тоталы и рынки).
+        Внимательно изучи этот скриншот букмекерской конторы (найди названия игроков/команд, например Руc А и Де Стефано С, коэффициенты матча, сет-победы, тоталы).
         НЕ ГОНИСЬ за самыми низкими коэффициентами. Проанализируй ситуацию, форму и найди самую валуйную и обоснованную ставку.
         
         Верни результат СТРОГО в формате JSON без каких-либо вводных слов и пояснений снаружи:
         {{
-          "team1": "Название первой команды",
-          "team2": "Название второй команды",
-          "sport": "Вид спорта (например, Хоккей)",
-          "recommended_bet": "Ставка с учетом анализа и коэффициентов со скриншота",
+          "team1": "Название первой команды или игрока",
+          "team2": "Название второй команды или игрока",
+          "sport": "Вид спорта (например, Теннис)",
+          "recommended_bet": "Конкретная ставка с учетом анализа и коэффициентов со скриншота",
           "coefficient": 1.75,
           "probability": 78,
           "bookmaker": "Название БК со скриншота",
@@ -334,7 +333,8 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
         """
 
         raw_text = ""
-        for g_model in ["gemini-2.5-flash", "gemini-1.5-flash"]:
+        last_error = ""
+        for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
             try:
                 response = g_client.models.generate_content(
                     model=g_model,
@@ -346,16 +346,20 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
                 if response and response.text:
                     raw_text = response.text.strip()
                     break
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
                 continue
+
+        if not raw_text:
+            return None, f"Ошибка Gemini API: {last_error or 'Модель не вернула ответ'}"
 
         parsed = extract_json_safely(raw_text)
         if not parsed:
-            return None, f"Не удалось распарсить ответ ИИ. Сырой текст: {raw_text[:150]}"
+            return None, f"Не удалось распарсить JSON. Сырой текст ответа: {raw_text[:200]}"
 
         return parsed, None
     except Exception as e:
-        return None, f"Ошибка мультимодального анализа: {e}"
+        return None, f"Критическая ошибка мультимодального анализа: {e}"
 
 # --- САЙДБАР ---
 st.sidebar.title("🎛️ Настройки терминала")
