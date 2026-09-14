@@ -145,7 +145,7 @@ def fetch_real_web_data(sport_title):
     return ""
 
 
-# --- АНАЛИЗ С УНИВЕРСАЛЬНОЙ МОДЕЛЬЮ GROQ ---
+# --- АНАЛИЗ С АВТОМАТИЧЕСКИМ ПОДБОРОМ МОДЕЛИ GROQ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -178,20 +178,28 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Используем универсальную и стабильную модель Groq (llama-3.1-8b-instant)
+  # 1. Пробуем Groq с автоперебором доступных моделей
   if groq_key:
-    try:
-      client = Groq(api_key=groq_key)
-      completion = client.chat.completions.create(
-          model="llama-3.1-8b-instant",
-          messages=[{"role": "user", "content": prompt}],
-          temperature=0.2,
-      )
-      raw_text = completion.choices[0].message.content
-    except Exception as e:
-      st.warning(f"Ошибка Groq API: {e}")
+    client = Groq(api_key=groq_key)
+    models_to_try = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "openai/gpt-oss-20b",
+    ]
+    for model_name in models_to_try:
+      try:
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        raw_text = completion.choices[0].message.content
+        if raw_text:
+          break
+      except Exception:
+        continue
 
-  # 2. Резерв на Gemini (если ключ Groq не задан или произошел сбой)
+  # 2. Резерв на Gemini (если ключи Groq не подошли или произошел сбой)
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
@@ -214,8 +222,8 @@ def fetch_and_analyze_matches(
 
   if not raw_text:
     st.error(
-        "Не удалось получить данные. Проверьте правильность введенного Groq API"
-        " Key в сайдбаре."
+        "Не удалось получить данные ни от одной модели Groq/Gemini. Проверьте"
+        " правильность введенного Groq API Key в сайдбаре."
     )
     return []
 
