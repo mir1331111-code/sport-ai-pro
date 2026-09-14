@@ -177,14 +177,12 @@ def extract_json_safely(text):
   return None
 
 
-# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (С ДИАГНОСТИКОЙ ОШИБОК) ---
+# --- ПОИСК РЕАЛЬНЫХ МАТЧЕЙ ЧЕРЕЗ GOOGLE GROUNDING (С АКТУАЛЬНЫМИ МОДЕЛЯМИ) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
   if not gemini_key and not groq_key:
-    st.error(
-        "⚠️ Укажите Gemini API Key в боковой панели слева!", icon="🔑"
-    )
+    st.error("⚠️ Укажите Gemini API Key в боковой панели слева!", icon="🔑")
     return []
 
   prompt = f"""
@@ -192,7 +190,7 @@ def fetch_and_analyze_matches(
     Используй поиск Google, чтобы найти реальные текущие матчи или топ-противостояния на сегодня в категории "{sport_title} ({sport_desc})".
     Выбери матчи с высокой вероятностью прохода.
     
-    Верни СТРОГО JSON объект (можно обернуть в ```json ... ```):
+    Верни СТРОГО JSON объект:
     {{
       "matches": [
         {{
@@ -212,11 +210,11 @@ def fetch_and_analyze_matches(
   raw_text = ""
   error_log = []
 
-  # Приоритет: Gemini со встроенным поиском Google
+  # Приоритет: Gemini со встроенным поиском Google (используем gemini-3.6-flash)
   if gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
-      for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+      for g_model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
         try:
           response = g_client.models.generate_content(
               model=g_model,
@@ -234,12 +232,12 @@ def fetch_and_analyze_matches(
     except Exception as e:
       error_log.append(f"Gemini Init Error: {e}")
 
-  # Резерв через Groq, если Gemini не отдал текст
+  # Резерв через Groq
   if not raw_text and groq_key:
     try:
       client = Groq(api_key=groq_key)
       completion = client.chat.completions.create(
-          model="llama-3.3-70b-versatile",
+          model="llama-3.1-70b-versatile",
           messages=[{"role": "user", "content": prompt}],
           response_format={"type": "json_object"},
           temperature=0.2,
@@ -324,7 +322,7 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
     """
 
     raw_text = ""
-    for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+    for g_model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
       try:
         response = g_client.models.generate_content(
             model=g_model,
