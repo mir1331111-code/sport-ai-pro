@@ -145,7 +145,7 @@ def fetch_real_web_data(sport_title):
     return ""
 
 
-# --- ОПТИМИЗИРОВАННЫЙ АНАЛИЗ (БЕЗ ЛИШНИХ ЗАПРОСОВ) ---
+# --- БЕЗОПАСНЫЙ АНАЛИЗ С ОБРАБОТКОЙ ЛИМИТОВ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -178,7 +178,7 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Приоритет Groq (быстрый и с большим лимитом)
+  # 1. Сначала пробуем через Groq (рекомендуется, без жестких лимитов)
   if groq_key:
     try:
       client = Groq(api_key=groq_key)
@@ -188,10 +188,10 @@ def fetch_and_analyze_matches(
           temperature=0.2,
       )
       raw_text = completion.choices[0].message.content
-    except Exception:
-      pass
+    except Exception as e:
+      st.warning(f"Ошибка Groq API: {e}")
 
-  # 2. Резерв на Gemini (используется только если Groq не задан или упал)
+  # 2. Если Groq не дал результат, пробуем Gemini (с защитой от 429)
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
@@ -202,15 +202,21 @@ def fetch_and_analyze_matches(
       if response and response.text:
         raw_text = response.text.strip()
     except Exception as e:
-      st.error(
-          f"Превышен лимит запросов Gemini (429). Пожалуйста, используйте Groq"
-          f" API ключ в сайдбаре: {e}"
-      )
+      err_str = str(e)
+      if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+        st.error(
+            "⚠️ Превышен лимит бесплатных запросов Gemini (ошибка 429). Пожалуйста,"
+            " введите Groq API Key в сайдбаре (он бесплатный и без таких"
+            " лимитов)."
+        )
+      else:
+        st.error(f"Ошибка Gemini: {e}")
       return []
 
   if not raw_text:
     st.error(
-        "Не удалось получить данные. Проверьте правильность введенных ключей."
+        "Не удалось получить данные. Пожалуйста, укажите рабочий Groq API Key в"
+        " сайдбаре."
     )
     return []
 
@@ -239,7 +245,6 @@ def fetch_and_analyze_matches(
       prob = int(item.get("expert_probability", 70))
       g_text = item.get("groq_analysis", "Анализ формы.")
 
-      # Вся аналитика приходит в одном ответе, дополнительных запросов больше нет!
       analysis_comment = f"🌐 Web-данные + ИИ: {g_text}"
 
       parsed_matches.append({
@@ -410,10 +415,7 @@ if selected_window == "🌍 Глобальный омниссканер":
   st.header("🌍 Глобальный поиск актуальных матчей")
   if st.button("🚀 Запустить глобальный сканер", use_container_width=True):
     if not groq_api_key and not gemini_api_key:
-      st.error(
-          "Введите хотя бы один API ключ (рекомендуется Groq API Key) в"
-          " сайдбаре!"
-      )
+      st.error("Введите API ключ (рекомендуется Groq) в сайдбаре!")
     else:
       with st.spinner("Поиск реальных матчей в сети..."):
         all_global = []
