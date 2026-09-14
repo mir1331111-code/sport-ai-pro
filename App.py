@@ -189,16 +189,17 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ С ЗАПРЕТОМ ФАНТАСТИКИ И НОВОЙ МОДЕЛЬЮ ---
+# --- АНАЛИЗ С ЗАЩИТОЙ ОТ СБОЕВ И ФАНТАСТИКИ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
-  web_context = fetch_real_web_data(sport_title)
-  
-  prompt = f"""
+  try:
+    web_context = fetch_real_web_data(sport_title)
+
+    prompt = f"""
     Сегодня 14 сентября 2026 года. 
     КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать матчи, команды или брать данные из головы! 
-    Используй ТОЛЬКО реальные данные из интернета, приведенные ниже. Если в тексте ниже нет конкретных матчей на сегодня, верни пустой список {"matches": []}. Ни в коем случае не придумывай несуществующие матчи.
+    Используй ТОЛЬКО реальные данные из интернета, приведенные ниже. Если в тексте ниже нет конкретных матчей на сегодня, верни пустой список {{"matches": []}}. Ни в коем случае не придумывай несуществующие матчи.
     
     Категория: "{sport_title} ({sport_desc})".
     Реальные данные из сети:
@@ -221,92 +222,94 @@ def fetch_and_analyze_matches(
     }}
     """
 
-  raw_text = ""
+    raw_text = ""
 
-  # 1. Сначала пробуем Groq
-  if groq_key:
-    client = Groq(api_key=groq_key)
-    models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-    for model_name in models_to_try:
+    # 1. Сначала пробуем Groq
+    if groq_key:
       try:
-        completion = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
-        raw_text = completion.choices[0].message.content
-        if raw_text:
-          break
+        client = Groq(api_key=groq_key)
+        models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        for model_name in models_to_try:
+          try:
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw_text = completion.choices[0].message.content
+            if raw_text:
+              break
+          except Exception:
+            continue
       except Exception:
-        continue
+        pass
 
-  # 2. Если Groq нет/не ответил, используем Gemini с актуальной моделью gemini-3.6-flash
-  if not raw_text and gemini_key:
-    try:
-      g_client = genai.Client(api_key=gemini_key)
-      response = g_client.models.generate_content(
-          model="gemini-3.6-flash",
-          contents=prompt,
-          config=types.GenerateContentConfig(
-              response_mime_type="application/json"
-          ),
-      )
-      if response and response.text:
-        raw_text = response.text.strip()
-    except Exception as e:
-      err_str = str(e)
-      if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-        st.error(
-            "⚠️ Превышен лимит запросов Gemini (ошибка 429). Пожалуйста, введите Groq API Key в сайдбаре."
-        )
-      else:
-        st.error(f"Ошибка Gemini: {e}")
+    # 2. Если Groq нет/не ответил, используем Gemini с автоподбором рабочих моделей
+    if not raw_text and gemini_key:
+      try:
+        g_client = genai.Client(api_key=gemini_key)
+        gemini_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+        for g_model in gemini_models:
+          try:
+            response = g_client.models.generate_content(
+                model=g_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                ),
+            )
+            if response and response.text:
+              raw_text = response.text.strip()
+              break
+          except Exception:
+            continue
+      except Exception as e:
+        st.warning(f"⚠️ Не удалось подключиться к Gemini: {e}")
+
+    if not raw_text:
       return []
 
-  if not raw_text:
-    st.error(
-        "Не удалось получить данные. Проверьте правильность введенных ключей в сайдбаре."
+    parsed_data = extract_json_safely(raw_text)
+    if not parsed_data:
+      return []
+
+    data_list = (
+        parsed_data.get("matches", [])
+        if isinstance(parsed_data, dict)
+        else parsed_data
     )
+
+    parsed_matches = []
+    for item in data_list:
+      t1 = item.get("team1", "Команда 1")
+      t2 = item.get("team2", "Команда 2")
+      p1 = float(item.get("coefficient_1", 1.85))
+      p2 = float(item.get("coefficient_2", 2.10))
+      bet = item.get("recommended_bet", f"Победа 1 ({t1})")
+      chosen_odds = p1 if "1" in bet or t1 in bet else p2
+      prob = int(item.get("expert_probability", 70))
+      g_text = item.get("groq_analysis", "Анализ формы.")
+
+      analysis_comment = f"🌐 Реальный матч (14.09.2026): {g_text}"
+
+      parsed_matches.append({
+          "sport_label": (
+              f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
+          ),
+          "team1": t1,
+          "team2": t2,
+          "bet": bet,
+          "coefficient": chosen_odds,
+          "probability": prob,
+          "bookmaker": item.get("bookmaker", "БК"),
+          "status": "⌛ Ожидание",
+          "analysis": analysis_comment,
+      })
+    return parsed_matches
+  except Exception as e:
+    st.error(f"Ошибка при обработке запроса: {e}")
     return []
-
-  parsed_data = extract_json_safely(raw_text)
-  if not parsed_data:
-    return []
-
-  data_list = (
-      parsed_data.get("matches", [])
-      if isinstance(parsed_data, dict)
-      else parsed_data
-  )
-
-  parsed_matches = []
-  for item in data_list:
-    t1 = item.get("team1", "Команда 1")
-    t2 = item.get("team2", "Команда 2")
-    p1 = float(item.get("coefficient_1", 1.85))
-    p2 = float(item.get("coefficient_2", 2.10))
-    bet = item.get("recommended_bet", f"Победа 1 ({t1})")
-    chosen_odds = p1 if "1" in bet or t1 in bet else p2
-    prob = int(item.get("expert_probability", 70))
-    g_text = item.get("groq_analysis", "Анализ формы.")
-
-    analysis_comment = f"🌐 Реальный матч (14.09.2026): {g_text}"
-
-    parsed_matches.append({
-        "sport_label": (
-            f"🎯 Камбэк: {sport_title}" if is_strategy else sport_title
-        ),
-        "team1": t1,
-        "team2": t2,
-        "bet": bet,
-        "coefficient": chosen_odds,
-        "probability": prob,
-        "bookmaker": item.get("bookmaker", "БК"),
-        "status": "⌛ Ожидание",
-        "analysis": analysis_comment,
-    })
-  return parsed_matches
 
 
 # --- САЙДБАР ---
@@ -380,7 +383,10 @@ st.markdown("---")
 
 def render_match_cards(entry, session_key_prefix):
   if not entry.get("data"):
-    st.info("ℹ️ На текущий момент реальных матчей по этому запросу в сети не найдено (защита от фантастики).")
+    st.info(
+        "ℹ️ На текущий момент реальных матчей по этому запросу в сети не"
+        " найдено (защита от фантастики отключила вывод вымышленных игр)."
+    )
     return
 
   cols = st.columns(2)
@@ -475,7 +481,7 @@ if selected_window == "🌍 Глобальный омниссканер":
               is_strategy=False,
           )
           all_global.extend(matches)
-        
+
         st.session_state.history.insert(
             0,
             {
@@ -522,7 +528,9 @@ elif selected_window == "🎯 Стратегия: Камбэк фаворита 
             },
         )
         save_history(st.session_state.history)
-        st.success(f"Сканирование завершено. Найдено ситуаций: {len(strategy_matches)}")
+        st.success(
+            f"Сканирование завершено. Найдено ситуаций: {len(strategy_matches)}"
+        )
         st.rerun()
 
   for entry in [
