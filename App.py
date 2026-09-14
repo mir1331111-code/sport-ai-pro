@@ -199,33 +199,49 @@ def extract_json_safely(text):
   return None
 
 
-# --- ГАРАНТИРОВАННЫЙ АНАЛИЗ (С ЖЕСТКИМ ФАЛЛБЕКОМ) ---
+# --- АНАЛИЗ РЕАЛЬНЫХ МАТЧЕЙ (БЕЗ ФЕЙКОВЫХ ЗАГЛУШЕК) ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
+  if not groq_key and not gemini_key:
+    return [{
+        "sport_label": sport_title,
+        "team1": "⚠️ Требуется API-ключ",
+        "team2": "в сайдбаре слева",
+        "bet": "Укажите Groq или Gemini Key",
+        "coefficient": 1.0,
+        "probability": 0,
+        "bookmaker": "Система",
+        "status": "⌛ Ожидание",
+        "analysis": (
+            "⚠️ Введите Groq API Key или Gemini API Key в боковой панели, чтобы"
+            " ИИ мог искать актуальные матчи в реальном времени."
+        ),
+    }]
+
   try:
     web_context = fetch_real_web_data(sport_title)
 
     prompt = f"""
     Сегодня 14 сентября 2026 года. 
-    Твоя задача — выдать 2-3 самых надежных, железобетонных матча в категории "{sport_title} ({sport_desc})" с вероятностью прохода от 80% и выше.
-    Коэффициенты НЕ важны, важен только ПРОХОД и победа.
+    Найди и выдай реальные актуальные матчи (или главные топ-противостояния текущего сезона) в категории "{sport_title} ({sport_desc})".
+    Выбери матчи с высокой вероятностью прохода (от 80%).
     
-    Используй данные из сети если есть, либо сформируй актуальные топ-матчи текущего сезона для этой дисциплины:
+    Данные из поиска:
     {web_context}
     
     Верни СТРОГО JSON объект без лишнего текста:
     {{
       "matches": [
         {{
-          "team1": "Название первой команды",
-          "team2": "Название второй команды",
+          "team1": "Реальное название первой команды",
+          "team2": "Реальное название второй команды",
           "coefficient_1": 1.45,
           "coefficient_2": 3.10,
           "bookmaker": "Fonbet",
           "recommended_bet": "Победа 1 с форой (0)",
           "expert_probability": 88,
-          "groq_analysis": "Глубокий разбор: форма команд, мотивация, статистика личных встреч, почему ставка железобетонная и какие есть риски на случай неудачи."
+          "groq_analysis": "Детальный разбор: текущая форма, статистика и обоснование ставки."
         }}
       ]
     }}
@@ -243,7 +259,7 @@ def fetch_and_analyze_matches(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                temperature=0.3,
+                temperature=0.2,
             )
             raw_text = completion.choices[0].message.content
             if raw_text:
@@ -283,38 +299,19 @@ def fetch_and_analyze_matches(
     if parsed_data and isinstance(parsed_data, dict):
       data_list = parsed_data.get("matches", [])
 
-    # Если ИИ ничего не вернул или сеть заблокировала — генерируем гарантированный премиум-вариант!
     if not data_list:
-      fallback_teams = {
-          "⚽ Футбол (Клубы и Сборные)": (
-              "Реал Мадрид",
-              "Вильярреал",
-              "Победа 1",
-              1.42,
-          ),
-          "🏒 Хоккей": ("СКА", "Динамо Москва", "Победа в матче 1", 1.55),
-          "🏀 Баскетбол": ("Бостон Селтикс", "Майами Хит", "Победа 1 с форой", 1.48),
-          "🎾 Теннис": ("Новак Джокович", "Тейлор Фритц", "Победа 1", 1.35),
-          "🏐 Волейбол": ("Зенит-Казань", "Динамо Москва", "Победа 1", 1.40),
-          "🤾 Гандбол": ("Барселона", "ПСЖ", "Победа 1", 1.50),
-          "🎮 Киберспорт": ("Team Vitality", "FaZe Clan", "Победа 1", 1.52),
-      }
-      t1, t2, bet_rec, coef = fallback_teams.get(
-          sport_title, ("Команда А", "Команда Б", "Победа 1", 1.45)
-      )
-      data_list = [{
-          "team1": t1,
-          "team2": t2,
-          "coefficient_1": coef,
-          "coefficient_2": 2.80,
-          "bookmaker": "Фонбет / Winline",
-          "recommended_bet": bet_rec,
-          "expert_probability": 89,
-          "groq_analysis": (
-              "📊 Надежный аналитический прогноз: Фаворит имеет колоссальное"
-              " превосходство по всем ключевым метрикам текущего сезона,"
-              " домашняя арена и мотивация гарантируют высокий процент"
-              " проходимости."
+      return [{
+          "sport_label": sport_title,
+          "team1": "⚠️ Матчи не найдены",
+          "team2": "или сеть заблокировала поиск",
+          "bet": "Попробуйте позже",
+          "coefficient": 1.0,
+          "probability": 0,
+          "bookmaker": "Система",
+          "status": "⌛ Ожидание",
+          "analysis": (
+              "⚠️ Не удалось получить список матчей через поисковик. Проверьте"
+              " валидность API-ключа."
           ),
       }]
 
@@ -327,14 +324,11 @@ def fetch_and_analyze_matches(
       bet = item.get("recommended_bet", f"Победа 1 ({t1})")
       chosen_odds = p1 if "1" in bet or t1 in bet else p2
       prob = int(item.get("expert_probability", 88))
-      g_text = item.get(
-          "groq_analysis",
-          "Анализ формы, факторов победы и потенциальных рисков.",
-      )
+      g_text = item.get("groq_analysis", "Анализ формы и факторов победы.")
 
       parsed_matches.append({
           "sport_label": (
-              f"🎯 Железо / Камбэк: {sport_title}"
+              f"🎯 Стратегия / Матч: {sport_title}"
               if is_strategy
               else sport_title
           ),
@@ -345,7 +339,7 @@ def fetch_and_analyze_matches(
           "probability": prob,
           "bookmaker": item.get("bookmaker", "БК"),
           "status": "⌛ Ожидание",
-          "analysis": f"📊 Глубокая аналитика ИИ: {g_text}",
+          "analysis": f"📊 Аналитика ИИ: {g_text}",
       })
     return parsed_matches
   except Exception as e:
@@ -353,7 +347,7 @@ def fetch_and_analyze_matches(
     return []
 
 
-# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА (2 МОЗГА) ---
+# --- МУЛЬТИМОДАЛЬНЫЙ АНАЛИЗ СКРИНШОТА ---
 def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
   if not gemini_key:
     return None, "Для анализа скриншота необходим Gemini API Key в сайдбаре!"
@@ -361,20 +355,19 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
   try:
     g_client = genai.Client(api_key=gemini_key)
     prompt = """
-    Ты профессиональный спортивный аналитик и каппер. Перед тобой скриншот матча / линии / статистики.
-    Проанализируй скриншот, определи команды и вынеси железобетонный вердикт на что ставить с вероятностью прохода от 80%.
-    Напиши подробную аналитику: почему именно эта ставка, какие есть риски.
+    Ты профессиональный спортивный аналитик. Посмотри на этот скриншот. 
+    Распознай реальные команды, турнир и вынеси обоснованный прогноз.
     
     Верни СТРОГО JSON объект:
     {
       "team1": "Команда 1",
       "team2": "Команда 2",
       "sport": "Вид спорта",
-      "recommended_bet": "Точная рекомендация ставки",
+      "recommended_bet": "Рекомендация ставки",
       "coefficient": 1.55,
       "probability": 90,
-      "bookmaker": "Скриншот БК",
-      "analysis": "Двойной аналитический разбор: железобетонное обоснование выбора и разбор рисков."
+      "bookmaker": "БК со скриншота",
+      "analysis": "Обоснование прогноза по данным на скриншоте."
     }
     """
 
@@ -394,21 +387,10 @@ def analyze_screenshot_with_two_brains(gemini_key, groq_key, image):
 
     parsed = extract_json_safely(raw_text)
     if not parsed:
-      # Фаллбек для скриншота, чтобы не выдавать ошибку
-      parsed = {
-          "team1": "Команда из скриншота 1",
-          "team2": "Команда из скриншота 2",
-          "sport": "Футбол",
-          "recommended_bet": "Победа 1 с форой (0)",
-          "coefficient": 1.50,
-          "probability": 88,
-          "bookmaker": "Скриншот БК",
-          "analysis": (
-              "🧠 [Анализ 2 мозгов]: По текущим параметрам на изображении"
-              " фиксируется явное превосходство первой команды в ключевых"
-              " статистических метриках. Ставка обладает высокой надежностью."
-          ),
-      }
+      return (
+          None,
+          "Не удалось распознать матч на скриншоте. Убедитесь, что текст четкий.",
+      )
 
     return parsed, None
   except Exception as e:
@@ -546,7 +528,7 @@ def render_match_cards(entry, session_key_prefix):
           key=f"{session_key_prefix}_tg_{entry['timestamp']}_{idx}",
       ):
         msg = (
-            f"🎯 *Прогноз ИИ (Макс. проход)* ({sport_lbl})\n"
+            f"🎯 *Прогноз ИИ* ({sport_lbl})\n"
             f"⚔️ {team1_val} vs {team2_val}\n"
             f"📌 Ставка: *{bet_val}*\n"
             f"📈 Вероятность: {prob_val}% (Кф: `{coef_val}`)\n"
@@ -610,10 +592,7 @@ if selected_window == "🌍 Глобальный омниссканер":
 
 elif selected_window == "📸 Скрин-аналитик (2 мозга)":
   st.header("📸 Загрузка скриншота матча (Анализ 2 мозгами)")
-  st.markdown(
-      "Загрузите скриншот из БК или приложения. Два ИИ-мозга мгновенно"
-      " проанализируют изображение и выдадут железобетонную рекомендацию."
-  )
+  st.markdown("Загрузите скриншот из БК. ИИ распознает команды и выдаст разбор.")
 
   uploaded_file = st.file_uploader(
       "Выберите скриншот (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"]
@@ -623,16 +602,14 @@ elif selected_window == "📸 Скрин-аналитик (2 мозга)":
     image = Image.open(uploaded_file)
     st.image(image, caption="Загруженный скриншот", use_container_width=True)
 
-    if st.button("🧠 Запустить 2 мозга на анализ скриншота", use_container_width=True):
+    if st.button("🧠 Запустить анализ скриншота", use_container_width=True):
       if not gemini_api_key:
         st.error(
             "Для анализа скриншота обязательно укажите Gemini API Key в"
             " сайдбаре!"
         )
       else:
-        with st.spinner(
-            "Два ИИ изучают скриншот и формируют точный прогноз..."
-        ):
+        with st.spinner("ИИ изучает скриншот и формирует точный прогноз..."):
           result_dict, err_msg = analyze_screenshot_with_two_brains(
               gemini_api_key, groq_api_key, image
           )
@@ -707,10 +684,10 @@ elif selected_window == "📥 Ручной инжектор":
   with st.form("manual_form"):
     c1, c2 = st.columns(2)
     with c1:
-      t1 = st.text_input("Хозяева / Фаворит", "Реал Мадрид")
+      t1 = st.text_input("Хозяева / Фаворит", "")
       o1 = st.number_input("Коэффициент", min_value=1.01, value=1.40)
     with c2:
-      t2 = st.text_input("Гости / Андердог", "Валенсия")
+      t2 = st.text_input("Гости / Андердог", "")
       o2 = st.number_input("Коэффициент (резерв)", min_value=1.01, value=3.00)
     sport_lbl = st.selectbox(
         "Вид спорта",
@@ -725,11 +702,7 @@ elif selected_window == "📥 Ручной инжектор":
         ],
     )
     manual_analysis = st.text_area(
-        "Аналитическое обоснование / Риски",
-        (
-            "Команда играет дома, отличная статистика личных встреч,"
-            " оптимальный состав."
-        ),
+        "Аналитическое обоснование / Риски", "Анализ матча..."
     )
     submitted = st.form_submit_button("⚡ Сохранить прогноз")
 
@@ -738,7 +711,7 @@ elif selected_window == "📥 Ручной инжектор":
           "sport_label": sport_lbl,
           "team1": t1,
           "team2": t2,
-          "bet": f"Победа 1 ({t1}) — Надежно",
+          "bet": f"Победа 1 ({t1})",
           "coefficient": o1,
           "probability": 90,
           "bookmaker": "Ручной ввод",
@@ -795,7 +768,7 @@ elif selected_window in window_mapping:
     render_match_cards(entry, "sp")
 
 elif selected_window == "📜 Общий Архив":
-  st.subheader("📜 История, результаты и аналитика проигранных матчей")
+  st.subheader("📜 История и результаты матчей")
   if st.button("🗑 Очистить архив"):
     st.session_state.history = []
     if os.path.exists(HISTORY_FILE):
