@@ -149,13 +149,11 @@ def fetch_real_web_data(sport_title):
 def extract_json_safely(text):
   if not text:
     return None
-  # 1. Прямая попытка парсинга
   try:
     return json.loads(text)
   except Exception:
     pass
 
-  # 2. Попытка вырезать из блоков ```json ... ```
   match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
   if match:
     try:
@@ -163,7 +161,6 @@ def extract_json_safely(text):
     except Exception:
       pass
 
-  # 3. Поиск первой '{' и последней '}'
   try:
     start = text.index("{")
     end = text.rindex("}") + 1
@@ -174,7 +171,7 @@ def extract_json_safely(text):
   return None
 
 
-# --- АНАЛИЗ С БЕЗОПАСНЫМ ПАРСИНГОМ ---
+# --- АНАЛИЗ С ПРИНУДИТЕЛЬНЫМ JSON ОТВЕТОМ ---
 def fetch_and_analyze_matches(
     groq_key, gemini_key, sport_title, sport_desc, is_strategy=False
 ):
@@ -188,7 +185,7 @@ def fetch_and_analyze_matches(
     Данные из сети:
     {web_context}
     
-    Верни СТРОГО валидный JSON без маркдауна (без ```json и без ```) со следующей структурой:
+    Верни JSON объект со следующей структурой:
     {{
       "matches": [
         {{
@@ -207,19 +204,16 @@ def fetch_and_analyze_matches(
 
   raw_text = ""
 
-  # 1. Пробуем Groq с автоперебором доступных моделей
+  # 1. Пробуем Groq с принудительным JSON-форматом ответа
   if groq_key:
     client = Groq(api_key=groq_key)
-    models_to_try = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "openai/gpt-oss-20b",
-    ]
+    models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
     for model_name in models_to_try:
       try:
         completion = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
             temperature=0.2,
         )
         raw_text = completion.choices[0].message.content
@@ -228,13 +222,16 @@ def fetch_and_analyze_matches(
       except Exception:
         continue
 
-  # 2. Резерв на Gemini
+  # 2. Резерв на Gemini с принудительным JSON
   if not raw_text and gemini_key:
     try:
       g_client = genai.Client(api_key=gemini_key)
       response = g_client.models.generate_content(
           model="gemini-2.5-flash",
           contents=prompt,
+          config=types.GenerateContentConfig(
+              response_mime_type="application/json"
+          ),
       )
       if response and response.text:
         raw_text = response.text.strip()
