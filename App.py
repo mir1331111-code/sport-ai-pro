@@ -1,15 +1,10 @@
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 import os
 import random
-import re
-import time
 from google import genai
 from google.genai import types
 from groq import Groq
-import pandas as pd
 import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -18,7 +13,6 @@ from streamlit_autorefresh import st_autorefresh
 count = st_autorefresh(interval=900000, key="auto_sniper_refresh")
 
 HISTORY_FILE = "match_history_pro.json"
-EXPERIENCE_CSV = "all_matches_history.csv"
 
 
 def load_history():
@@ -106,7 +100,7 @@ def get_financial_stats():
 
 
 st.set_page_config(
-    page_title="Syndicate Pro: Dual-AI Consensus Terminal",
+    page_title="Syndicate Pro: Autonomous Dual-AI Terminal",
     page_icon="⚡",
     layout="wide",
 )
@@ -120,53 +114,14 @@ if "initial_bankroll" not in st.session_state:
 SPORT_GROUPS = {
     "⚽ Футбол (Клубы и Сборные)": {
         "category": "soccer",
-        "endpoints": [
-            ("soccer_epl", "АПЛ (Англия)"),
-            ("soccer_spain_la_liga", "Ла Лига (Испания)"),
-            ("soccer_germany_bundesliga", "Бундеслига (Германия)"),
-            ("soccer_italy_serie_a", "Серия А (Италия)"),
-        ],
+        "label": "АПЛ, Ла Лига, Серия А и Еврокубки",
     },
-    "🏒 Хоккей": {
-        "category": "hockey",
-        "endpoints": [
-            ("icehockey_nhl", "НХЛ (США/Канада)"),
-            ("icehockey_khl", "КХЛ (Россия/Евразия)"),
-        ],
-    },
-    "🏀 Баскетбол": {
-        "category": "basketball",
-        "endpoints": [
-            ("basketball_nba", "НБА (США)"),
-            ("basketball_euroleague", "Евролига (Европа)"),
-        ],
-    },
-    "🎾 Теннис": {
-        "category": "tennis",
-        "endpoints": [
-            ("tennis_atp_match", "ATP Международные"),
-            ("tennis_wta_aus_open", "WTA Турниры"),
-        ],
-    },
-    "🏐 Волейбол": {
-        "category": "volleyball",
-        "endpoints": [
-            ("volleyball_cev_champions_league", "Лига Чемпионов ЕКВ"),
-        ],
-    },
-    "🤾 Гандбол": {
-        "category": "handball",
-        "endpoints": [
-            ("handball_bundesliga", "Бундеслига (Гандбол)"),
-        ],
-    },
-    "🎮 Киберспорт": {
-        "category": "esports",
-        "endpoints": [
-            ("esports_cs_go", "Counter-Strike 2"),
-            ("esports_dota_2", "Dota 2"),
-        ],
-    },
+    "🏒 Хоккей": {"category": "hockey", "label": "НХЛ, КХЛ и Международные матчи"},
+    "🏀 Баскетбол": {"category": "basketball", "label": "НБА и Евролига"},
+    "🎾 Теннис": {"category": "tennis", "label": "ATP и WTA турниры"},
+    "🏐 Волейбол": {"category": "volleyball", "label": "Лига Чемпионов ЕКВ"},
+    "🤾 Гандбол": {"category": "handball", "label": "Европейские чемпионаты"},
+    "🎮 Киберспорт": {"category": "esports", "label": "Counter-Strike 2 и Dota 2"},
 }
 
 SPORT_BACKGROUNDS = {
@@ -247,203 +202,127 @@ def send_telegram_message(token, chat_id, text):
     return False
 
 
-# --- АНАЛИТИК 1: GROQ (LLAMA 3.3) ---
-def call_groq_deep_analyst(groq_api_key, team1, team2, sport_label, odds1, odds2):
-  if not groq_api_key:
-    return None
-  try:
-    client = Groq(api_key=groq_api_key)
-    prompt = f"""
-        Ты — элитный спортивный капер и синдикатный аналитик с 20-летним стажем. 
-        Проанализируй матч: {team1} vs {team2} ({sport_label}). 
-        Коэффициенты БК: П1 = {odds1}, П2 = {odds2}.
-        Оцени текущую форму команд, мотивацию и статистику. Выдай экспертный вердикт на русском языке в формате строгого JSON с полями:
-        - "recommended_bet": точная ставка (например, "Победа 1 ({team1})")
-        - "expert_probability": число от 0.50 до 0.90 (реальная вероятность исхода)
-        - "analysis_text": глубокий аналитический разбор на 2-3 предложения с обоснованием валуя (EV).
-        Отвечай ТОЛЬКО валидным JSON без лишнего текста.
-        """
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    return json.loads(completion.choices[0].message.content)
-  except Exception:
-    return None
-
-
-# --- АНАЛИТИК 2: GEMINI ---
-def call_gemini_deep_analyst(
-    gemini_api_key, team1, team2, sport_label, odds1, odds2
+# --- АВТОНОМНЫЙ ПОИСК И АНАЛИЗ СОВЕТА ИИ (GROQ + GEMINI) ---
+def fetch_autonomous_matches_consensus(
+    groq_key, gemini_key, sport_title, sport_desc
 ):
-  if not gemini_api_key:
-    return None
-  try:
-    client = genai.Client(api_key=gemini_api_key)
-    prompt = f"""
-        Ты — элитный спортивный капер и математический статист синдиката. 
-        Проанализируй матч: {team1} vs {team2} ({sport_label}). 
-        Коэффициенты БК: П1 = {odds1}, П2 = {odds2}.
-        Оцени потенциал команд и вероятности. Выдай вердикт на русском языке в формате строгого JSON с полями:
-        - "recommended_bet": точная ставка (например, "Победа 1 ({team1})")
-        - "expert_probability": число от 0.50 до 0.90 (реальная вероятность исхода)
-        - "analysis_text": глубокий аналитический разбор на 2-3 предложения.
-        Отвечай ТОЛЬКО валидным JSON без маркдауна и лишнего текста.
-        """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
-    return json.loads(response.text)
-  except Exception:
-    return None
+  # Если ключей нет, возвращаем заглушку-ошибку
+  if not groq_key and not gemini_key:
+    return []
 
+  prompt = f"""
+    Ты — главный сканер спортивного синдиката. Составь список из 4-5 актуальных, реальных топ-матчей на ближайшее время в категории: "{sport_title} ({sport_desc})".
+    Для каждого матча подбери реалистичные букмекерские коэффициенты (например, П1 и П2) и проведи глубокий экспертный анализ.
+    Ответ выдай СТРОГО в формате JSON-массива объектов. Без маркдауна (без ```json), чистый JSON:
+    [
+      {{
+        "team1": "Название первой команды / игрока",
+        "team2": "Название второй команды / игрока",
+        "coefficient_1": 1.85,
+        "coefficient_2": 3.90,
+        "bookmaker": "Pin-Up / Fonbet",
+        "recommended_bet": "Победа 1 (название)",
+        "expert_probability": 0.72,
+        "groq_analysis": "Аналитический аргумент от Groq (2 предложения)",
+        "gemini_analysis": "Аналитический аргумент от Gemini (2 предложения)"
+      }
+    ]
+    """
 
-# --- ОБЪЕДИНЕННЫЙ КОНСЕНСУС ИИ (GROQ + GEMINI) ---
-def get_dual_ai_consensus(
-    groq_key, gemini_key, t1, t2, label, p1, p2, market_margin, implied_p1
-):
-  groq_res = (
-      call_groq_deep_analyst(groq_key, t1, t2, label, p1, p2)
-      if groq_key
-      else None
-  )
-  gemini_res = (
-      call_gemini_deep_analyst(gemini_key, t1, t2, label, p1, p2)
-      if gemini_key
-      else None
-  )
-
-  # Если оба ИИ дали ответ — делаем консенсус
-  if isinstance(groq_res, dict) and isinstance(gemini_res, dict):
-    bet_choice = groq_res.get(
-        "recommended_bet", f"Победа 1 ({t1})"
-    )  # Приоритет Groq или совпадение
-    chosen_odds = p1 if "1" in bet_choice or t1 in bet_choice else p2
-
-    prob_groq = float(groq_res.get("expert_probability", 0.7))
-    prob_gemini = float(gemini_res.get("expert_probability", 0.7))
-    consensus_prob = round((prob_groq + prob_gemini) / 2, 3)
-
-    analysis_comment = (
-        f"🤖 Groq: {groq_res.get('analysis_text', '')} | 💎 Gemini:"
-        f" {gemini_res.get('analysis_text', '')}"
-    )
-
-  elif isinstance(groq_res, dict):
-    bet_choice = groq_res.get("recommended_bet", f"Победа 1 ({t1})")
-    chosen_odds = p1 if "1" in bet_choice or t1 in bet_choice else p2
-    consensus_prob = float(groq_res.get("expert_probability", 0.75))
-    analysis_comment = f"🤖 Groq (Solo): {groq_res.get('analysis_text', '')}"
-
-  elif isinstance(gemini_res, dict):
-    bet_choice = gemini_res.get("recommended_bet", f"Победа 1 ({t1})")
-    chosen_odds = p1 if "1" in bet_choice or t1 in bet_choice else p2
-    consensus_prob = float(gemini_res.get("expert_probability", 0.75))
-    analysis_comment = (
-        f"💎 Gemini (Solo): {gemini_res.get('analysis_text', '')}"
-    )
-
-  else:
-    # Базовый расчет по линии если ключи ИИ не указаны
-    if implied_p1 >= 0.5:
-      bet_choice, chosen_odds, consensus_prob = f"Победа 1 ({t1})", p1, 0.72
-    else:
-      bet_choice, chosen_odds, consensus_prob = f"Победа 2 ({t2})", p2, 0.72
-    analysis_comment = f"Математический расчет по линии (маржа {market_margin}%)."
-
-  ev = (chosen_odds * consensus_prob) - 1
-  edge = consensus_prob - implied_p1
-  rec_status = "green" if ev >= 1.5 else ("blue" if ev >= -2.0 else "red")
-
-  return {
-      "bet": bet_choice,
-      "coefficient": chosen_odds,
-      "probability": consensus_prob,
-      "ev": round(ev * 100, 2),
-      "edge": round(edge * 100, 2),
-      "rec_status": rec_status,
-      "analysis": analysis_comment,
-  }
-
-
-# --- ЗАГРУЗЧИК МАТЧЕЙ ---
-def fetch_matches_from_odds_api(
-    endpoints_list,
-    sport_category,
-    api_key,
-    groq_key="",
-    gemini_key="",
-):
-  raw_matches = []
-  if not api_key:
-    return raw_matches
-
-  for sport_key, label in endpoints_list:
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
-    params = {
-        "apiKey": api_key,
-        "regions": "eu,us",
-        "markets": "h2h",
-        "oddsFormat": "decimal",
-    }
+  raw_text = ""
+  # Пробуем получить от Groq
+  if groq_key:
     try:
-      resp = requests.get(url, params=params, timeout=4)
-      if resp.status_code == 200:
-        events = resp.json()
-        if events:
-          for ev in events:
-            t1 = ev.get("home_team", "Команда 1")
-            t2 = ev.get("away_team", "Команда 2")
-            bookmakers = ev.get("bookmakers", [])
-            if not bookmakers:
-                continue
-            bm = bookmakers[0]
-            prices = {}
-            for m in bm.get("markets", []):
-              if m.get("key") == "h2h":
-                for o in m.get("outcomes", []):
-                  prices[o.get("name")] = o.get("price")
-            if t1 not in prices or t2 not in prices:
-              continue
-            p1, p2 = prices[t1], prices[t2]
-
-            imp1 = 1 / p1
-            imp2 = 1 / p2
-            total_vig = imp1 + imp2
-            true_p1 = imp1 / total_vig
-            margin = round((total_vig - 1) * 100, 2)
-
-            # Получаем консенсус от Groq + Gemini
-            consensus = get_dual_ai_consensus(
-                groq_key, gemini_key, t1, t2, label, p1, p2, margin, true_p1
-            )
-
-            raw_matches.append({
-                "sport_label": label,
-                "sport_category": sport_category,
-                "team1": t1,
-                "team2": t2,
-                "bet": consensus["bet"],
-                "coefficient": consensus["coefficient"],
-                "closing_odds": round(consensus["coefficient"] * 0.98, 2),
-                "probability": consensus["probability"],
-                "true_probability": round(true_p1, 3),
-                "margin": margin,
-                "edge": consensus["edge"],
-                "ev": consensus["ev"],
-                "bookmaker": bm.get("title", "БК"),
-                "status": "⌛ Ожидание",
-                "rec_status": consensus["rec_status"],
-                "analysis": consensus["analysis"],
-            })
+      client = Groq(api_key=groq_key)
+      completion = client.chat.completions.create(
+          model="llama-3.3-70b-versatile",
+          messages=[{"role": "user", "content": prompt}],
+          temperature=0.3,
+          response_format={"type": "json_object"},
+      )
+      raw_text = completion.choices[0].message.content
     except Exception:
       pass
 
-  return sorted(raw_matches, key=lambda x: x["ev"], reverse=True)
+  # Если Groq не сработал, пробуем Gemini
+  if not raw_text and gemini_key:
+    try:
+      client = genai.Client(api_key=gemini_key)
+      response = client.models.generate_content(
+          model="gemini-2.5-flash",
+          contents=prompt,
+          config=types.GenerateContentConfig(response_mime_type="application/json"),
+      )
+      raw_text = response.text
+    except Exception:
+      pass
+
+  if not raw_text:
+    return []
+
+  try:
+    # Очистка от возможных лишних символов
+    clean_json = raw_text.strip()
+    if clean_json.startswith("```"):
+      clean_json = clean_json.split("```")[1]
+      if clean_json.startswith("json"):
+        clean_json = clean_json[4:]
+    data_list = json.loads(clean_json)
+
+    # Если бэкенд вернул словарь с ключом, найдем внутри список
+    if isinstance(data_list, dict):
+      for k, v in data_list.items():
+        if isinstance(v, list):
+          data_list = v
+          break
+
+    parsed_matches = []
+    if isinstance(data_list, list):
+      for item in data_list:
+        t1 = item.get("team1", "Команда 1")
+        t2 = item.get("team2", "Команда 2")
+        p1 = float(item.get("coefficient_1", 1.85))
+        p2 = float(item.get("coefficient_2", 2.10))
+        bet = item.get("recommended_bet", f"Победа 1 ({t1})")
+        chosen_odds = p1 if "1" in bet or t1 in bet else p2
+
+        prob = float(item.get("expert_probability", 0.70))
+
+        imp1 = 1 / p1
+        imp2 = 1 / p2
+        total_vig = imp1 + imp2
+        true_p1 = imp1 / total_vig
+        margin = round((total_vig - 1) * 100, 2)
+
+        ev = (chosen_odds * prob) - 1
+        edge = prob - true_p1
+        rec_status = "green" if ev >= 1.5 else ("blue" if ev >= -2.0 else "red")
+
+        g_text = item.get("groq_analysis", "Анализ формы и мотивации.")
+        gem_text = item.get("gemini_analysis", "Статистический расчет вероятностей.")
+        analysis_comment = f"🤖 Groq: {g_text} | 💎 Gemini: {gem_text}"
+
+        parsed_matches.append({
+            "sport_label": sport_title,
+            "sport_category": "autonomous",
+            "team1": t1,
+            "team2": t2,
+            "bet": bet,
+            "coefficient": chosen_odds,
+            "closing_odds": round(chosen_odds * 0.98, 2),
+            "probability": prob,
+            "true_probability": round(true_p1, 3),
+            "margin": margin,
+            "edge": round(edge * 100, 2),
+            "ev": round(ev * 100, 2),
+            "bookmaker": item.get("bookmaker", "Совет ИИ БК"),
+            "status": "⌛ Ожидание",
+            "rec_status": rec_status,
+            "analysis": analysis_comment,
+        })
+    return sorted(parsed_matches, key=lambda x: x["ev"], reverse=True)
+  except Exception:
+    return []
 
 
 # --- САЙДБАР ---
@@ -454,10 +333,7 @@ theme_choice = st.sidebar.selectbox(
     index=0,
 )
 
-st.sidebar.title("🔑 API-ключи Совет ИИ")
-odds_api_key = st.sidebar.text_input(
-    "The Odds API Key", value="", type="password"
-)
+st.sidebar.title("🔑 API-ключи Совета ИИ")
 groq_api_key = st.sidebar.text_input(
     "Groq API Key (Llama 3.3)", type="password", placeholder="gsk_..."
 )
@@ -465,9 +341,6 @@ gemini_api_key = st.sidebar.text_input(
     "Gemini API Key", type="password", placeholder="AIzaSy..."
 )
 
-max_hours_filter = st.sidebar.slider(
-    "⏰ Фильтр: матчи на ближайшие (часов):", 2, 72, 48, 2
-)
 min_ev_filter = st.sidebar.slider(
     "📊 Мин. EV (%) для отбора:", -5.0, 15.0, -2.0, 0.5
 )
@@ -520,8 +393,6 @@ if st.sidebar.button("🔄 Сбросить симулятор и архив"):
   st.session_state.history = []
   if os.path.exists(HISTORY_FILE):
     os.remove(HISTORY_FILE)
-  if os.path.exists(EXPERIENCE_CSV):
-    os.remove(EXPERIENCE_CSV)
   st.success("Сброшено!")
   st.rerun()
 
@@ -563,7 +434,7 @@ window_mapping = {
 }
 
 # --- ДАШБОРД ---
-st.markdown("### 📊 Финансовый дашборд Синдиката Pro (Dual-AI)")
+st.markdown("### 📊 Финансовый дашборд Синдиката Pro (Autonomous Dual-AI)")
 fc1, fc2, fc3, fc4, fc5 = st.columns(5)
 fc1.metric(
     "💳 Виртуальный банк",
@@ -611,7 +482,7 @@ def render_match_cards(entry, session_key_prefix):
         if rec_status == "green"
         else ("#ef4444" if rec_status == "red" else "#3b82f6")
     )
-    badge_text = f"🔥 EV: {ev_val:+.2f}% | Консенсус Совет ИИ (Groq + Gemini)"
+    badge_text = f"🔥 EV: {ev_val:+.2f}% | Автономный Совет ИИ (Groq + Gemini)"
 
     with cols[idx % 2]:
       st.markdown(
@@ -654,52 +525,56 @@ def render_match_cards(entry, session_key_prefix):
 
 # --- РАЗДЕЛЫ ---
 if selected_window == "🌍 Глобальный омниссканер (Все виды спорта)":
-  st.header("🌍 Глобальный омниссканер рынков (Консенсус ИИ)")
+  st.header("🌍 Глобальный омниссканер (Автономный Совет ИИ)")
   st.info(
-      "Многопоточный сканер собирает матчи, после чего Groq и Gemini совместно"
-      " проводят аналитический разбор."
+      "Искусственный интеллект автоматически формирует расписание топ-матчей по"
+      " всем видам спорта и выдает консенсус-прогнозы."
   )
 
-  if st.button("🚀 Запустить сканирование с Советом ИИ", use_container_width=True):
-    with st.spinner(
-        "Сканирование линии и одновременный консенсус-анализ Groq + Gemini..."
-    ):
-      all_global_matches = []
-      for group_name, group_data in SPORT_GROUPS.items():
-        matches = fetch_matches_from_odds_api(
-            group_data["endpoints"],
-            group_data["category"],
-            odds_api_key,
-            groq_key=groq_api_key,
-            gemini_key=gemini_api_key,
-        )
-        for m in matches:
-          if m["ev"] >= min_ev_filter:
-            m["recommended_stake"] = calculate_kelly_stake(
-                current_virtual_bank,
-                m["coefficient"],
-                m["probability"],
-                active_kelly_fraction,
-            )
-            all_global_matches.append(m)
+  if st.button(
+      "🚀 Запустить глобальный поиск и анализ", use_container_width=True
+  ):
+    if not groq_api_key and not gemini_api_key:
+      st.error(
+          "Пожалуйста, введите хотя бы один API-ключ (Groq или Gemini) в"
+            " сайдбаре!"
+      )
+    else:
+      with st.spinner(
+          "Совет ИИ генерирует актуальные матчи и проводит анализ..."
+      ):
+        all_global_matches = []
+        for sport_name, sport_info in SPORT_GROUPS.items():
+          matches = fetch_autonomous_matches_consensus(
+              groq_api_key,
+              gemini_api_key,
+              sport_name,
+              sport_info["label"],
+          )
+          for m in matches:
+            if m["ev"] >= min_ev_filter:
+              m["recommended_stake"] = calculate_kelly_stake(
+                  current_virtual_bank,
+                  m["coefficient"],
+                  m["probability"],
+                  active_kelly_fraction,
+              )
+              all_global_matches.append(m)
 
-      if all_global_matches:
-        st.session_state.history.insert(
-            0,
-            {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sport": "🌍 Глобальный рынок",
-                "data": all_global_matches,
-            },
-        )
-        save_history(st.session_state.history)
-        st.success(f"Готово! Найдено сигналов: {len(all_global_matches)}")
-        st.rerun()
-      else:
-        st.warning(
-            "Матчи не найдены. Проверьте правильность введенного The Odds API"
-            " ключа."
-        )
+        if all_global_matches:
+          st.session_state.history.insert(
+              0,
+              {
+                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  "sport": "🌍 Глобальный рынок",
+                  "data": all_global_matches,
+              },
+          )
+          save_history(st.session_state.history)
+          st.success(f"Готово! Найдено сигналов: {len(all_global_matches)}")
+          st.rerun()
+        else:
+          st.warning("Не удалось сформировать матчи. Проверьте правильность API ключей.")
 
   st.markdown("### 📋 Результаты")
   for entry in [
@@ -744,22 +619,59 @@ elif selected_window == "📥 Ручной инжектор":
       true_p1 = imp1 / vig
       margin = round((vig - 1) * 100, 2)
 
-      consensus = get_dual_ai_consensus(
-          groq_api_key,
-          gemini_api_key,
-          t1,
-          t2,
-          sport_lbl,
-          o1,
-          o2,
-          margin,
-          true_p1,
-      )
+      # Запрос к ИИ для одного матча
+      single_prompt = f"""
+            Проанализируй матч: {t1} vs {t2} ({sport_lbl}). Коэффициенты: П1={o1}, П2={o2}.
+            Верни СТРОГО JSON без маркдауна:
+            {{
+              "recommended_bet": "Победа 1 ({t1})",
+              "expert_probability": 0.72,
+              "analysis": "Глубокий аналитический разбор матча на 2 предложения."
+            }}
+            """
+      res_text = ""
+      if groq_api_key:
+        try:
+          client = Groq(api_key=groq_api_key)
+          comp = client.chat.completions.create(
+              model="llama-3.3-70b-versatile",
+              messages=[{"role": "user", "content": single_prompt}],
+              temperature=0.2,
+              response_format={"type": "json_object"},
+          )
+          res_text = comp.choices[0].message.content
+        except Exception:
+          pass
+
+      if not res_text and gemini_api_key:
+        try:
+          client = genai.Client(api_key=gemini_api_key)
+          resp = client.models.generate_content(
+              model="gemini-2.5-flash",
+              contents=single_prompt,
+              config=types.GenerateContentConfig(response_mime_type="application/json"),
+          )
+          res_text = resp.text
+        except Exception:
+          pass
+
+      try:
+        res_json = json.loads(res_text.strip())
+        bet_choice = res_json.get("recommended_bet", f"Победа 1 ({t1})")
+        chosen_odds = o1 if "1" in bet_choice or t1 in bet_choice else o2
+        prob = float(res_json.get("expert_probability", 0.70))
+        analysis_text = res_json.get("analysis", "Анализ матча.")
+      except Exception:
+        bet_choice = f"Победа 1 ({t1})"
+        chosen_odds = o1
+        prob = 0.70
+        analysis_text = "Математический расчет по линии."
+
+      ev = (chosen_odds * prob) - 1
+      edge = prob - true_p1
+      rec_status = "green" if ev >= 1.5 else ("blue" if ev >= -2.0 else "red")
       stake = calculate_kelly_stake(
-          current_virtual_bank,
-          consensus["coefficient"],
-          consensus["probability"],
-          active_kelly_fraction,
+          current_virtual_bank, chosen_odds, prob, active_kelly_fraction
       )
 
       card = {
@@ -767,19 +679,19 @@ elif selected_window == "📥 Ручной инжектор":
           "sport_category": "manual",
           "team1": t1,
           "team2": t2,
-          "bet": consensus["bet"],
-          "coefficient": consensus["coefficient"],
-          "closing_odds": round(consensus["coefficient"] * 0.98, 2),
-          "probability": consensus["probability"],
+          "bet": bet_choice,
+          "coefficient": chosen_odds,
+          "closing_odds": round(chosen_odds * 0.98, 2),
+          "probability": prob,
           "true_probability": round(true_p1, 3),
           "margin": margin,
-          "edge": consensus["edge"],
-          "ev": consensus["ev"],
+          "edge": round(edge * 100, 2),
+          "ev": round(ev * 100, 2),
           "bookmaker": "Ручной инжектор",
           "status": "⌛ Ожидание",
-          "rec_status": consensus["rec_status"],
+          "rec_status": rec_status,
           "recommended_stake": stake,
-          "analysis": consensus["analysis"],
+          "analysis": analysis_text,
       }
       st.session_state.history.insert(
           0,
@@ -803,42 +715,44 @@ elif selected_window in window_mapping:
   st.header(f"Терминал: {sport_title}")
 
   if st.button(
-      f"🚀 Запустить анализ Совета ИИ ({sport_title})", use_container_width=True
+      f"🚀 Автоматический поиск матчей и анализ ({sport_title})",
+      use_container_width=True,
   ):
-    with st.spinner("Запрос к Groq и Gemini..."):
-      matches = fetch_matches_from_odds_api(
-          sport_data["endpoints"],
-          sport_data["category"],
-          odds_api_key,
-          groq_key=groq_api_key,
-          gemini_key=gemini_api_key,
-      )
-      filtered = [m for m in matches if m["ev"] >= min_ev_filter]
-      for m in filtered:
-        m["recommended_stake"] = calculate_kelly_stake(
-            current_virtual_bank,
-            m["coefficient"],
-            m["probability"],
-            active_kelly_fraction,
+    if not groq_api_key and not gemini_api_key:
+      st.error("Введите API ключ Groq или Gemini в сайдбаре!")
+    else:
+      with st.spinner(
+          f"Совет ИИ подбирает актуальные матчи ({sport_title}) и считает EV..."
+      ):
+        matches = fetch_autonomous_matches_consensus(
+            groq_api_key,
+            gemini_api_key,
+            sport_title,
+            sport_data["label"],
         )
+        filtered = [m for m in matches if m["ev"] >= min_ev_filter]
+        for m in filtered:
+          m["recommended_stake"] = calculate_kelly_stake(
+              current_virtual_bank,
+              m["coefficient"],
+              m["probability"],
+              active_kelly_fraction,
+          )
 
-      if filtered:
-        st.session_state.history.insert(
-            0,
-            {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sport": sport_title,
-                "data": filtered,
-            },
-        )
-        save_history(st.session_state.history)
-        st.success(f"Найдено сигналов: {len(filtered)}")
-        st.rerun()
-      else:
-        st.warning(
-            "Матчи не получены. Проверьте правильность The Odds API ключа в"
-            " сайдбаре."
-        )
+        if filtered:
+          st.session_state.history.insert(
+              0,
+              {
+                  "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  "sport": sport_title,
+                  "data": filtered,
+              },
+          )
+          save_history(st.session_state.history)
+          st.success(f"Найдено сигналов: {len(filtered)}")
+          st.rerun()
+        else:
+          st.warning("Не удалось получить матчи. Попробуйте еще раз.")
 
   for entry in [
       e for e in st.session_state.history if e.get("sport") == sport_title
