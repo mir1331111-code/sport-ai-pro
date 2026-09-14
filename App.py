@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 from scipy.stats import poisson
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.model_selection import train_test_split
 import json
 import os
 import datetime
@@ -56,6 +55,58 @@ if st.sidebar.button("🔄 Сбросить банк к 10 000"):
     st.sidebar.success("Банк сброшен!")
     st.rerun()
 
+# --- ФУНКЦИЯ АВТОМАТИЧЕСКОГО ОБНОВЛЕНИЯ РЕЗУЛЬТАТОВ ЧЕРЕЗ API ---
+def update_pending_results(odds_key):
+    pending_bets = [b for b in st.session_state.app_data["bets"] if b["status"] == "pending"]
+    if not pending_bets:
+        return "Нет активных ставок для проверки."
+    
+    leagues_to_check = set(b.get("league") for b in pending_bets if "league" in b)
+    updated_count = 0
+
+    for league in leagues_to_check:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
+        params = {'apiKey': odds_key, 'daysFrom': 3}
+        try:
+            res = requests.get(url, params=params, timeout=8)
+            if res.status_code == 200:
+                events = res.json()
+                for ev in events:
+                    if ev.get('completed'):
+                        ev_home = ev.get('home_team')
+                        ev_away = ev.get('away_team')
+                        scores = ev.get('scores', [])
+                        if len(scores) == 2:
+                            home_score, away_score = None, None
+                            for s in scores:
+                                if s['name'] == ev_home:
+                                    home_score = int(s['score'])
+                                elif s['name'] == ev_away:
+                                    away_score = int(s['score'])
+                            
+                            if home_score is not None and away_score is not None:
+                                if home_score > away_score:
+                                    winner = "П1"
+                                elif home_score == away_score:
+                                    winner = "Ничья (X)"
+                                else:
+                                    winner = "П2"
+                                
+                                for idx, b in enumerate(st.session_state.app_data["bets"]):
+                                    if b["status"] == "pending" and b.get("home") == ev_home and b.get("away") == ev_away:
+                                        if b["pick"] == winner:
+                                            st.session_state.app_data["bets"][idx]["status"] = "won"
+                                            profit = b['stake'] * b['odd'] - b['stake']
+                                            st.session_state.app_data["bank"] += profit + b['stake']
+                                        else:
+                                            st.session_state.app_data["bets"][idx]["status"] = "lost"
+                                        updated_count += 1
+        except:
+            pass
+
+    save_history(st.session_state.app_data)
+    return f"Готово! Обновлено статусов матчей: {updated_count}"
+
 # --- КЛАСС АНАЛИЗА ---
 class UltimateBot:
     def __init__(self, odds_key, hours_limit):
@@ -66,7 +117,6 @@ class UltimateBot:
         self.elo_ratings = {}
 
     def fetch_fixtures(self):
-        # Расширенный список лиг: Топ-5 Европы + США (MLS) + Бразилия + Россия (РПЛ)
         leagues = [
             'soccer_epl',                # АПЛ (Англия)
             'soccer_spain_la_liga',      # Ла Лига (Испания)
@@ -142,7 +192,7 @@ with tab1:
         if not odds_api_key:
             st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
         else:
-            with st.spinner(f"Поиск матчей в топ-лигах, США, Бразилии и РПЛ на ближайшие {hours_ahead} ч..."):
+            with st.spinner(f"Поиск матчей на ближайшие {hours_ahead} ч..."):
                 bot = UltimateBot(odds_api_key, hours_ahead)
                 bot.prepare_model()
                 matches = bot.fetch_fixtures()
@@ -160,14 +210,12 @@ with tab1:
                         
                         p_h, p_d, p_a = bot.predict_poisson(h_lam, a_lam)
                         
-                        impl_h, impl_d, impl_a = 1/bh, 1/bd, 1/ba
                         edges = [("П1", p_h, bh, (p_h * bh) - 1), 
                                  ("Ничья (X)", p_d, bd, (p_d * bd) - 1), 
                                  ("П2", p_a, ba, (p_a * ba) - 1)]
                         
                         best_edge = max(edges, key=lambda x: x[3])
                         
-                        # Цветовая индикация ИИ (Светофор)
                         if best_edge[3] > 0.05:
                             status = "green"
                             ai_text = f"💎 Gemini & ⚡ Grok: Полное согласие. Найдена надежная валуйная ставка на **{best_edge[0]}** с перевесом +{best_edge[3]*100:.1f}%."
@@ -185,15 +233,12 @@ with tab1:
                             'status': status, 'ai_text': ai_text
                         })
                     
-                    # Сортируем: Самые выгодные исходы поднимаем ВВЕРХ
                     analyzed_matches = sorted(analyzed_matches, key=lambda x: x['best_edge'][3], reverse=True)
-                    
                     st.success(f"Найдено матчей в выбранном диапазоне: {len(analyzed_matches)}")
                     st.session_state.current_board = analyzed_matches
                 else:
                     st.info(f"В выбранном диапазоне (ближайшие {hours_ahead} ч.) матчей не обнаружено.")
 
-    # Вывод карточек матчей
     if "current_board" in st.session_state:
         st.markdown(f"### 🏆 Рекомендации матчей (Ближайшие {hours_ahead} ч., отсортированы по выгоде)")
         for idx, m in enumerate(st.session_state.current_board):
@@ -228,6 +273,9 @@ with tab1:
                     if st.button(f"Поставить 100 у.е.", key=f"bet_{idx}"):
                         bet_record = {
                             "match": f"{m['home']} vs {m['away']}",
+                            "home": m['home'],
+                            "away": m['away'],
+                            "league": m['league'],
                             "pick": m['best_edge'][0],
                             "odd": m['best_edge'][2],
                             "stake": STAKE_SIZE,
@@ -240,11 +288,22 @@ with tab1:
 
 with tab2:
     st.markdown("### 📊 Статистика и история ставок")
+    
+    # КНОПКА АВТОМАТИЧЕСКОГО ОБНОВЛЕНИЯ
+    if st.button("🔄 Авто-обновить результаты матчей через API"):
+        if not odds_api_key:
+            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
+        else:
+            with st.spinner("Сверяем завершенные матчи с букмекерской базой..."):
+                msg = update_pending_results(odds_api_key)
+                st.success(msg)
+                st.rerun()
+
     history_data = st.session_state.app_data
     total_bank = history_data["bank"]
     bets_list = history_data["bets"]
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Текущий баланс", f"{total_bank:.2f} у.е.")
     col2.metric("Всего ставок", len(bets_list))
     
@@ -269,15 +328,16 @@ with tab2:
         with st.container():
             st.write(f"**{b['match']}** | Выбор: **{b['pick']}** (Кэф: {b['odd']}) | Ставка: {b['stake']} у.е. | Статус: **{status_text}**")
             
+            # Ручная корректировка тоже осталась на всякий случай
             if b["status"] == "pending":
                 c_win, c_loss = st.columns(2)
-                if c_win.button("✅ Отметить как ВЫИГРЫШ", key=f"win_{real_idx}"):
+                if c_win.button("✅ Вручную: Выигрыш", key=f"win_{real_idx}"):
                     profit = b['stake'] * b['odd'] - b['stake']
                     st.session_state.app_data["bank"] += profit + b['stake']
                     st.session_state.app_data["bets"][real_idx]["status"] = "won"
                     save_history(st.session_state.app_data)
                     st.rerun()
-                if c_loss.button("❌ Отметить как ПРОИГРЫШ", key=f"loss_{real_idx}"):
+                if c_loss.button("❌ Вручную: Проигрыш", key=f"loss_{real_idx}"):
                     st.session_state.app_data["bets"][real_idx]["status"] = "lost"
                     save_history(st.session_state.app_data)
                     st.rerun()
@@ -286,8 +346,8 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ Как работает система")
     st.write("""
+    - **Авто-обновление результатов:** Кнопка во вкладке статистики сама проверяет через API матчи за последние 3 дня и закрывает ставки.
     - **Широкий охват:** Топ-лиги Европы, MLS (США), Бразилия и РПЛ (Россия).
-    - **Бегунок времени:** Фильтрация матчей строго на выбранный период (например, на ближайшие 12-24 часа).
-    - **Цветовая индикация:** 🟢 Зеленый — одобрено ИИ, 🔵 Синий — сомнения/риск, 🔴 Красный — отказ.
-    - **Банк и история:** Виртуальный банк 10,000 у.е. Данные сохраняются локально в `history.json` и не стираются при перезагрузках.
+    - **Бегунок времени:** Фильтрация матчей на выбранный период.
+    - **Банк и история:** Виртуальный банк 10,000 у.е., сохраняется в файл `bet_history.json`.
     """)
