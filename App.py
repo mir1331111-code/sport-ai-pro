@@ -97,7 +97,6 @@ def ts_league_events(lid):
     return out
 @st.cache_data(ttl=3600)
 def tennis_data_csv():
-    """Реальные результаты ATP/WTA С КОЭФФИЦИЕНТАМИ букмекеров"""
     rows=[]; rep=[]
     y=datetime.now().year
     for year in (y,y-1):
@@ -253,7 +252,8 @@ def osp_sport(allst,sport):
         allst[sport]={"bank":5000.0,"bets":[],"stats":{"won":0,"lost":0,"profit":0}}
     return allst[sport]
 
-# ================= HTML =================
+# ================= HTML (защищённый) =================
+DEF_P={"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0}
 def mrows_html(markets):
     out="<div class='mrow hdr'><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>"
     for m in markets:
@@ -263,25 +263,28 @@ def mrows_html(markets):
 def form_html(s):
     return "".join(f"<b class='{'w' if ch=='В' else 'l'}'>{ch}</b>" for ch in s)
 def verdict_html(P,thr):
-    mk=sorted(P["markets"],key=lambda m:-m["p"])
-    main,alt,avoid=mk[0],mk[1],min(mk,key=lambda m:m["p"])
+    mk=sorted(P.get("markets") or [],key=lambda m:-m.get("p",0))
+    if len(mk)<2:
+        return "<div class='verdict'>🤖 Недостаточно данных для вердикта по этому матчу.</div>"
+    elo=P.get("elo") or (0,0)
+    main,alt,avoid=mk[0],mk[1],min(mk,key=lambda m:m.get("p",0))
     hot=" 🔥" if main["p"]>=thr else ""
     line=(f"🤖 <b>Вердикт:</b> ✅ <b class='y'>{main['name']}</b> (P {main['p']*100:.0f}%, ставить при кэфе ≥ {main['min_ok']:.2f}){hot} · "
           f"🔁 <b class='g'>{alt['name']}</b> (P {alt['p']*100:.0f}%) · ⛔ <b class='r'>{avoid['name']}</b>")
-    why=(f"Elo {P['elo'][0]} vs {P['elo'][1]} · форма {P['fh']} против {P['fa']} · H2H: {P['h2h']} · {P['extra']}")
+    why=(f"Elo {elo[0]} vs {elo[1]} · форма {P.get('fh','—')} против {P.get('fa','—')} · H2H: {P.get('h2h','—')} · {P.get('extra','')}")
     return f"<div class='verdict'>{line}<br><span style='color:#cbd5e1'>{why}</span></div>"
 def card_html(c,thr):
-    P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
-    hot=any(m["p"]>=thr for m in P["markets"])
+    P=c.get("P") or DEF_P
+    hot=any(m["p"]>=thr for m in (P.get("markets") or []))
     badge=f"<span class='badge hot'>🔥 P≥{thr*100:.0f}%</span>" if hot else "<span class='badge no'>фон</span>"
-    src="🌐 API" if c["src"]=="api" else ("🎾 tennis-data" if c["src"]=="td" else "📁 CSV")
+    src="🌐 API" if c.get("src")=="api" else ("🎾 tennis-data" if c.get("src")=="td" else "📁 CSV")
     return ("<div class='mcard "+("value' " if hot else "' ")+"><div class='mhead'>"
-        "<span class='chip'>"+c["league"]+"</span><span class='chip when'>📅 "+c["date"]+" · "+c["when"]+"</span>"
+        "<span class='chip'>"+str(c.get("league",""))+"</span><span class='chip when'>📅 "+str(c.get("date",""))+" · "+str(c.get("when",""))+"</span>"
         "<span class='chip src'>"+src+"</span>"+badge+"</div>"
-        "<div class='teams'>"+c["h"]+" <span>—</span> "+c["a"]+"</div>"
+        "<div class='teams'>"+str(c.get("h",""))+" <span>—</span> "+str(c.get("a",""))+"</div>"
         +verdict_html(P,thr)
-        +f"<div class='meta'>форма: {form_html(P['fh'])} <span style='color:#475569'>vs</span> {form_html(P['fa'])} · 📚 игр в базе: <b>{P['games']}</b></div>"
-        +mrows_html(P["markets"])+
+        +f"<div class='meta'>форма: {form_html(P.get('fh','—'))} <span style='color:#475569'>vs</span> {form_html(P.get('fa','—'))} · 📚 игр в базе: <b>{P.get('games',0)}</b></div>"
+        +mrows_html(P.get("markets") or [])+
         "</div>")
 
 LEAGUES_ALL=ts_all_leagues()
@@ -290,6 +293,7 @@ LEAGUES_ALL=ts_all_leagues()
 def render_sport(sport):
     cfg=SPORTS[sport]
     ALL=osp_load(); S=osp_sport(ALL,sport)
+    today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
     sub=st.tabs(["🛰 Сканер","💼 Портфель","📈 Статистика","🧪 Бэктест"])
     with sub[0]:
         opts=sorted([l for l in LEAGUES_ALL if l.get("strSport")==cfg["tsdb"]],key=lambda x:x.get("strLeague",""))
@@ -310,7 +314,6 @@ def render_sport(sport):
             st.cache_data.clear()
             st.rerun()
         if st.button(f"⚡ СКАН {cfg['icon']}",type="primary",key=f"scan{sport}"):
-            today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
             limit=today+timedelta(days=days)
             rows=[]; seen=set(); diag={}
             prog=st.progress(0.0,text="🔎 Матчи по дням (все лиги вида)...")
@@ -320,14 +323,24 @@ def render_sport(sport):
                     if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
                 prog.progress((off+1)/days*0.4)
             diag["eventsday"]=len(rows)
-            prog.progress(0.5,text="📅 Расписание лиг списка...")
-            pool=resolved or opts[:6]
-            if sport=="Tennis": pool=opts[:10]
-            with ThreadPoolExecutor(max_workers=6) as ex:
-                for d in ex.map(ts_league_events,[o["idLeague"] for o in pool]):
-                    for r in d:
-                        if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
-            diag["league_next"]=len(rows)-diag["eventsday"]
+            prog.progress(0.5,text="📅 Расписание лиг...")
+            if sport=="Tennis":
+                rid={o["idLeague"] for o in resolved}
+                pool=resolved+[o for o in opts if o["idLeague"] not in rid][:20]
+            else:
+                pool=resolved or opts[:6]
+            ids_pool=[o["idLeague"] for o in pool]
+            per={}
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                res=list(ex.map(ts_league_events,ids_pool))
+            for lid,d in zip(ids_pool,res):
+                nxt=0
+                for r in d:
+                    if r["id"] not in seen:
+                        seen.add(r["id"]); rows.append(r)
+                        if r["hs"] is None: nxt+=1
+                if nxt: per[str(lid)]=nxt
+            diag["leagues_with_next"]=per if per else "ни одна лига не вернула будущих матчей"
             prog.progress(0.65,text="📚 История для обучения...")
             ids=[o["idLeague"] for o in opts if f"{o['strLeague']} (id {o['idLeague']})" in sel]
             with ThreadPoolExecutor(max_workers=4) as ex:
@@ -358,7 +371,7 @@ def render_sport(sport):
                 cards.append({"eid":r["id"],"league":r["league"] or sport,"src":r["src"],
                     "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),"when":when,
                     "P":eng.predict(r["h"],r["a"])})
-            cards.sort(key=lambda c:(any(m["p"]>=thr for m in c.get("P",{"markets":[]})["markets"]),c["date"]),reverse=True)
+            cards.sort(key=lambda c:(any(m["p"]>=thr for m in (c.get("P") or DEF_P).get("markets",[])),c["date"]),reverse=True)
             prog.empty()
             st.session_state["cards_"+sport]=cards
             st.session_state["trained_"+sport]=len(past)
@@ -367,22 +380,22 @@ def render_sport(sport):
         diag=st.session_state.get("diag_"+sport,{})
         if diag:
             with st.expander("🔌 Диагностика источников"):
-                for k,v in diag.items(): st.text(f"{k}: {v} событий")
+                for k,v in diag.items():
+                    if isinstance(v,dict):
+                        st.text(f"{k}:")
+                        for kk,vv in v.items(): st.text(f"   лига {kk}: {vv} будущих матчей")
+                    else: st.text(f"{k}: {v}")
                 for line in st.session_state.get("tdrep_"+sport,[]): st.text(line)
-        cards=[c for c in st.session_state.get("cards_"+sport,[]) if "P" in c]
-        if len(cards)!=len(st.session_state.get("cards_"+sport,[])):
-            st.warning("🧹 Старые данные очищены — запусти СКАН заново для актуальных карточек.")
-            st.session_state["cards_"+sport]=cards
+        cards=[c for c in st.session_state.get("cards_"+sport,[]) if isinstance(c,dict) and isinstance(c.get("P"),dict)]
         tr=st.session_state.get("trained_"+sport,0)
         if cards:
             st.caption(f"Обучено матчей: {tr} · событий в окне: {len(cards)}")
-            hot_cards=[c for c in cards if any(m["p"]>=thr for m in c.get("P",{"markets":[]})["markets"])]
+            hot_cards=[c for c in cards if any(m["p"]>=thr for m in c["P"].get("markets",[]))]
             if hot_cards:
                 st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
                 bank=S["bank"]
                 for i,c in enumerate(hot_cards[:8],1):
-                    P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
-                    mk=max(P["markets"],key=lambda m:m["p"])
+                    P=c["P"]; mk=max(P["markets"],key=lambda m:m["p"])
                     stars="⭐⭐⭐⭐⭐" if mk["p"]>=0.70 else ("⭐⭐⭐⭐" if mk["p"]>=0.65 else "⭐⭐⭐")
                     stake=round(bank*0.01,2)
                     st.markdown(f"<div class='mcard value'><div class='mhead'><span class='chip'>{c['league']}</span>"
@@ -393,13 +406,18 @@ def render_sport(sport):
                         f"<span style='color:#cbd5e1'>Elo {P['elo'][0]} vs {P['elo'][1]} · форма {P['fh']} / {P['fa']} · H2H: {P['h2h']} · {P['extra']}</span></div></div>",
                         unsafe_allow_html=True)
             for c in cards:
-                st.markdown(card_html(c,thr),unsafe_allow_html=True)
-                P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
+                P=c.get("P") or DEF_P
+                try:
+                    html=card_html(c,thr)
+                except Exception as e:
+                    log_err("card_html",e); continue
+                st.markdown(html,unsafe_allow_html=True)
+                if not P.get("markets"): continue
                 kk=f"{sport}_{c['eid']}"
                 cc=st.columns([2,1,1])
                 mkt=cc[0].selectbox("Рынок",[m["name"] for m in P["markets"]],key=f"m{kk}")
                 odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{kk}")
-                prob=next(m["p"] for m in P["markets"] if m["name"]==mkt)
+                prob=next((m["p"] for m in P["markets"] if m["name"]==mkt),0.5)
                 ev=prob*odd-1
                 ev_cls="pos" if ev>0 else "neg"
                 cc[2].markdown(f"<div style='padding-top:26px' class='{ev_cls}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
@@ -412,7 +430,17 @@ def render_sport(sport):
                             "stake":kelly(prob,odd,S2["bank"]),"status":"pending"})
                         osp_save(A2); st.success("✅ Добавлено"); st.rerun()
         else:
-            st.info("Матчей в окне не найдено. Увеличь горизонт или загрузи CSV. Диагностика выше покажет, что вернул каждый источник.")
+            st.info("Матчей в окне не найдено. Увеличь горизонт, загрузи CSV или смотри диагностику/последние результаты ниже.")
+            with st.expander("📦 Последние результаты (проверка источника)"):
+                rr=[]
+                for off in (1,2,3):
+                    dstr=(today-timedelta(days=off)).strftime("%Y-%m-%d")
+                    rr+=ts_events_day(dstr,cfg["tsdb"])
+                fin=[r for r in rr if r["hs"] is not None][:15]
+                if fin:
+                    for r in fin: st.text(f"{r['date']} · {r['league']}: {r['h']} {r['hs']}:{r['as']} {r['a']}")
+                else:
+                    st.text("Источник не вернул и прошлых событий — покрытие TheSportsDB по этому виду сейчас пустое. Используй свой CSV.")
     with sub[1]:
         st.header(f"💼 Портфель {cfg['icon']}")
         ALLcur=osp_load(); Sc=osp_sport(ALLcur,sport)
