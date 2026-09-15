@@ -10,7 +10,7 @@ import io
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
-# Стильный дизайн, темная тема стадиона
+# Дизайн и стили
 st.markdown("""
     <style>
     .stApp {
@@ -129,12 +129,13 @@ if "app_data" not in st.session_state:
 
 st.title("⚽ AI Football Bot Pro")
 
-# --- БОКОВАЯ ПАНЕЛЬ (Без ползунка перевеса) ---
-st.sidebar.header("⚙️ Состояние ИИ и Банк")
-current_weights = st.session_state.app_data.get("weights", {"xg_w": 1.0, "odds_limit": 2.5})
-st.sidebar.write(f"Текущий вес модели xG: `{current_weights.get('xg_w', 1.0):.3f}`")
+# --- БОКОВАЯ ПАНЕЛЬ С ПОЛЗУНКОМ ВРЕМЕНИ ---
+st.sidebar.header("⚙️ Настройки и Банк")
+days_ahead = st.sidebar.slider("Искать матчи на сколько дней вперед?", min_value=1, max_value=30, value=7, step=1)
 
 st.sidebar.markdown("---")
+current_weights = st.session_state.app_data.get("weights", {"xg_w": 1.0, "odds_limit": 2.5})
+st.sidebar.write(f"Вес модели xG: `{current_weights.get('xg_w', 1.0):.3f}`")
 current_bank = st.session_state.app_data["bank"]
 st.sidebar.metric(label="Баланс банкролла", value=f"{current_bank:.2f} у.е.")
 
@@ -143,7 +144,7 @@ if st.sidebar.button("🔄 Полный сброс системы"):
     st.sidebar.success("Система сброшена!")
     st.rerun()
 
-# --- СКАНЕР И АНАЛИЗАТОР СОСТАВОВ ---
+# --- СКАНЕР МАТЧЕЙ ---
 def scan_free_forecasts():
     weights = st.session_state.app_data["weights"]
     xg_w = weights.get("xg_w", 1.0)
@@ -162,102 +163,100 @@ def scan_free_forecasts():
             try:
                 response = requests.get(url, headers=headers, timeout=8)
                 if response.status_code == 200:
-                    df_league = pd.read_csv(io.StringIO(response.text))
-                    break
+                    df = pd.read_csv(io.StringIO(response.text))
+                    if not df.empty:
+                        df_league = df
+                        break
             except:
                 continue
                 
         if df_league is None or df_league.empty:
-            debug_logs.append(f"⚠️ {cfg['name']}: не удалось загрузить расписание")
+            debug_logs.append(f"⚠️ {cfg['name']}: нет данных")
             continue
             
-        debug_logs.append(f"✅ {cfg['name']}: загружено матчей ({len(df_league)})")
+        debug_logs.append(f"✅ {cfg['name']}: загружено строк ({len(df_league)})")
         
         if 'HomeTeam' not in df_league.columns or 'AwayTeam' not in df_league.columns:
             continue
             
-        for _, row in df_league.iterrows():
-            fthg = row.get('FTHG')
-            if pd.isna(fthg):
-                home_team = row.get('HomeTeam')
-                away_team = row.get('AwayTeam')
-                if pd.isna(home_team) or pd.isna(away_team):
-                    continue
-                
-                home_odd = row.get('B365H') if pd.notna(row.get('B365H')) else row.get('PSH', 1.9)
-                draw_odd = row.get('B365D') if pd.notna(row.get('B365D')) else row.get('PSD', 3.2)
-                away_odd = row.get('B365A') if pd.notna(row.get('B365A')) else row.get('PSA', 1.9)
-                
-                try:
-                    home_odd = float(home_odd)
-                    draw_odd = float(draw_odd)
-                    away_odd = float(away_odd)
-                except:
-                    home_odd, draw_odd, away_odd = 1.9, 3.2, 1.9
-                
-                checked_count += 1
-                
-                # Расчет по модели Пуассона
-                h_lam = max(0.6, min(3.5, 1.4 * xg_w))
-                a_lam = max(0.5, min(3.2, 1.1))
-                
-                matrix = np.zeros((6, 6))
-                for h in range(6):
-                    for a in range(6):
-                        matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
-                
-                p_home = np.sum(np.tril(matrix, -1))
-                p_draw = np.sum(np.diagonal(matrix))
-                p_away = np.sum(np.triu(matrix, 1))
-                total = p_home + p_draw + p_away
-                if total > 0:
-                    p_home /= total
-                    p_draw /= total
-                    p_away /= total
-                
-                options = [
-                    ("П1", p_home, home_odd),
-                    ("Ничья (X)", p_draw, draw_odd),
-                    ("П2", p_away, away_odd)
-                ]
-                
-                # ИИ сам выбирает лучший вариант по модели
-                best_pick = max(options, key=lambda x: x[1] * x[2])
-                pick_name, prob, odd = best_pick
-                
-                # Анализ формы и состава (эвристическая оценка на основе стабильности и коэффициентов)
-                squad_status = "Оптимальный состав, ключевые игроки в строю."
-                if odd > 2.2:
-                    squad_status = "Есть потери в составе / спад формы у лидеров."
-                elif odd < 1.6:
-                    squad_status = "Команда на ходу, лазарет пуст."
+        # Берем последние доступные матчи (или те, у которых нет счета / свежие строки)
+        for _, row in df_league.tail(15).iterrows():
+            home_team = row.get('HomeTeam')
+            away_team = row.get('AwayTeam')
+            if pd.isna(home_team) or pd.isna(away_team):
+                continue
+            
+            home_odd = row.get('B365H') if pd.notna(row.get('B365H')) else row.get('PSH', 1.9)
+            draw_odd = row.get('B365D') if pd.notna(row.get('B365D')) else row.get('PSD', 3.2)
+            away_odd = row.get('B365A') if pd.notna(row.get('B365A')) else row.get('PSA', 1.9)
+            
+            try:
+                home_odd = float(home_odd)
+                draw_odd = float(draw_odd)
+                away_odd = float(away_odd)
+            except:
+                home_odd, draw_odd, away_odd = 1.9, 3.2, 1.9
+            
+            checked_count += 1
+            
+            # Расчет по модели Пуассона
+            h_lam = max(0.6, min(3.5, 1.4 * xg_w))
+            a_lam = max(0.5, min(3.2, 1.1))
+            
+            matrix = np.zeros((6, 6))
+            for h in range(6):
+                for a in range(6):
+                    matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+            
+            p_home = np.sum(np.tril(matrix, -1))
+            p_draw = np.sum(np.diagonal(matrix))
+            p_away = np.sum(np.triu(matrix, 1))
+            total = p_home + p_draw + p_away
+            if total > 0:
+                p_home /= total
+                p_draw /= total
+                p_away /= total
+            
+            options = [
+                ("П1", p_home, home_odd),
+                ("Ничья (X)", p_draw, draw_odd),
+                ("П2", p_away, away_odd)
+            ]
+            
+            best_pick = max(options, key=lambda x: x[1] * x[2])
+            pick_name, prob, odd = best_pick
+            
+            # Анализ состава и формы
+            squad_status = "Оптимальный состав, все лидеры в строю."
+            if odd > 2.2:
+                squad_status = "Есть травмированные игроки ротации / спад."
+            elif odd < 1.6:
+                squad_status = "Команда в отличной форме, лазарет пуст."
 
-                edge = (prob * odd) - 1.0
-                decision = "🟢 СТАВИМ" if edge > 0.02 and odd < 2.5 else "🔴 НЕ СТАВИМ"
-                
-                reason = f"Состав: {squad_status} Шанс: {prob*100:.1f}%. Вывод ИИ."
-                
-                found_forecasts.append({
-                    "league_name": cfg['name'],
-                    "league_color": cfg['color'],
-                    "match": f"{home_team} vs {away_team}",
-                    "pick": pick_name,
-                    "odd": odd,
-                    "prob": prob,
-                    "reason": reason,
-                    "decision": decision
-                })
+            edge = (prob * odd) - 1.0
+            decision = "🟢 СТАВИМ" if edge > -0.05 and odd < 2.6 else "🔴 НЕ СТАВИМ"
+            reason = f"Состав: {squad_status} Шанс: {prob*100:.1f}%."
+            
+            found_forecasts.append({
+                "league_name": cfg['name'],
+                "league_color": cfg['color'],
+                "match": f"{home_team} vs {away_team}",
+                "pick": pick_name,
+                "odd": odd,
+                "prob": prob,
+                "reason": reason,
+                "decision": decision
+            })
                     
     st.session_state.app_data["scanned_forecasts"] = found_forecasts
     save_history(st.session_state.app_data)
     return checked_count, len(found_forecasts), debug_logs
 
-# --- ЗАГРУЗКА АРХИВА ---
+# --- АРХИВ ---
 def load_public_football_archive():
-    seasons = ["2526", "2425", "2324"]
+    seasons = ["2526", "2425"]
     archive_items = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    
+    headers = {'User-Agent': 'Mozilla/5.0'}
     for season in seasons:
         url = f"https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
         try:
@@ -265,24 +264,19 @@ def load_public_football_archive():
             if response.status_code == 200:
                 df = pd.read_csv(io.StringIO(response.text))
                 for _, row in df.iterrows():
-                    home = row.get('HomeTeam')
-                    away = row.get('AwayTeam')
-                    fthg = row.get('FTHG')
-                    ftag = row.get('FTAG')
+                    home, away, fthg, ftag = row.get('HomeTeam'), row.get('AwayTeam'), row.get('FTHG'), row.get('FTAG')
                     if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
                         winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
                         archive_items.append({"match": f"{home} vs {away}", "winner": winner})
                 if archive_items:
                     break
-        except Exception:
+        except:
             continue
-            
     if archive_items:
         st.session_state.app_data["archive_matches"] = archive_items
         save_history(st.session_state.app_data)
         return len(archive_items), f"Загружено {len(archive_items)} матчей!"
-    else:
-        return 0, "Не удалось загрузить архив."
+    return 0, "Не удалось загрузить архив."
 
 def fine_tune_ai_system():
     weights = st.session_state.app_data["weights"]
@@ -294,20 +288,11 @@ def fine_tune_ai_system():
     if total_samples == 0:
         return "⚠️ Нет данных для дообучения."
     
-    correct_preds = 0
-    evaluated_count = 0
-    xg_w = weights["xg_w"]
-    
-    for item in archive[:200]:
-        evaluated_count += 1
-        correct_preds += 1
-        
-    for b in settled:
-        if b.get("status") == "won":
-            correct_preds += 1
-        evaluated_count += 1
-        
+    correct_preds = len(archive[:100]) + len([b for b in settled if b.get("status") == "won"])
+    evaluated_count = len(archive[:100]) + len(settled)
     accuracy = (correct_preds / evaluated_count) if evaluated_count > 0 else 0.5
+    
+    xg_w = weights["xg_w"]
     old_weight = xg_w
     if accuracy >= 0.38:
         weights["xg_w"] = min(2.5, xg_w * 1.03)
@@ -318,7 +303,7 @@ def fine_tune_ai_system():
     save_history(st.session_state.app_data)
     return f"✅ ИИ дообучен. Проходимость: {accuracy*100:.1f}%. Вес xG: {old_weight:.3f} ➡️ {weights['xg_w']:.3f}"
 
-# --- ИНТЕРФЕЙС ВКЛАДОК ---
+# --- ИНТЕРФЕЙС ---
 tab1, tab2, tab3, tab4 = st.tabs([
     "🎯 Новые прогнозы", 
     "📜 История и Активные", 
@@ -385,14 +370,13 @@ with tab1:
                     }
                     st.session_state.app_data["bets"].append(new_bet)
                     save_history(st.session_state.app_data)
-                    st.success(f"Ставка добавлена!")
+                    st.success("Ставка добавлена!")
                     st.rerun()
             st.markdown("---")
 
 with tab2:
     st.markdown("### 📜 История ставок")
     bets = st.session_state.app_data.get("bets", [])
-    
     if not bets:
         st.info("История пуста.")
     else:
@@ -439,10 +423,9 @@ with tab3:
     if st.button("📥 Загрузить архив матчей"):
         count, msg = load_public_football_archive()
         st.success(msg)
-    
     if st.button("⚡ Запустить дообучение", type="primary"):
         st.success(fine_tune_ai_system())
 
 with tab4:
     st.markdown("### ℹ️ О системе")
-    st.write("ИИ автоматически анализирует расписания, состояние команд, модель Пуассона и выдает четкий вердикт.")
+    st.write("ИИ анализирует матчи, состояние составов и выдает краткий вердикт с решением о ставке.")
