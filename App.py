@@ -13,17 +13,16 @@ def log_err(tag,e):
     ERR.append(f"[{tag}] {type(e).__name__}: {e}")
     if len(ERR)>300: ERR.pop(0)
 
-# ТОЛЬКО ФУТБОЛ + ВОЛЕЙБОЛ + ХОККЕЙ
 SPORTS={
  "⚽ Футбол":dict(src="fd"),
- "🏐 Волейбол":dict(src="espn",espn=["volleyball/womens-college-volleyball"],tsdb_sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
- "🏒 Хоккей":dict(src="espn",espn=["hockey/nhl","hockey/ahl"],tsdb_sport="Ice Hockey",kw=["NHL","KHL","AHL"],max=3,k=24,ha=40,div=120,tot=True,pois=True),
+ "🏐 Волейбол":dict(src="espn",espn=["volleyball/womens-college-volleyball","volleyball/mens-college-volleyball"],tsdb_sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
+ "🏒 Хоккей":dict(src="nhl",espn=["hockey/nhl"],tsdb_sport="Ice Hockey",kw=["NHL","KHL","AHL","SHL"],max=3,k=24,ha=40,div=120,tot=True,pois=True),
 }
-DIV_NAMES={"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁥󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+DIV_NAMES={"E0":"🏴󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮 Серия A","I2":"🇮 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬 Греция","R1":"🇷 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 
 st.markdown("""
 <style>
@@ -165,7 +164,45 @@ def espn_parse(ev):
     except Exception as e:
         log_err("espn parse",e); return None
 
-# ---------- ФУТБОЛ: ДВИЖОК И СКАН НЕ ТРОНУТЫ ----------
+# ---------- NHL: официальный публичный API ----------
+@st.cache_data(ttl=21600)
+def nhl_day(dstr):
+    try:
+        r=requests.get(f"https://api-web.nhl.com/v1/schedule/{dstr}",timeout=15,headers=UA)
+        if r.status_code!=200: return []
+        out=[]
+        for w in ((r.json() or {}).get("weeks") or []):
+            out+=(w.get("gameWeek") or [])
+        return out
+    except Exception as e:
+        log_err("nhl_day",e); return []
+def nhl_parse(g):
+    try:
+        aw=g.get("awayTeam") or {};hm=g.get("homeTeam") or {}
+        a_=aw.get("abbrev");h_=hm.get("abbrev")
+        if not a_ or not h_: return None
+        an=(aw.get("commonName") or {}).get("default") or a_
+        hn=(hm.get("commonName") or {}).get("default") or h_
+        as_=_f(g.get("awayScore"));hs=_f(g.get("homeScore"))
+        done=(g.get("gameState") in ("OFF","FINAL")) or (as_ is not None and hs is not None)
+        d=_iso(g.get("startTime")) or parse_date(str(g.get("startTime",""))[:10])
+        return {"date":d,"a":a_,"h":h_,"an":an,"hn":hn,"as_":as_,"hs":hs,"done":done}
+    except Exception as e:
+        log_err("nhl_parse",e); return None
+def nhl_fetch(days_list):
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        lists=list(ex.map(nhl_day,days_list))
+    out=[];seen=set()
+    for lst in lists:
+        for g in lst:
+            x=nhl_parse(g)
+            if not x: continue
+            k=(x["date"],x["h"],x["a"])
+            if k in seen: continue
+            seen.add(k);out.append(x)
+    return out
+
+# ---------- ФУТБОЛ: НЕ ТРОНУТ ----------
 class Engine:
     def __init__(self):
         self.elo={};self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],"hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
@@ -405,7 +442,57 @@ def scan_football(PR,today,limit,bank):
     cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
     return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
 
-def scan_sport(sport,cfg,PR,today,limit,bank):
+# ---------- ХОККЕЙ: NHL API ----------
+def scan_nhl(sport,cfg,PR,today,limit,bank):
+    rep=[];cards=[];bets=[];trained=0;inwin=0;passed=0
+    past=nhl_fetch([(today-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1,46)])
+    train=sorted([x for x in past if x["done"] and x["hs"] is not None and x["as_"] is not None and x["date"]],
+                 key=lambda z:z["date"])
+    rep.append(f"NHL API: история {len(train)} матчей (45 дней)")
+    eng=BinElo(cfg.get("k",24),cfg.get("ha",0),cfg.get("div",150))
+    totals=[]
+    for x in train:
+        eng.add(x["h"],x["a"],x["hs"],x["as_"]);trained+=1;totals.append(x["hs"]+x["as_"])
+    mu=sum(totals)/len(totals) if totals else 6.0
+    line=math.floor(mu)+0.5
+    ndays=max(1,(limit-today).days+1)
+    fut=[x for x in nhl_fetch([(today+timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0,ndays)])
+         if (not x["done"]) and x["date"]]
+    rep.append(f"NHL API: игр в окне {len(fut)}")
+    if not fut and train:
+        last=max((x["date"] for x in train),default=None)
+        rep.append("⚠️ В окне игр нет (предсезонка/пауза); последний матч: "+(last.strftime("%d.%m") if last else "?"))
+    for x in fut:
+        d=x["date"]
+        if not (today<=d<=limit): continue
+        inwin+=1
+        ph,pa=eng.predict(x["h"],x["a"])
+        rows=[];
+        over=1-pois_cdf(int(line),mu)
+        for pick,prob in [("П1",ph),("П2",pa),(f"ТБ {line}",over),(f"ТМ {line}",1-over)]:
+            it={"pick":pick,"prob":prob,"odd":None,"ev":None,"ok":prob>=PR["thr"]}
+            if it["ok"]: passed+=1
+            rows.append(it)
+        hot=[r for r in rows if r["ok"]]
+        tag="hot" if hot else ""
+        nd=(d-today).days
+        cards.append({"sport":sport,"league":"NHL","match":f"{x['hn']} vs {x['an']}",
+            "date":d.strftime("%d.%m"),"date_iso":d.strftime("%Y-%m-%d"),
+            "when":"сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн"),
+            "rows":rows,"best":None,"tag":tag,"lams":(0,0),"games":trained,
+            "fh":"","fa":"","agree":True,"h2h":0,
+            "verdict":f"Elo NHL: П1 {ph*100:.0f}% / П2 {pa*100:.0f}% · тотал-му {mu:.1f}, линия {line} · обучено {trained}"})
+        if hot and len(bets)<25:
+            hp=max(hot,key=lambda r:r["prob"])
+            bets.append({"sport":sport,"div":None,"league":"NHL","match":f"{x['hn']} vs {x['an']}",
+                "pick":hp["pick"],"odds":round(1/max(hp["prob"],0.02),2),"stake":round(bank*0.01,2),
+                "prob":hp["prob"],"status":"pending","date_iso":d.strftime("%Y-%m-%d"),
+                "market":"FAIR","src":["nhl"],"abbr":[x["h"],x["a"]]})
+    cards.sort(key=lambda c:c["date"])
+    return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
+
+# ---------- ESPN + TSDB цепочка (волейбол и фолбэк) ----------
+def scan_espn_chain(sport,cfg,PR,today,limit,bank):
     rep=[];cards=[];bets=[];trained=0;inwin=0;passed=0
     pf=(today-timedelta(days=60)).strftime("%Y%m%d");pt=(today-timedelta(days=1)).strftime("%Y%m%d")
     ff=today.strftime("%Y%m%d");ft=limit.strftime("%Y%m%d")
@@ -443,7 +530,8 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
     mu=sum(totals)/len(totals) if totals else None
     line=math.floor(mu)+0.5 if mu else None
     if trained>0 and not fut_ev:
-        rep.append("⚠️ Межсезонье: в окне дат нет запланированных матчей")
+        last=max((x["date"] for x in train_ev if x["date"]),default=None)
+        rep.append("⚠️ Межсезонье: в окне нет игр; последний матч в базе: "+(last.strftime("%d.%m") if last else "?"))
     for x in fut_ev:
         try:
             d=x["date"]
@@ -501,6 +589,12 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
         except Exception as e: log_err(f"scan {sport} row",e)
     cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
     return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
+
+def scan_sport(sport,cfg,PR,today,limit,bank):
+    if cfg.get("src")=="nhl":
+        c,b,f,r=scan_nhl(sport,cfg,PR,today,limit,bank)
+        if f["inwin"]>0 or f["trained"]>0: return c,b,f,r
+    return scan_espn_chain(sport,cfg,PR,today,limit,bank)
 
 # ---------- состояние ----------
 def new_data():
@@ -569,6 +663,17 @@ def auto_settle(D):
                     elif b["pick"]=="ТБ 2.5": out="won" if hg+ag>=3 else "lost"
                     elif b["pick"]=="ТМ 2.5": out="won" if hg+ag<=2 else "lost"
                     break
+        elif kind=="nhl":
+            for gg in nhl_day(bd.strftime("%Y-%m-%d")):
+                x=nhl_parse(gg)
+                if not x or not x["done"] or x["hs"] is None or x["as_"] is None: continue
+                if [x["h"],x["a"]]==b.get("abbr"):
+                    s1,s2=x["hs"],x["as_"]
+                    if b["pick"]=="П1": out="won" if s1>s2 else "lost"
+                    elif b["pick"]=="П2": out="won" if s2>s1 else "lost"
+                    elif b["pick"].startswith("ТБ"): out="won" if s1+s2>float(b["pick"].split()[1]) else "lost"
+                    elif b["pick"].startswith("ТМ"): out="won" if s1+s2<float(b["pick"].split()[1]) else "lost"
+                    break
         elif kind=="espn":
             path=src[1]
             for e in espn_events(path,bd.strftime("%Y%m%d")):
@@ -599,7 +704,6 @@ def auto_settle(D):
         if out: D2=apply_settle(D2,idx,out); upd+=1
     return D2,upd
 
-# ---------- рендер ----------
 def render_card(c,PR):
     val=c["best"] is not None; hot=c["tag"]=="hot" and not val
     badge=f"<span class='badge {'val' if val else ('hot' if hot else 'no')}'>{'🟢 ВАЛУЙ' if val else ('🔥 P≥'+str(int(PR['thr']*100))+'%' if hot else 'фон')}</span>"
@@ -624,7 +728,6 @@ def render_card(c,PR):
  <div class="mfoot">📚 игр в базе: <b>{c['games']}</b>{' · '+best_html if best_html else ''}</div>
 </div>"""
 
-# ---------- блок «НА ЧТО СТАВИТЬ» (вернул из футбольной версии) ----------
 def build_picks(cards,thr,bank,kf):
     picks=[]
     for c in cards:
@@ -665,7 +768,7 @@ LEGEND="""
 **🟢 ВАЛУЙ** — EV>0 против кэфа, ставка ушла в портфель · **🔥 P≥N%** — ставка по проходимости ·
 **✅ в строке рынка** — прошёл все фильтры · **·** — не прошёл · **⭐** — уверенность (5⭐ = EV≥10% или P≥70%) ·
 **P / EV** — вероятность модели / перевес над кэфом · **фейр X.XX** — кэфа нет, это честная цена модели ·
-**⏳🔴** — ожидает / выиграла / проиграла / возврат · **📚 игр** — объём обучения по командам
+**⏳🟢🔴⚪** — ожидает / выиграла / проиграла / возврат · **📚 игр** — объём обучения по командам
 """
 
 # ================= UI =================
@@ -675,7 +778,7 @@ pend=sum(1 for b in D["bets"] if b["status"]=="pending")
 st.markdown(f"""
 <div class="hero">
  <h1>🏟 NEURO BET PRO Multi</h1>
- <p>Футбол (football-data, движок не тронут) · Волейбол и Хоккей (ESPN + резерв TheSportsDB) · общий банк и портфель</p>
+ <p>Футбол (football-data, не тронут) · Хоккей (офиц. API NHL) · Волейбол (ESPN + резерв) · общий банк и портфель</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pend}</div></div>
@@ -801,6 +904,15 @@ with tab5:
                 P=eng.predict(h,a);o=best_odd(r,"П1")
                 if o: log.append({"prob":P["p1"],"won":hg>ag})
                 eng.learn_step(h,a,hg,ag,r)
+        elif cfg.get("src")=="nhl":
+            evs=sorted([x for x in nhl_fetch([(today-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1,46)])
+                        if x["done"] and x["hs"] is not None and x["as_"] is not None and x["date"]],
+                       key=lambda z:z["date"])
+            eng=BinElo(cfg.get("k",24),cfg.get("ha",0),cfg.get("div",150))
+            for x in evs:
+                ph,pa=eng.predict(x["h"],x["a"])
+                log.append({"prob":max(ph,pa),"won":(x["hs"]>x["as_"])==(ph>=pa)})
+                eng.add(x["h"],x["a"],x["hs"],x["as_"])
         else:
             pf=(today-timedelta(days=60)).strftime("%Y%m%d");pt=(today-timedelta(days=1)).strftime("%Y%m%d")
             evs=[]
