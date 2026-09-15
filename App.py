@@ -141,7 +141,7 @@ def get_ai_deep_analysis(home, away, league_name, prob_h, prob_d, prob_a, openai
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         if r.status_code == 200:
-            return r.json()["choices0"]["message"]["content"]
+            return r.json()["choices"][0]["message"]["content"]
     except:
         pass
     return "🛡️ Использован встроенный Пуассоновский движок высокой точности."
@@ -229,7 +229,6 @@ with tab1:
                     if best_prob < min_prob:
                         continue
                         
-                    # Исправлено: закладываем валуйный коэффициент с положительным EV (> 1.0)
                     best_odd = round((1 / best_prob) * 1.05, 2)
                     ev = (best_prob * best_odd) - 1.0
                     stake = kelly_stake(best_prob, best_odd, bank, kelly_frac)
@@ -309,9 +308,9 @@ with tab1:
         st.info("👆 Нажми кнопку выше для запуска сканирования и автоформирования портфеля.")
 
 with tab2:
-    st.header("📋 Управление портфелем и проверка результатов")
+    st.header("📋 Портфель ставок и автосинхронизация")
     
-    if st.button("🔄 Автопроверка результатов матчей через API", type="primary"):
+    if st.button("🔄 Синхронизировать результаты через API", type="primary"):
         if not api_key:
             st.error("❌ Введи API-ключ в боковой панели!")
         else:
@@ -319,7 +318,7 @@ with tab2:
             pending_bets = [b for b in bets if b.get("status") == "pending"]
             
             if not pending_bets:
-                st.info("Нет ожидающих матчей для проверки.")
+                st.info("Нет ожидающих матчей для синхронизации.")
             else:
                 updated_count = 0
                 leagues_to_check = set(b.get("league_code") for b in pending_bets if b.get("league_code"))
@@ -379,7 +378,7 @@ with tab2:
                                 break
                 
                 save_data(st.session_state.data)
-                st.success(f"✅ Проверка завершена! Обновлено матчей: {updated_count}")
+                st.success(f"✅ Синхронизация завершена! Обновлено матчей: {updated_count}")
                 st.rerun()
 
     bets = st.session_state.data.get("bets", [])
@@ -394,27 +393,7 @@ with tab2:
             for i, bet in enumerate(pending):
                 with st.container():
                     st.markdown(f"**{bet.get('league')}** | `{bet.get('match')}`")
-                    st.write(f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма (Келли): **{bet.get('stake'):.2f} у.е.**")
-                    
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ Зачесть победу", key=f"win_{i}"):
-                            bet["status"] = "won"
-                            profit = bet.get("stake", 0) * (bet.get("odds", 0) - 1)
-                            st.session_state.data["bank"] += profit
-                            st.session_state.data["stats"]["won"] += 1
-                            st.session_state.data["stats"]["profit"] += profit
-                            save_data(st.session_state.data)
-                            st.rerun()
-                    with c2:
-                        if st.button("❌ Зачесть поражение", key=f"loss_{i}"):
-                            bet["status"] = "lost"
-                            loss = bet.get("stake", 0)
-                            st.session_state.data["bank"] -= loss
-                            st.session_state.data["stats"]["lost"] += 1
-                            st.session_state.data["stats"]["profit"] -= loss
-                            save_data(st.session_state.data)
-                            st.rerun()
+                    st.write(f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма (Келли): **{bet.get('stake'):.2f} у.е.** (Ожидает завершения матча)")
                     st.markdown("---")
         
         if completed:
@@ -442,4 +421,3 @@ with tab3:
     c2.metric("📊 Всего ставок", total)
     c3.metric("🎯 Win Rate", f"{win_rate:.1f}%")
     c4.metric("📈 ROI", f"{roi:.2f}%")
-                
