@@ -265,7 +265,7 @@ def scan_new_forecasts(api_key):
     save_history(st.session_state.app_data)
     return checked_count, len(found_forecasts), debug_logs
 
-# --- ЗАГРУЗКА АРХИВА ДЛЯ КАЛИБРОВКИ ---
+# --- ЗАГРУЗКА АРХИВА ---
 def load_public_football_archive():
     seasons = ["2425", "2324", "2223"]
     archive_items = []
@@ -297,27 +297,64 @@ def load_public_football_archive():
     else:
         return 0, "Не удалось загрузить архив."
 
-# --- ДООБУЧЕНИЕ ИИ СОГЛАСНО СИСТЕМЕ ---
+# --- ИСПРАВЛЕННОЕ ДООБУЧЕНИЕ (РАБОТАЕТ С АРХИВОМ И СТАВКАМИ) ---
 def fine_tune_ai_system():
     weights = st.session_state.app_data["weights"]
+    archive = st.session_state.app_data.get("archive_matches", [])
     bets = st.session_state.app_data.get("bets", [])
     settled = [b for b in bets if b["status"] in ["won", "lost"]]
     
-    if not settled:
-        return "⚠️ Недостаточно завершенных ставок для дообучения. Сделайте ставки во вкладке 'Новые прогнозы' и отметьте их исходы."
+    total_samples = len(archive) + len(settled)
+    if total_samples == 0:
+        return "⚠️ Нет данных для дообучения. Загрузите архив матчей выше или сделайте ставки во вкладке 'Новые прогнозы'."
     
-    correct = len([b for b in settled if b["status"] == "won"])
-    accuracy = correct / len(settled)
+    correct_preds = 0
+    evaluated_count = 0
     
-    old_weight = weights["xg_w"]
-    if accuracy >= 0.5:
-        weights["xg_w"] = min(2.5, weights["xg_w"] * 1.02)
+    xg_w = weights["xg_w"]
+    h_lam = max(0.6, min(3.5, 1.4 * xg_w))
+    a_lam = max(0.5, min(3.2, 1.1))
+    
+    matrix = np.zeros((6, 6))
+    for h in range(6):
+        for a in range(6):
+            matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+    p_home = np.sum(np.tril(matrix, -1))
+    p_draw = np.sum(np.diagonal(matrix))
+    p_away = np.sum(np.triu(matrix, 1))
+    total_p = p_home + p_draw + p_away
+    if total_p > 0:
+        p_home /= total_p
+        p_draw /= total_p
+        p_away /= total_p
+        
+    probs = {"П1": p_home, "Ничья (X)": p_draw, "П2": p_away}
+    model_pick = max(probs, key=probs.get)
+    
+    # Оценка по архиву (берем до 200 матчей для скорости)
+    for item in archive[:200]:
+        actual_winner = item.get("winner")
+        if model_pick == actual_winner:
+            correct_preds += 1
+        evaluated_count += 1
+        
+    # Оценка по реальным ставкам
+    for b in settled:
+        if b.get("status") == "won":
+            correct_preds += 1
+        evaluated_count += 1
+        
+    accuracy = (correct_preds / evaluated_count) if evaluated_count > 0 else 0.5
+    
+    old_weight = xg_w
+    if accuracy >= 0.38:
+        weights["xg_w"] = min(2.5, xg_w * 1.03)
     else:
-        weights["xg_w"] = max(0.5, weights["xg_w"] * 0.98)
+        weights["xg_w"] = max(0.5, xg_w * 0.97)
         
     st.session_state.app_data["weights"] = weights
     save_history(st.session_state.app_data)
-    return f"✅ Система дообучена! Проходимость серии: {accuracy*100:.1f}%. Вес xG адаптирован: {old_weight:.3f} ➡️ {weights['xg_w']:.3f}"
+    return f"✅ Система успешно дообучена по {evaluated_count} матчам (архив + ставки)! Проходимость: {accuracy*100:.1f}%. Вес xG изменен: {old_weight:.3f} ➡️ {weights['xg_w']:.3f}"
 
 # --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -476,7 +513,7 @@ with tab2:
 
 with tab3:
     st.markdown("### 🧠 Дообучение ИИ и архивные данные")
-    st.write("Система дообучается на основе ваших реальных результатов. Здесь же вы можете загрузить архивные матчи для расширенной калибровки.")
+    st.write("Система дообучается на основе ваших ставок и загруженного архива матчей.")
     
     col_a1, col_a2 = st.columns(2)
     with col_a1:
