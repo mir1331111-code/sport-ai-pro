@@ -321,4 +321,3 @@ with tab3:
     c2.metric("📊 Всего ставок", total)
     c3.metric("🎯 Win Rate", f"{win_rate:.1f}%")
     c4.metric("📈 Прибыль (ROI)", f"{roi:.2f}%")
-    
