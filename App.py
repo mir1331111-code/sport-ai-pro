@@ -4,9 +4,9 @@ import json
 import os
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Football Betting AI Pro", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Football Betting AI Global", page_icon="🎯", layout="wide")
 
-HISTORY_FILE = "betting_pro_data.json"
+HISTORY_FILE = "betting_global_data.json"
 
 def load_data():
     if os.path.exists(HISTORY_FILE):
@@ -83,25 +83,24 @@ def generate_ai_commentary(home, away, r1, r2, pick, prob, league_name):
     diff = abs(r1 - r2)
     comm = []
     
-    # Анализ формы и состава по Elo-разнице
     if diff > 150:
-        comm.append("🛡️ **Анализ состава:** Класс команд существенно различается. Лидеры в строю, глубокая скамейка позволяет избежать просадки при плотном календаре.")
+        comm.append("🛡️ **Анализ состава:** Класс команд существенно различается. Основные лидеры в строю, глубина скамейки позволяет избежать просадки в темпе.")
     else:
-        comm.append("⚠️ **Анализ состава:** Соперники равны по силам. Возможна точечная ротация из-за плотного графика, цена ошибки в центре поля максимальна.")
+        comm.append("⚠️ **Анализ состава:** Соперники равны. Высока вероятность точечной ротации из-за плотного графика, цена ошибки в центре поля максимальна.")
         
     if "Лига Чемпионов" in league_name or "Лига Европы" in league_name:
-        comm.append("🇪🇺 **Фактор турнира:** Еврокубковый матч. Усталость лидеров и еврокубковый опыт играют ключевую роль в концовках таймов.")
+        comm.append("🇪🇺 **Фактор турнира:** Еврокубковый матч. Нагрузка на основу максимальная, опыт игры на международной арене выходит на первый план.")
     elif "Кубок" in league_name:
-        comm.append("🏆 **Фактор кубка:** Кубковая стадия. Высокий риск выхода полурезервных составов у фаворитов.")
+        comm.append("🏆 **Фактор кубка:** Кубковое противостояние. Повышенный риск выхода резервного состава у фаворита и мотивация аутсайдера.")
     else:
-        comm.append("📊 **Трендовый анализ:** Оптимальные сочетания линий обороны и атаки подтверждены по статистике последних туров.")
+        comm.append("📊 **Трендовый анализ:** Оптимальные сочетания линий атаки и обороны подтверждены текущей статистикой сезона.")
         
     return " \n".join(comm)
 
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 
-st.title("🎯 Football Betting AI Pro (Multi-League & Deep Analysis)")
+st.title("🎯 Football Betting AI Global (Auto-Scan)")
 
 with st.sidebar:
     st.header("⚙️ Настройки и Банк")
@@ -118,40 +117,36 @@ with st.sidebar:
         save_data(st.session_state.data)
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(["🎯 Прогнозы и Анализ", "📋 Мои ставки", "📊 Статистика"])
+tab1, tab2, tab3 = st.tabs(["🎯 Все матчи и анализ", "📋 Мои ставки", "📊 Статистика"])
 
 with tab1:
-    st.header("Множественный выбор турниров и сканирование")
-    
-    leagues_map = {
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "PL",
-        "🇪🇸 Испания (Ла Лига)": "PD",
-        "🇮🇹 Италия (Серия А)": "SA",
-        "🇩🇪 Германия (Бундеслига)": "BL1",
-        "🇫🇷 Франция (Лига 1)": "FL1",
-        "🇪🇺 Лига Чемпионов (ЛЧ)": "CL",
-        "🇪🇺 Лига Европы (ЛЕ)": "EL",
-        "🇳🇱 Нидерланды (Эредивизи)": "DED",
-        "🇵🇹 Португалия (Примейра)": "PPL"
-    }
-    
-    selected_leagues = st.multiselect("Выбери лиги для одновременного поиска:", list(leagues_map.keys()), default=["🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", "🇪🇺 Лига Чемпионов (ЛЧ)"])
+    st.header("Глобальное сканирование всех лиг")
     days_ahead = st.slider("Горизонт анализа (дней вперед)", 1, 60, 30)
     
-    if st.button("🚀 Запустить глубокий анализ выбранных лиг", type="primary"):
+    if st.button("🚀 Запустить глобальный анализ всех турниров", type="primary"):
         if not api_key:
             st.error("❌ Введи API-ключ в боковой панели слева!")
             st.stop()
             
-        if not selected_leagues:
-            st.warning("⚠️ Выбери хотя бы одну лигу.")
-            st.stop()
-            
+        # Полный список доступных лиг и международных турниров
+        global_leagues = {
+            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "PL",
+            "🇪🇸 Испания (Ла Лига)": "PD",
+            "🇮🇹 Италия (Серия А)": "SA",
+            "🇩🇪 Германия (Бундеслига)": "BL1",
+            "🇫🇷 Франция (Лига 1)": "FL1",
+            "🇪🇺 Лига Чемпионов": "CL",
+            "🇪🇺 Лига Европы": "EL",
+            "🇳🇱 Нидерланды (Эредивизи)": "DED",
+            "🇵🇹 Португалия (Примейра)": "PPL",
+            "🇧🇷 Бразилия (Серия А)": "BSA",
+            "🌎 Кубок Либертадорес": "CLI"
+        }
+        
         all_forecasts = []
         
-        with st.spinner("Сканируем выбранные турниры, считаем рейтинги и анализируем составы..."):
-            for l_name in selected_leagues:
-                code = leagues_map[l_name]
+        with st.spinner("Сканируем все лиги и кубки, рассчитываем рейтинги и формируем вердикты..."):
+            for l_name, code in global_leagues.items():
                 matches = fetch_api_matches(code, api_key)
                 if not matches:
                     continue
@@ -217,17 +212,17 @@ with tab1:
                         "commentary": commentary
                     })
             
-            # Сортировка от высокой проходимости к низкой (по вероятности и EV)
+            # Сортировка от высокой проходимости к низкой
             all_forecasts.sort(key=lambda x: (x['recommendation'] == "🟢 ДОБРО НА СТАВКУ", x['prob'], x['ev']), reverse=True)
             
             st.session_state.data["forecasts"] = all_forecasts
             save_data(st.session_state.data)
-            st.success(f"✅ Анализ завершен! Найдено матчей: {len(all_forecasts)}")
+            st.success(f"✅ Сканирование завершено! Найдено матчей: {len(all_forecasts)}")
             st.rerun()
 
     forecasts = st.session_state.data.get("forecasts", [])
     if forecasts:
-        st.subheader(f"📊 Отсортированные прогнозы (от высокой к низкой проходимости): {len(forecasts)}")
+        st.subheader(f"📊 Отсортировано по проходимости (от высоких к низким шансам): {len(forecasts)}")
         for idx, f in enumerate(forecasts):
             with st.container():
                 st.markdown(f"### ⚽ {f['match']} ({f['league']})")
@@ -235,21 +230,20 @@ with tab1:
                 c1, c2, c3 = st.columns([2, 1, 1])
                 with c1:
                     st.markdown(f"**Статус:** {f['recommendation']}")
-                    st.caption(f"📅 Дата: {f['date']} | Выбор модели: **{f['pick']}**")
+                    st.caption(f"📅 Дата: {f['date']} | Выбор: **{f['pick']}**")
                 with c2:
-                    st.metric("Проходимость (Вероятность)", f"{f['prob']*100:.1f}%")
+                    st.metric("Проходимость", f"{f['prob']*100:.1f}%")
                 with c3:
                     st.metric("Коэффициент", f"{f['odds']:.2f}")
                 
                 m1, m2 = st.columns(2)
                 m1.metric("Перевес (EV)", f"{f['ev']*100:+.1f}%")
-                m2.metric("Рекомендуемая ставка (Келли)", f"{f['stake']:.2f} у.е.")
+                m2.metric("Рекомендация (Келли)", f"{f['stake']:.2f} у.е.")
                 
-                # Вывод аналитики состава и комментариев ИИ
                 st.info(f"{f['commentary']}")
                 
                 if f['recommendation'] == "🟢 ДОБРО НА СТАВКУ" and f['stake'] > 0:
-                    if st.button(f"📥 Дать добро и загнать в статистику #{idx+1}", key=f"add_pro_bet_{idx}"):
+                    if st.button(f"📥 Дать добро и загнать в статистику #{idx+1}", key=f"add_global_bet_{idx}"):
                         new_bet = {
                             "match": f['match'],
                             "league": f['league'],
@@ -260,19 +254,19 @@ with tab1:
                         }
                         st.session_state.data["bets"].append(new_bet)
                         save_data(st.session_state.data)
-                        st.success("Ставка успешно добавлена в статистику и банк!")
+                        st.success("Ставка успешно добавлена в статистику!")
                 st.markdown("---")
     else:
-        st.info("👆 Выбери лиги в мультиселекте выше, вставь ключ и запусти анализ.")
+        st.info("👆 Введи ключ в сайдбар и начни глобальное сканирование.")
 
 with tab2:
     st.header("📋 Управление активными ставками")
     bets = st.session_state.data.get("bets", [])
     if not bets:
-        st.info("Нет активных ставок. Добавь их из вкладки прогнозов.")
+        st.info("Нет активных ставок.")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
-        completed = [b for b in bets if b.get("status") in ["won", "lost"]]
+        completed = [b for b in bets if b.get("status"] in ["won", "lost"]]
         
         if pending:
             st.subheader(f"⏳ Ожидающие расчета ({len(pending)})")
@@ -303,7 +297,7 @@ with tab2:
                     st.markdown("---")
         
         if completed:
-            st.subheader(f"📁 Архив завершенных ставок ({len(completed)})")
+            st.subheader(f"📁 Архив ({len(completed)})")
             for bet in completed[-10:]:
                 status_icon = "🟢" if bet.get("status") == "won" else "🔴"
                 st.text(f"{status_icon} {bet.get('match')} | {bet.get('pick')} @ {bet.get('odds')} — Ставка: {bet.get('stake')} у.е.")
