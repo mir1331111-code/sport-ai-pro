@@ -128,7 +128,6 @@ with tab1:
             st.error("❌ Введи API-ключ в боковой панели слева!")
             st.stop()
             
-        # Полный список доступных лиг и международных турниров
         global_leagues = {
             "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "PL",
             "🇪🇸 Испания (Ла Лига)": "PD",
@@ -212,7 +211,6 @@ with tab1:
                         "commentary": commentary
                     })
             
-            # Сортировка от высокой проходимости к низкой
             all_forecasts.sort(key=lambda x: (x['recommendation'] == "🟢 ДОБРО НА СТАВКУ", x['prob'], x['ev']), reverse=True)
             
             st.session_state.data["forecasts"] = all_forecasts
@@ -266,7 +264,7 @@ with tab2:
         st.info("Нет активных ставок.")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
-        completed = [b for b in bets if b.get("status"] in ["won", "lost"]]
+        completed = [b for b in bets if b.get("status") in ["won", "lost"]]
         
         if pending:
             st.subheader(f"⏳ Ожидающие расчета ({len(pending)})")
