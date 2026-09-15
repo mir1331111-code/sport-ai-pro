@@ -57,7 +57,7 @@ HISTORY_FILE = "bet_history.json"
 STAKE_SIZE = 100.0
 
 def get_league_urls():
-    """Алгоритм автоопределения актуального сезона и правильных URL"""
+    """Алгоритм автоопределения актуального сезона и правильных URL (только поддерживаемые лиги)"""
     base = "https://www.football-data.co.uk/mmz4281/"
     seasons = ["2627", "2526", "2425"] 
     
@@ -67,11 +67,10 @@ def get_league_urls():
         "Италия (Серия А)": "I1.csv",
         "Германия (Бундеслига)": "D1.csv",
         "Франция (Лига 1)": "F1.csv",
-        "Россия (РПЛ)": "R1.csv",
         "Турция (Суперлига)": "T1.csv",
         "Бельгия (Про-лига)": "B1.csv",
-        "Лига Чемпионов (УЕФА)": "C1.csv",
-        "Лига Европы (УЕФА)": "EU1.csv"
+        "Нидерланды (Эредивизи)": "N1.csv",
+        "Португалия (Примейра)": "P1.csv"
     }
     
     active_season = "2526"
@@ -157,8 +156,8 @@ with tab1:
         default=[
             "Англия (АПЛ)", 
             "Испания (Ла Лига)", 
-            "Россия (РПЛ)",
-            "Лига Чемпионов (УЕФА)"
+            "Италия (Серия А)",
+            "Германия (Бундеслига)"
         ]
     )
 
@@ -167,7 +166,7 @@ with tab1:
         "Показывать матчи на ближайшие дни:", 
         min_value=1, 
         max_value=14, 
-        value=3,
+        value=7,
         help="Бот проанализирует и покажет прогнозы только на те матчи, которые состоятся в выбранный период."
     )
     
@@ -191,20 +190,20 @@ with tab1:
                         all_dfs.append(df_temp)
                         success_count += 1
                     except Exception as e:
-                        st.warning(f"Не удалось загрузить {league_name}. Возможно, расписание еще не опубликовано.")
+                        st.warning(f"Не удалось загрузить {league_name}.")
 
             if not all_dfs:
                 st.error("Не удалось загрузить данные.")
             else:
                 combined_df = pd.concat(all_dfs, ignore_index=True)
                 
-                # Приводим даты к формату datetime
-                combined_df['MatchDate'] = pd.to_datetime(combined_df['Date'], format='%d/%m/%y', errors='coerce')
+                # Корректное приведение дат с учетом возможных форматов
+                combined_df['MatchDate'] = pd.to_datetime(combined_df['Date'], errors='coerce', dayfirst=True)
                 
                 st.success(f"Загружено лиг: {success_count}. Всего строк в базе: {len(combined_df)}")
 
                 with st.spinner("1. Обучение модели на сыгранных матчах..."):
-                    past_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG'])]
+                    past_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG']) & (combined_df['FTHG'] != '')]
                     
                     team_stats = {}
                     valid_matches_count = 0
@@ -217,16 +216,9 @@ with tab1:
                             if pd.isna(home) or pd.isna(away) or home == '' or away == '':
                                 continue
                                 
-                            fthg = row.get('FTHG')
-                            ftag = row.get('FTAG')
+                            fthg = float(row.get('FTHG'))
+                            ftag = float(row.get('FTAG'))
                             
-                            if pd.isna(fthg) or pd.isna(ftag):
-                                continue
-                                
-                            fthg = float(fthg)
-                            ftag = float(ftag)
-                            
-                            # Безопасная инициализация всех ключей для команд
                             if home not in team_stats:
                                 team_stats[home] = {'home_goals': [], 'away_conceded': [], 'away_goals': [], 'home_conceded': []}
                             if away not in team_stats:
@@ -242,7 +234,7 @@ with tab1:
                             continue
                     
                     if valid_matches_count == 0:
-                        st.error("Не найдено сыгранных матчей для обучения модели. Возможно, сезон еще не начался.")
+                        st.error("Не найдено сыгранных матчей для обучения модели.")
                         st.stop()
                     
                     st.success(f"✅ Проанализировано сыгранных матчей: {valid_matches_count}")
@@ -252,15 +244,15 @@ with tab1:
                     
                     league_avg_home = np.mean(all_home_goals) if all_home_goals else 1.4
                     league_avg_away = np.mean(all_away_goals) if all_away_goals else 1.1
-                    
-                    st.info(f"📊 Средняя результативность: дома {league_avg_home:.2f}, в гостях {league_avg_away:.2f}")
 
-                with st.spinner(f"2. Прогнозирование матчей до {future_limit.strftime('%d.%m.%Y')}..."):
-                    future_matches = combined_df[
+                with st.spinner(f"2. Поиск будущих матчей до {future_limit.strftime('%d.%m.%Y')}..."):
+                    # Фильтрация будущих матчей (где дата в диапазоне и результат пустой)
+                    future_mask = (
                         (combined_df['MatchDate'] >= today) & 
-                        (combined_df['MatchDate'] <= future_limit)
-                    ]
-                    future_matches = future_matches[pd.isna(future_matches['FTHG']) | (future_matches['FTHG'] == '')]
+                        (combined_df['MatchDate'] <= future_limit) & 
+                        (combined_df['FTHG'].isna() | (combined_df['FTHG'] == ''))
+                    )
+                    future_matches = combined_df[future_mask]
 
                     xg_w = current_weights.get("xg_w", 1.0)
                     app_data = st.session_state.app_data
@@ -366,14 +358,14 @@ with tab1:
                     app_data["bank"] = bank
                     app_data["scanned_forecasts"] = found_forecasts
                     save_history(app_data)
-                    st.success(f"✅ Проанализировано будущих матчей: {processed_count}. Найдено выгодных ставок: {sum(1 for f in found_forecasts if 'СТАВИМ' in f['decision'])}")
+                    st.success(f"✅ Найдено будущих матчей в расписании: {processed_count}. Отображено в прогнозах ниже.")
                     st.rerun()
 
     st.markdown("### 📋 Прогнозы на выбранный период:", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
-        st.info("Прогнозов на выбранный период пока нет. Увеличьте диапазон дней или выберите другие лиги.")
+        st.info("Прогнозов на выбранный период пока нет. Нажмите кнопку «Запустить анализ будущих матчей» или увеличьте диапазон дней.")
     else:
         for idx, f in enumerate(forecasts):
             l_name = f.get("league_name", "Спорт")
@@ -445,8 +437,8 @@ with tab3:
     st.markdown("### ℹ️ О системе")
     st.write("""
     **Как работает алгоритм:**
-    1. **Разделение данных:** Скрипт загружает полный CSV-файл лиги, но разделяет его на 'прошлое' (матчи с результатом) и 'будущее' (матчи без результата в пределах выбранного диапазона дней).
-    2. **Обучение:** На основе сыгранных матчей рассчитывается средняя результативность лиги и индивидуальные коэффициенты атаки/обороны каждой команды.
+    1. **Данные:** Скрипт загружает актуальные таблицы лиг Европы.
+    2. **Обучение:** На основе сыгранных матчей рассчитывается средняя результативность лиги и индивидуальные коэффициенты атаки/обороны команд.
     3. **Прогноз:** Для будущих матчей модель подставляет эти коэффициенты в распределение Пуассона, вычисляет честные вероятности и сравнивает их с коэффициентами букмекеров.
     4. **Валуй (Edge):** Ставка рекомендуется только если математическое ожидание превышает 3% (`prob * odd > 1.03`).
     """)
