@@ -97,7 +97,7 @@ def ts_league_events(lid):
     return out
 @st.cache_data(ttl=3600)
 def tennis_data_csv():
-    """Реальные результаты ATP/WTA С КОЭФФИЦИЕНТАМИ букмекеров (обучение+бэктест)"""
+    """Реальные результаты ATP/WTA С КОЭФФИЦИЕНТАМИ букмекеров"""
     rows=[]; rep=[]
     y=datetime.now().year
     for year in (y,y-1):
@@ -156,7 +156,7 @@ def parse_upload(buf):
     except Exception as e: log_err("upload",e)
     return rows
 
-# ================= ДВИЖОК С ПОЛНОЙ АНАЛИТИКОЙ =================
+# ================= ДВИЖОК =================
 class SportEngine:
     def __init__(self,cfg):
         self.cfg=cfg; self.elo={}; self.pts=defaultdict(lambda:{"f":[],"a":[]})
@@ -198,7 +198,7 @@ class SportEngine:
             n=cfg["best_of"]; line=cfg["set_line"]; hd=cfg["handi"]
             p_match,dist=self.best_of(p_ml,n)
             p_over=sum(v for s,v in dist.items() if s>line)
-            p_handi=sum(v for s,v in dist.items() if s-n>=hd)          # фора -handi по сетам
+            p_handi=sum(v for s,v in dist.items() if s-n>=hd)
             mk=[("П1",p_match),("П2",1-p_match),
                 (f"ТБ {line} сетов",p_over),(f"ТМ {line} сетов",1-p_over),
                 (f"Ф1 (-{hd})",p_handi),(f"Ф2 (+{hd})",1-p_handi)]
@@ -253,7 +253,7 @@ def osp_sport(allst,sport):
         allst[sport]={"bank":5000.0,"bets":[],"stats":{"won":0,"lost":0,"profit":0}}
     return allst[sport]
 
-# ================= HTML-КОМПОНЕНТЫ =================
+# ================= HTML =================
 def mrows_html(markets):
     out="<div class='mrow hdr'><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>"
     for m in markets:
@@ -271,16 +271,18 @@ def verdict_html(P,thr):
     why=(f"Elo {P['elo'][0]} vs {P['elo'][1]} · форма {P['fh']} против {P['fa']} · H2H: {P['h2h']} · {P['extra']}")
     return f"<div class='verdict'>{line}<br><span style='color:#cbd5e1'>{why}</span></div>"
 def card_html(c,thr):
-    hot=any(m["p"]>=thr for m in c["markets"])
+    P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
+    hot=any(m["p"]>=thr for m in P["markets"])
     badge=f"<span class='badge hot'>🔥 P≥{thr*100:.0f}%</span>" if hot else "<span class='badge no'>фон</span>"
     src="🌐 API" if c["src"]=="api" else ("🎾 tennis-data" if c["src"]=="td" else "📁 CSV")
     return ("<div class='mcard "+("value' " if hot else "' ")+"><div class='mhead'>"
         "<span class='chip'>"+c["league"]+"</span><span class='chip when'>📅 "+c["date"]+" · "+c["when"]+"</span>"
         "<span class='chip src'>"+src+"</span>"+badge+"</div>"
         "<div class='teams'>"+c["h"]+" <span>—</span> "+c["a"]+"</div>"
-        +verdict_html(c["P"],thr)
-        +f"<div class='meta'>форма: {form_html(c['P']['fh'])} <span style='color:#475569'>vs</span> {form_html(c['P']['fa'])} · 📚 игр в базе: <b>{c['P']['games']}</b></div>"
-        +mrows_html(c["markets"])+"</div>")
+        +verdict_html(P,thr)
+        +f"<div class='meta'>форма: {form_html(P['fh'])} <span style='color:#475569'>vs</span> {form_html(P['fa'])} · 📚 игр в базе: <b>{P['games']}</b></div>"
+        +mrows_html(P["markets"])+
+        "</div>")
 
 LEAGUES_ALL=ts_all_leagues()
 
@@ -301,6 +303,12 @@ def render_sport(sport):
         days=c2.slider("Горизонт, дней",1,21,10,key=f"d{sport}")
         thr=st.slider("Порог проходимости, %",50,80,60,key=f"t{sport}")/100
         up=st.file_uploader("Свой CSV (Date,Home,Away,HS,AS)",type=["csv"],key=f"u{sport}")
+        if st.button("🧹 Очистить кэш вида",key=f"clr{sport}"):
+            st.session_state["cards_"+sport]=[]
+            st.session_state["trained_"+sport]=0
+            st.session_state["diag_"+sport]={}
+            st.cache_data.clear()
+            st.rerun()
         if st.button(f"⚡ СКАН {cfg['icon']}",type="primary",key=f"scan{sport}"):
             today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
             limit=today+timedelta(days=days)
@@ -350,7 +358,7 @@ def render_sport(sport):
                 cards.append({"eid":r["id"],"league":r["league"] or sport,"src":r["src"],
                     "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),"when":when,
                     "P":eng.predict(r["h"],r["a"])})
-            cards.sort(key=lambda c:(any(m["p"]>=thr for m in c["P"]["markets"]),c["date"]),reverse=True)
+            cards.sort(key=lambda c:(any(m["p"]>=thr for m in c.get("P",{"markets":[]})["markets"]),c["date"]),reverse=True)
             prog.empty()
             st.session_state["cards_"+sport]=cards
             st.session_state["trained_"+sport]=len(past)
@@ -361,16 +369,20 @@ def render_sport(sport):
             with st.expander("🔌 Диагностика источников"):
                 for k,v in diag.items(): st.text(f"{k}: {v} событий")
                 for line in st.session_state.get("tdrep_"+sport,[]): st.text(line)
-        cards=st.session_state.get("cards_"+sport,[])
+        cards=[c for c in st.session_state.get("cards_"+sport,[]) if "P" in c]
+        if len(cards)!=len(st.session_state.get("cards_"+sport,[])):
+            st.warning("🧹 Старые данные очищены — запусти СКАН заново для актуальных карточек.")
+            st.session_state["cards_"+sport]=cards
         tr=st.session_state.get("trained_"+sport,0)
         if cards:
             st.caption(f"Обучено матчей: {tr} · событий в окне: {len(cards)}")
-            hot_cards=[c for c in cards if any(m["p"]>=thr for m in c["P"]["markets"])]
+            hot_cards=[c for c in cards if any(m["p"]>=thr for m in c.get("P",{"markets":[]})["markets"])]
             if hot_cards:
                 st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
                 bank=S["bank"]
                 for i,c in enumerate(hot_cards[:8],1):
-                    mk=max(c["P"]["markets"],key=lambda m:m["p"])
+                    P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
+                    mk=max(P["markets"],key=lambda m:m["p"])
                     stars="⭐⭐⭐⭐⭐" if mk["p"]>=0.70 else ("⭐⭐⭐⭐" if mk["p"]>=0.65 else "⭐⭐⭐")
                     stake=round(bank*0.01,2)
                     st.markdown(f"<div class='mcard value'><div class='mhead'><span class='chip'>{c['league']}</span>"
@@ -378,15 +390,16 @@ def render_sport(sport):
                         f"<div class='teams' style='font-size:1.1rem'>{i}. {c['h']} — {c['a']}</div>"
                         f"<div class='verdict'>➤ Ставь <b class='y'>{mk['name']}</b> при кэфе <b class='y'>≥ {mk['min_ok']:.2f}</b> · "
                         f"P <b class='g'>{mk['p']*100:.0f}%</b> · сумма <b class='y'>{stake:.2f} у.е.</b> (флэт 1%)<br>"
-                        f"<span style='color:#cbd5e1'>Elo {c['P']['elo'][0]} vs {c['P']['elo'][1]} · форма {c['P']['fh']} / {c['P']['fa']} · H2H: {c['P']['h2h']} · {c['P']['extra']}</span></div></div>",
+                        f"<span style='color:#cbd5e1'>Elo {P['elo'][0]} vs {P['elo'][1]} · форма {P['fh']} / {P['fa']} · H2H: {P['h2h']} · {P['extra']}</span></div></div>",
                         unsafe_allow_html=True)
             for c in cards:
                 st.markdown(card_html(c,thr),unsafe_allow_html=True)
+                P=c.get("P",{"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0})
                 kk=f"{sport}_{c['eid']}"
                 cc=st.columns([2,1,1])
-                mkt=cc[0].selectbox("Рынок",[m["name"] for m in c["P"]["markets"]],key=f"m{kk}")
+                mkt=cc[0].selectbox("Рынок",[m["name"] for m in P["markets"]],key=f"m{kk}")
                 odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{kk}")
-                prob=next(m["p"] for m in c["P"]["markets"] if m["name"]==mkt)
+                prob=next(m["p"] for m in P["markets"] if m["name"]==mkt)
                 ev=prob*odd-1
                 ev_cls="pos" if ev>0 else "neg"
                 cc[2].markdown(f"<div style='padding-top:26px' class='{ev_cls}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
