@@ -171,11 +171,11 @@ def scan_new_forecasts(api_key):
         url = f"https://api.the-odds-api.com/v4/sports/{league_key}/odds/?apiKey={api_key}&regions=eu,uk&markets=h2h&oddsFormat=decimal"
         try:
             response = requests.get(url, timeout=8)
-            debug_logs.append(f"{cfg['name']}: статус `{response.status_code}`")
-            
             if response.status_code != 200:
+                debug_logs.append(f"❌ {cfg['name']}: Статус `{response.status_code}` | Ответ: {response.text[:120]}")
                 continue
-                
+            
+            debug_logs.append(f"✅ {cfg['name']}: Статус 200")
             events = response.json()
             for event in events:
                 commence_time = event.get("commence_time")
@@ -258,7 +258,8 @@ def scan_new_forecasts(api_key):
                         "prob": prob,
                         "reason": reason
                     })
-        except Exception:
+        except Exception as e:
+            debug_logs.append(f"⚠️ {cfg['name']}: Исключение — {str(e)}")
             continue
             
     st.session_state.app_data["scanned_forecasts"] = found_forecasts
@@ -297,7 +298,7 @@ def load_public_football_archive():
     else:
         return 0, "Не удалось загрузить архив."
 
-# --- ИСПРАВЛЕННОЕ ДООБУЧЕНИЕ (РАБОТАЕТ С АРХИВОМ И СТАВКАМИ) ---
+# --- ДООБУЧЕНИЕ ---
 def fine_tune_ai_system():
     weights = st.session_state.app_data["weights"]
     archive = st.session_state.app_data.get("archive_matches", [])
@@ -331,14 +332,12 @@ def fine_tune_ai_system():
     probs = {"П1": p_home, "Ничья (X)": p_draw, "П2": p_away}
     model_pick = max(probs, key=probs.get)
     
-    # Оценка по архиву (берем до 200 матчей для скорости)
     for item in archive[:200]:
         actual_winner = item.get("winner")
         if model_pick == actual_winner:
             correct_preds += 1
         evaluated_count += 1
         
-    # Оценка по реальным ставкам
     for b in settled:
         if b.get("status") == "won":
             correct_preds += 1
@@ -375,7 +374,12 @@ with tab1:
             with st.spinner("Сканирование лиг и расчет моделей..."):
                 checked, found, logs = scan_new_forecasts(odds_api_key)
                 st.success(f"Проверено матчей: {checked}. Найдено выгодных прогнозов: {found}.")
-                with st.expander("🔍 Логи сканирования (проверка статусов API)"):
+                
+                # Если везде ошибки, выведем подсказку
+                if checked == 0:
+                    st.error("⚠️ Ни один запрос к API не удался. Проверьте правильность API-ключа в боковой панели или лимит бесплатных запросов.")
+
+                with st.expander("🔍 Логи сканирования (проверка статусов API)", expanded=(checked == 0)):
                     for l in logs:
                         st.write(l)
 
@@ -436,7 +440,6 @@ with tab2:
         st.rerun()
 
     bets = st.session_state.app_data.get("bets", [])
-    
     real_bets = [b for b in bets if b["status"] in ["won", "lost", "pending"]]
     total_bets = len(real_bets)
     won_bets = len([b for b in real_bets if b["status"] == "won"])
