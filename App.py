@@ -8,61 +8,55 @@ from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-# Настройка страницы
-st.set_page_config(page_title="Pro Betting AI v4.0", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Pro Betting AI v4.1", page_icon="🎯", layout="wide")
 
-# Стили интерфейса
+# Стили
 st.markdown("""
 <style>
     .stApp { background: linear-gradient(rgba(10, 15, 25, 0.95), rgba(10, 15, 25, 0.98)); }
     .main-header { font-size: 2rem; font-weight: 700; color: #38bdf8; margin-bottom: 1rem; }
     .card { background: rgba(30, 41, 59, 0.8); padding: 15px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.2); margin-bottom: 10px; }
     .ev-pos { color: #10b981; font-weight: bold; }
-    .ev-neg { color: #ef4444; font-weight: bold; }
+    .debug-box { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; font-family: monospace; font-size: 0.8rem; color: #cbd5e1; margin-bottom: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
-# === КОНФИГУРАЦИЯ ЛИГ И КУБКОВ ===
-# Используем коды football-data.co.uk для сезона 2526 (2025/2026)
+# === КОНФИГУРАЦИЯ ЛИГ ===
 LEAGUES = {
-    "󠁧󠁢󠁮󠁧 Англия (АПЛ)": "E0.csv",
+    "🏴󠁢󠁥󠁧󠁿 Англия (АПЛ)": "E0.csv",
     "🇪🇸 Испания (Ла Лига)": "SP1.csv",
     "🇮🇹 Италия (Серия А)": "I1.csv",
-    "🇪 Германия (Бундеслига)": "D1.csv",
-    "🇫 Франция (Лига 1)": "F1.csv",
-    "🇳🇱 Нидерланды (Эредивизи)": "N1.csv",
-    "🇵 Португалия (Примейра)": "P1.csv",
-    "🇹🇷 Турция (Суперлига)": "T1.csv",
+    "🇩🇪 Германия (Бундеслига)": "D1.csv",
+    "🇫🇷 Франция (Лига 1)": "F1.csv",
+    "🇳🇱 Нидерланды": "N1.csv",
+    "🇵 Португалия": "P1.csv",
+    "🇹🇷 Турция": "T1.csv",
     "🇷 Россия (РПЛ)": "R1.csv",
-    "🇳🇴 Норвегия (Элитсерия)": "N0.csv", 
+    "🇳🇴 Норвегия": "N0.csv",
     "🏆 Лига Чемпионов": "C1.csv",
     "🏆 Лига Европы": "EU1.csv",
     "🏆 Лига Конференций": "EC1.csv",
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Кубок Англии": "ECL.csv",
-    "🇪🇸 Кубок Испании": "SPC.csv",
+    "󠁧󠁢󠁮󠁧󠁿 Кубок Англии": "ECL.csv",
+    "🇸 Кубок Испании": "SPC.csv",
     "🇮🇹 Кубок Италии": "IC.csv",
-    "🇩 Кубок Германии": "DFB.csv",
-    "🇫🇷 Кубок Франции": "FR1.csv" 
+    "🇪 Кубок Германии": "DFB.csv",
+    "🇫 Кубок Франции": "FR1.csv"
 }
 
 HISTORY_FILE = "betting_data_v4.json"
 
-# === УТИЛИТЫ ===
 def load_history():
     if os.path.exists(HISTORY_FILE):
-        try:
-            return json.load(open(HISTORY_FILE, "r"))
+        try: return json.load(open(HISTORY_FILE, "r"))
         except: pass
     return {"bank": 10000.0, "bets": [], "stats": {"won": 0, "lost": 0, "profit": 0}, "forecasts": []}
 
 def save_history(data):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    with open(HISTORY_FILE, "w") as f: json.dump(data, f, indent=4)
 
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-# === МОДЕЛЬ ЭЛО И ПУАССОНА ===
 class SimpleModel:
     def __init__(self):
         self.elo = {}
@@ -74,17 +68,15 @@ class SimpleModel:
         self.elo[t1] = r1 + 32 * (s1 - e1)
         self.elo[t2] = r2 + 32 * ((1-s1) - (1-e1))
     
-    def predict(self, h, a, df):
-        # Elo вероятности
+    def predict(self, h, a):
         r1 = self.elo.get(h, 1500)
         r2 = self.elo.get(a, 1500)
         p1_e = 1 / (1 + 10 ** ((r2 - r1) / 400))
         p2_e = 1 / (1 + 10 ** ((r1 - r2) / 400))
         px_e = 0.25 * (1 - abs(p1_e - p2_e))
         
-        # Пуассон (на основе средних голов лиги, если нет истории команды)
-        lam_h = 1.5 
-        lam_a = 1.2
+        # Базовые лямбды (можно усложнить, взяв средние по лиге)
+        lam_h, lam_a = 1.5, 1.2
         
         matrix = np.zeros((6,6))
         for i in range(6):
@@ -95,7 +87,6 @@ class SimpleModel:
         px_p = np.sum(np.diag(matrix))
         p2_p = np.sum(np.triu(matrix, 1))
         
-        # Гибрид
         p1 = 0.5*p1_e + 0.5*p1_p
         px = 0.5*px_e + 0.5*px_p
         p2 = 0.5*p2_e + 0.5*p2_p
@@ -103,16 +94,14 @@ class SimpleModel:
         total = p1 + px + p2
         return p1/total, px/total, p2/total
 
-# === ИНТЕРФЕЙС ===
-st.markdown('<div class="main-header">🎯 Pro Betting AI v4.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"> Pro Betting AI v4.1</div>', unsafe_allow_html=True)
 
 st.sidebar.header("⚙️ Банк и настройки")
-st.sidebar.metric(" Банкролл", f"{st.session_state.app_data['bank']:.2f} у.е.")
-
+st.sidebar.metric("💰 Банкролл", f"{st.session_state.app_data['bank']:.2f} у.е.")
 kelly_frac = st.sidebar.slider("Дробь Келли", 0.1, 0.5, 0.25, 0.05)
 min_ev = st.sidebar.slider("Мин. перевес (EV %)", 1, 10, 3) / 100
 
-if st.sidebar.button("🔄 Полный сброс"):
+if st.sidebar.button("🔄 Сброс"):
     st.session_state.app_data = load_history()
     save_history(st.session_state.app_data)
     st.rerun()
@@ -121,45 +110,72 @@ tab1, tab2, tab3 = st.tabs([" Прогнозы", "📋 Ставки", "📊 Ст
 
 with tab1:
     st.header("Выбор турниров")
-    
-    # Безопасный multiselect без default
-    selected_leagues = st.multiselect(
-        "Отметьте лиги и кубки:",
-        options=list(LEAGUES.keys())
-    )
-    
-    days = st.slider("Период анализа (дни)", 1, 14, 7)
+    selected_leagues = st.multiselect("Отметьте лиги:", options=list(LEAGUES.keys()))
+    days = st.slider("Период анализа (дни)", 1, 30, 7) # Увеличил до 30 дней
     
     if st.button("🚀 Запустить анализ", type="primary"):
         if not selected_leagues:
             st.warning("Выберите хотя бы один турнир!")
         else:
-            with st.spinner("Загрузка данных со всех серверов..."):
-                all_dfs = []
-                base_url = "https://www.football-data.co.uk/mmz4281/2526/"
-                
-                for league_name in selected_leagues:
-                    code = LEAGUES[league_name]
-                    try:
-                        df = pd.read_csv(base_url + code)
-                        df['League'] = league_name
-                        all_dfs.append(df)
-                    except Exception as e:
-                        st.warning(f"Не удалось загрузить {league_name} (возможно, сезон еще не начался или файл недоступен).")
-                
-                if not all_dfs:
-                    st.error("Ни одна лига не загрузилась. Проверьте интернет или попробуйте другие лиги.")
-                    st.stop()
-                    
-                combined_df = pd.concat(all_dfs, ignore_index=True)
-                st.success(f"✅ Загружено {len(combined_df)} матчей из {len(selected_leagues)} турниров.")
+            debug_info = []
+            all_dfs = []
+            base_url = "https://www.football-data.co.uk/mmz4281/2526/"
             
-            with st.spinner("Обучение модели и расчет вероятностей..."):
-                model = SimpleModel()
+            for league_name in selected_leagues:
+                code = LEAGUES[league_name]
+                try:
+                    df = pd.read_csv(base_url + code)
+                    df['League'] = league_name
+                    all_dfs.append(df)
+                    debug_info.append(f"✅ {league_name}: {len(df)} строк")
+                except Exception as e:
+                    debug_info.append(f"❌ {league_name}: {str(e)[:50]}")
+            
+            if not all_dfs:
+                st.error("Ни одна лига не загрузилась.")
+                st.stop()
                 
-                # Обучение на сыгранных матчах
-                if 'FTHG' in combined_df.columns:
-                    past = combined_df[pd.notna(combined_df['FTHG'])]
+            combined_df = pd.concat(all_dfs, ignore_index=True)
+            
+            # Парсинг дат (пытаемся разные форматы)
+            if 'Date' in combined_df.columns:
+                combined_df['MatchDate'] = pd.to_datetime(combined_df['Date'], dayfirst=True, errors='coerce')
+                # Если дата не распознана, ставим NaT
+            else:
+                combined_df['MatchDate'] = pd.NaT
+            
+            today = pd.Timestamp.now().normalize()
+            limit = today + pd.Timedelta(days=days)
+            
+            # ФИЛЬТР БУДУЩИХ МАТЧЕЙ
+            # 1. Дата в диапазоне ИЛИ дата не определена (NaT), но матч есть в списке
+            # 2. Нет результата (FTHG пустой или NaN)
+            
+            mask_no_result = True
+            if 'FTHG' in combined_df.columns:
+                mask_no_result = combined_df['FTHG'].isna() | (combined_df['FTHG'] == '')
+            
+            mask_date_range = (combined_df['MatchDate'] >= today) & (combined_df['MatchDate'] <= limit)
+            mask_no_date = combined_df['MatchDate'].isna() # Для матчей без даты (иногда бывают в начале сезона)
+            
+            future_mask = mask_no_result & (mask_date_range | mask_no_date)
+            future_matches = combined_df[future_mask].copy()
+            
+            debug_info.append(f"📅 Всего матчей в базе: {len(combined_df)}")
+            debug_info.append(f" Найдено будущих/запланированных: {len(future_matches)}")
+            
+            with st.expander("🛠️ Отладка загрузки данных"):
+                st.markdown("\n".join(debug_info))
+                if len(future_matches) > 0:
+                    st.dataframe(future_matches[['League', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG']].head(10))
+            
+            if len(future_matches) == 0:
+                st.warning("⚠️ В загруженных файлах нет матчей на выбранный период. Возможно, расписание еще не опубликовано провайдером данных.")
+                st.info("Совет: Попробуйте увеличить период до 30 дней или выберите другие лиги.")
+            else:
+                with st.spinner("Обучение модели..."):
+                    model = SimpleModel()
+                    past = combined_df[mask_no_result == False] # Сыгранные матчи
                     for _, row in past.iterrows():
                         h, a = str(row.get('HomeTeam','')), str(row.get('AwayTeam',''))
                         hg, ag = float(row.get('FTHG',0)), float(row.get('FTAG',0))
@@ -167,52 +183,40 @@ with tab1:
                             s1 = 1 if hg > ag else (0.5 if hg == ag else 0)
                             model.update_elo(h, a, s1, 1-s1)
                 
-                # Фильтрация будущих матчей
-                today = pd.Timestamp.now().normalize()
-                limit = today + pd.Timedelta(days=days)
-                
-                if 'Date' in combined_df.columns:
-                    combined_df['MatchDate'] = pd.to_datetime(combined_df['Date'], dayfirst=True, errors='coerce')
-                    future = combined_df[
-                        (combined_df['MatchDate'] >= today) & 
-                        (combined_df['MatchDate'] <= limit)
-                    ]
-                    # Если есть результаты, исключаем их (значит матч уже прошел)
-                    if 'FTHG' in future.columns:
-                        future = future[pd.isna(future['FTHG']) | (future['FTHG']=='')]
-                else:
-                    future = combined_df
-                
                 forecasts = []
                 bank = st.session_state.app_data["bank"]
                 
-                for _, row in future.iterrows():
+                for _, row in future_matches.iterrows():
                     h, a = str(row.get('HomeTeam','')), str(row.get('AwayTeam',''))
                     if not h or not a: continue
                     
                     try:
-                        p1, px, p2 = model.predict(h, a, combined_df)
+                        p1, px, p2 = model.predict(h, a)
                         
-                        # Коэффициенты
-                        oh = float(row.get('B365H', row.get('PSH', 1.95)))
-                        ox = float(row.get('B365D', row.get('PSD', 3.40)))
-                        oa = float(row.get('B365A', row.get('PSA', 3.10)))
+                        oh = float(row.get('B365H', row.get('PSH', 0)))
+                        ox = float(row.get('B365D', row.get('PSD', 0)))
+                        oa = float(row.get('B365A', row.get('PSA', 0)))
+                        
+                        # Если коэффициентов нет вообще, пропускаем (ставить не на что)
+                        if oh <= 1 and ox <= 1 and oa <= 1: continue
                         
                         opts = [("П1", p1, oh), ("X", px, ox), ("П2", p2, oa)]
                         pick, prob, odd = max(opts, key=lambda x: x[1]*x[2])
                         
                         ev = (prob * odd) - 1.0
                         
-                        # Расчет ставки по Келли
                         b = odd - 1
                         kelly_raw = (b * prob - (1-prob)) / b
                         stake = max(0, min(kelly_raw * kelly_frac * bank, bank * 0.05))
                         
                         if ev > min_ev and stake > 0:
+                            date_str = row.get('MatchDate', pd.NaT)
+                            date_display = date_str.strftime('%d.%m') if pd.notna(date_str) else "Дата неизвестна"
+                            
                             forecasts.append({
                                 "league": row.get('League', ''),
                                 "match": f"{h} vs {a}",
-                                "date": row.get('MatchDate', today).strftime('%d.%m'),
+                                "date": date_display,
                                 "pick": pick,
                                 "prob": prob,
                                 "odds": odd,
@@ -223,13 +227,12 @@ with tab1:
                 
                 st.session_state.app_data["forecasts"] = forecasts
                 save_history(st.session_state.app_data)
-                st.success(f" Найдено {len(forecasts)} выгодных ставок!")
+                st.success(f"🎯 Найдено {len(forecasts)} выгодных ставок!")
                 st.rerun()
     
-    # Вывод прогнозов
     forecasts = st.session_state.app_data.get("forecasts", [])
     if forecasts:
-        st.subheader(f"📊 Результаты ({len(forecasts)} ставок)")
+        st.subheader(f" Результаты ({len(forecasts)} ставок)")
         for f in forecasts:
             st.markdown(f"""
             <div class="card">
@@ -237,7 +240,7 @@ with tab1:
                     <span style="background:#38bdf8; padding:2px 8px; border-radius:4px; font-size:0.8rem; color:white;">{f['league']}</span>
                     <span style="color:#94a3b8">{f['date']}</span>
                 </div>
-                <div style="font-size:1.1rem; font-weight:bold; color:white; margin-bottom:8px;">⚽ {f['match']}</div>
+                <div style="font-size:1.1rem; font-weight:bold; color:white; margin-bottom:8px;"> {f['match']}</div>
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; font-size:0.9rem;">
                     <div><span style="color:#94a3b8">Прогноз:</span> <b style="color:#facc15">{f['pick']}</b></div>
                     <div><span style="color:#94a3b8">Вероятность:</span> <b style="color:#4ade80">{f['prob']*100:.1f}%</b></div>
@@ -250,15 +253,15 @@ with tab1:
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("Выберите лиги выше и нажмите «Запустить анализ», чтобы получить прогнозы.")
+        st.info("Запустите анализ, чтобы увидеть прогнозы.")
 
 with tab2:
     st.header("Активные ставки")
     bets = st.session_state.app_data.get("bets", [])
-    
     pending = [b for b in bets if b.get("status") == "pending"]
+    
     if not pending:
-        st.info("Нет активных ставок. Добавьте их из вкладки «Прогнозы» или вручную.")
+        st.info("Нет активных ставок.")
     else:
         for i, bet in enumerate(pending):
             st.markdown(f"""
@@ -269,7 +272,6 @@ with tab2:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            
             cols = st.columns(2)
             with cols[0]:
                 if st.button(f"✅ Выиграла", key=f"w{i}"):
@@ -292,16 +294,15 @@ with tab2:
                     st.rerun()
 
 with tab3:
-    st.header("Статистика эффективности")
+    st.header("Статистика")
     stats = st.session_state.app_data.get("stats", {})
     bank = st.session_state.app_data["bank"]
-    
     total = stats.get("won", 0) + stats.get("lost", 0)
     wr = (stats.get("won", 0) / total * 100) if total > 0 else 0
     roi = (stats.get("profit", 0) / 10000 * 100)
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 Текущий банк", f"{bank:.2f}", f"{bank-10000:+.2f}")
-    c2.metric(" Всего ставок", total)
-    c3.metric("🎯 Win Rate", f"{wr:.1f}%")
-    c4.metric("📈 ROI", f"{roi:.2f}%")
+    c1.metric("💰 Банк", f"{bank:.2f}", f"{bank-10000:+.2f}")
+    c2.metric("Ставок", total)
+    c3.metric("Win Rate", f"{wr:.1f}%")
+    c4.metric("ROI", f"{roi:.2f}%")
