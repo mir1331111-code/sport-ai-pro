@@ -6,6 +6,7 @@ from scipy.stats import poisson
 import json
 import os
 import datetime
+import io
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
@@ -98,30 +99,34 @@ LEAGUES = [
     'soccer_turkey_super_lig'
 ]
 
-# --- ЗАГРУЗКА ИСПРАВЛЕННОГО АРХИВА С FOOTBALL-DATA.CO.UK ---
+# --- ЗАГРУЗКА АРХИВА С ИСПРАВЛЕННЫМ ПУТЕМ MMZ4281 ---
 def load_public_football_archive():
-    seasons = ["2526", "2425", "2324", "2223"]
+    seasons = ["2425", "2324", "2223", "2122"]
     archive_items = []
     
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
     for season in seasons:
-        url = f"https://www.football-data.co.uk/{season}/E0.csv"
+        url = f"https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
         try:
-            df = pd.read_csv(url)
-            for _, row in df.iterrows():
-                home = row.get('HomeTeam')
-                away = row.get('AwayTeam')
-                fthg = row.get('FTHG')
-                ftag = row.get('FTAG')
-                
-                if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
-                    winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
-                    archive_items.append({
-                        "match": f"{home} vs {away}",
-                        "winner": winner,
-                        "source": f"Football-Data ({season})"
-                    })
-            if archive_items:
-                break
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                df = pd.read_csv(io.StringIO(response.text))
+                for _, row in df.iterrows():
+                    home = row.get('HomeTeam')
+                    away = row.get('AwayTeam')
+                    fthg = row.get('FTHG')
+                    ftag = row.get('FTAG')
+                    
+                    if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                        winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                        archive_items.append({
+                            "match": f"{home} vs {away}",
+                            "winner": winner,
+                            "source": f"Football-Data ({season})"
+                        })
+                if archive_items:
+                    break
         except Exception:
             continue
             
@@ -130,7 +135,7 @@ def load_public_football_archive():
         save_history(st.session_state.app_data)
         return len(archive_items), f"Успешно загружено {len(archive_items)} реальных матчей из архива!"
     else:
-        return 0, "Не удалось загрузить архив. Проверьте соединение."
+        return 0, "Не удалось загрузить архив. Проверьте соединение или используйте ручную загрузку ниже."
 
 # --- ГЕНЕРАТОР ОБОСНОВАНИЙ ---
 def get_smart_reason(pick, odd, edge):
@@ -252,7 +257,7 @@ def analyze_upcoming_matches(api_key):
                             }
                             st.session_state.app_data["bets"].append(new_bet)
                             new_bets_placed += 1
-        except Exception as e:
+        except Exception:
             continue
             
     save_history(st.session_state.app_data)
@@ -279,7 +284,7 @@ def train_on_epochs_multisource(epochs=3):
         })
 
     if not training_items:
-        return 0, ["⚠️ База для обучения пуста! Нажмите кнопку '📥 Загрузить архив реальных матчей' во вкладке обучения."]
+        return 0, ["⚠️ База для обучения пуста! Нажмите кнопку '📥 Загрузить архив' или загрузите CSV-файл ниже."]
 
     total_events_processed = 0
     
@@ -402,15 +407,42 @@ with tab2:
 
 with tab3:
     st.markdown("### 🧠 Многокруговое обучение ИИ (Архив + Эпохи)")
-    st.write("Загрузите официальную открытую базу реальных матчей из европейских лиг и запустите многокруговое обучение (эпохи) для точной калибровки весов модели.")
+    st.write("Загрузите официальную открытую базу реальных матчей из европейских лиг или добавьте CSV-файл вручную, затем запустите многокруговое обучение (эпохи) для точной калибровки весов.")
     
-    if st.button("📥 Загрузить архив реальных матчей (Европа)"):
-        with st.spinner("Скачиваем базу матчей..."):
-            count, msg = load_public_football_archive()
-            if count > 0:
-                st.success(msg)
-            else:
-                st.error(msg)
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        if st.button("📥 Загрузить архив с сайта (Европа)"):
+            with st.spinner("Скачиваем базу матчей..."):
+                count, msg = load_public_football_archive()
+                if count > 0:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+                    
+    with col_b2:
+        uploaded_file = st.file_uploader("📂 Или загрузить свой CSV-файл матчей", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df_up = pd.read_csv(uploaded_file)
+                archive_items = []
+                for _, row in df_up.iterrows():
+                    home = row.get('HomeTeam')
+                    away = row.get('AwayTeam')
+                    fthg = row.get('FTHG')
+                    ftag = row.get('FTAG')
+                    if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                        winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                        archive_items.append({
+                            "match": f"{home} vs {away}",
+                            "winner": winner,
+                            "source": "Custom CSV"
+                        })
+                if archive_items:
+                    st.session_state.app_data["archive_matches"] = archive_items
+                    save_history(st.session_state.app_data)
+                    st.success(f"Успешно загружено {len(archive_items)} матчей из вашего файла!")
+            except Exception as e:
+                st.error(f"Ошибка чтения файла: {e}")
 
     st.markdown(f"📦 Загружено матчей в базе архива: **{len(st.session_state.app_data.get('archive_matches', []))}**")
     
