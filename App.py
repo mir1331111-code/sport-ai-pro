@@ -71,7 +71,8 @@ def ts_events(lid):
                     "hs":int(hs) if hs not in (None,"") else None,
                     "as":int(as_) if as_ not in (None,"") else None,
                     "league":e.get("strLeague") or "","src":"api"})
-        except Exception as e: log_err(f"events {lid}",e)
+        except Exception as e:
+            log_err(f"events {lid}",e)
     return out
 def pdate(s):
     for f in ("%Y-%m-%d","%d/%m/%Y","%d.%m.%Y"):
@@ -91,12 +92,15 @@ def parse_upload(buf):
             elif cl in ("hs","home_score","hgoals"): mp["hs"]=c
             elif cl in ("as","away_score","agoals"): mp["as"]=c
         for r in rd:
-            try: hs=int(float(r.get(mp.get("hs",""),"") or "")); as_=int(float(r.get(mp.get("as",""),"") or ""))
-            except Exception: hs=as_=None
+            try:
+                hs=int(float(r.get(mp.get("hs",""),"") or "")); as_=int(float(r.get(mp.get("as",""),"") or ""))
+            except Exception:
+                hs=as_=None
             rows.append({"id":f"up{len(rows)}","h":(r.get(mp.get("h","")) or "").strip(),
                 "a":(r.get(mp.get("a","")) or "").strip(),"date":(r.get(mp.get("date","")) or "").strip(),
                 "hs":hs,"as":as_,"league":"📁 CSV","src":"file"})
-    except Exception as e: log_err("upload",e)
+    except Exception as e:
+        log_err("upload",e)
     return rows
 
 # ================= МОДЕЛЬ =================
@@ -170,6 +174,7 @@ def osp_sport(allst,sport):
 
 LEAGUES_ALL=ts_all_leagues()
 
+# ================= РЕНДЕР ВКЛАДКИ ВИДА =================
 def render_sport(sport):
     cfg=SPORTS[sport]
     ALL=osp_load(); S=osp_sport(ALL,sport)
@@ -180,8 +185,8 @@ def render_sport(sport):
         names=[f"{o['strLeague']} (id {o['idLeague']})" for o in opts]
         res_names=[f"{o['strLeague']} (id {o['idLeague']})" for o in resolved]
         c1,c2,c3=st.columns([2,1,1])
-        sel=c1.multiselect("Лиги (авто-поиск TheSportsDB)",names,default=res_names[:3])
-        man=c2.text_input("ID лиги вручную","")
+        sel=c1.multiselect("Лиги (авто-поиск TheSportsDB)",names,default=res_names[:3],key=f"ms{sport}")
+        man=c2.text_input("ID лиги вручную","",key=f"ti{sport}")
         days=c3.slider("Горизонт, дней",1,14,7,key=f"d{sport}")
         up=st.file_uploader("Свой CSV (Date,Home,Away,HS,AS) — для лиг вне API",type=["csv"],key=f"u{sport}")
         if st.button(f"⚡ СКАН {cfg['icon']}",type="primary",key=f"scan{sport}"):
@@ -192,7 +197,10 @@ def render_sport(sport):
             if ids:
                 with ThreadPoolExecutor(max_workers=4) as ex:
                     for d in ex.map(ts_events,ids): rows+=d
-            if up is not None: rows+=parse_upload(up)
+            if up is not None:
+                uprows=parse_upload(up)
+                for r in uprows: r["id"]=f"{sport}-{r['id']}"
+                rows+=uprows
             eng=SportEngine(cfg)
             past=sorted([r for r in rows if r["hs"] is not None and r["as"] is not None and pdate(r["date"])],key=lambda r:pdate(r["date"]))
             for r in past: eng.add(r["h"],r["a"],r["hs"],r["as"])
@@ -224,26 +232,27 @@ def render_sport(sport):
  <div class="mrow hdr"><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>
  {''.join(f"<div class='mrow'><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{m['p']*100:.0f}%'></i></div><span style='color:#4ade80'>{m['p']*100:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>≥ {m['min_ok']:.2f}</span></div>" for m in c['markets'])}
 </div>""",unsafe_allow_html=True)
-            k=c["eid"]
+            kk=f"{sport}_{c['eid']}"
             cc=st.columns([2,1,1])
-            mkt=cc[0].selectbox("Рынок",[m["name"] for m in c["markets"]],key=f"m{k}")
-            odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{k}")
+            mkt=cc[0].selectbox("Рынок",[m["name"] for m in c["markets"]],key=f"m{kk}")
+            odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{kk}")
             prob=next(m["p"] for m in c["markets"] if m["name"]==mkt)
             ev=prob*odd-1
             cc[2].markdown(f"<div style='padding-top:26px' class='{'pos' if ev>0 else 'neg'}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
-            if st.button("➕ В портфель",key=f"b{k}"):
-                if ev<=0: st.warning("⛔ EV отрицательный — не добавлено.")
+            if st.button("➕ В портфель",key=f"b{kk}"):
+                if ev<=0:
+                    st.warning("⛔ EV отрицательный — не добавлено.")
                 else:
-                    ALL2=osp_load(); S2=osp_sport(ALL2,sport)
+                    A2=osp_load(); S2=osp_sport(A2,sport)
                     S2["bets"].append({"match":f"{c['h']} vs {c['a']}","league":c["league"],"sport":sport,
                         "market":mkt,"pick":mkt,"odds":odd,"prob":prob,
                         "stake":kelly(prob,odd,S2["bank"]),"status":"pending"})
-                    osp_save(ALL2); st.success("✅ Добавлено"); st.rerun()
+                    osp_save(A2); st.success("✅ Добавлено"); st.rerun()
         if not cards: st.info("Выбери лиги (или загрузи CSV) и нажми СКАН.")
     with sub[1]:
         st.header(f"💼 Портфель {cfg['icon']}")
-        if not S["bets"]: st.info("Пусто.")
         ALLcur=osp_load(); Sc=osp_sport(ALLcur,sport)
+        if not Sc["bets"]: st.info("Пусто.")
         for i,b in enumerate(Sc["bets"]):
             icon={"pending":"⏳","won":"🟢","lost":"🔴"}.get(b["status"],"⏳")
             st.markdown(f"{icon} **{b['match']}** · {b['market']} @ **{b['odds']:.2f}** · {b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%")
@@ -267,15 +276,28 @@ def render_sport(sport):
         m4.metric("Profit",f"{s['profit']:+.2f}")
         st.caption(f"Обучено матчей на последнем скане: {st.session_state.get('trained_'+sport,0)}")
         with st.expander(f"🐞 Лог ошибок ({len(ERR)})"):
-            for line in ERR[-30:]: st.text(line)
+            if ERR:
+                for line in ERR[-30:]: st.text(line)
+            else: st.text("Ошибок нет.")
 
-# ================= ВКЛАДКИ ВСЕГО ПРИЛОЖЕНИЯ =================
+# ================= ГЛАВНЫЕ ВКЛАДКИ =================
+ALL0=osp_load()
+tot_profit=sum(v.get("stats",{}).get("profit",0) for v in ALL0.values() if isinstance(v,dict))
+tot_pending=sum(1 for v in ALL0.values() if isinstance(v,dict) for b in v.get("bets",[]) if b.get("status")=="pending")
+st.markdown(f"""
+<div style="padding:14px 22px;border-radius:18px;margin-bottom:12px;border:1px solid rgba(56,189,248,.35);
+ background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(30,58,138,.6) 60%,rgba(6,78,59,.6));">
+ <h1 style="margin:0;font-size:2rem;font-weight:900;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.9)">🏟 ALL-SPORTS BET PRO</h1>
+ <p style="margin:4px 0 0;color:#dbeafe;font-size:.9rem">Футбол · Теннис · Баскетбол · Волейбол · Хоккей — у каждого вида своё обучение, банк и статистика</p>
+ <p style="margin:6px 0 0;color:#94a3b8;font-size:.85rem">Другие виды: ставок в работе {tot_pending} · суммарная прибыль {tot_profit:+.0f} у.е.</p>
+</div>""",unsafe_allow_html=True)
+
 top=st.tabs(["⚽ Футбол","🎾 Теннис","🏀 Баскетбол","🏐 Волейбол","🏒 Хоккей"])
 with top[0]:
     try:
         exec(compile(open("football_v7.py",encoding="utf-8").read(),"football_v7.py","exec"),globals())
     except FileNotFoundError:
-        st.error("Положи файл football_v7.py (твой прежний App.py, без изменений) рядом с этим App.py")
+        st.error("Положи файл football_v7.py (твой прежний App.py без изменений) рядом с этим App.py")
 with top[1]: render_sport("Tennis")
 with top[2]: render_sport("Basketball")
 with top[3]: render_sport("Volleyball")
