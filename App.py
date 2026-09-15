@@ -2,593 +2,328 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import TimeSeriesSplit
 import json
 import os
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="Pro Betting AI v3.0", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Pro Betting AI", page_icon="🎯", layout="wide")
 
-# СТИЛИ
 st.markdown("""
 <style>
-.stApp {
-    background: linear-gradient(rgba(10, 15, 25, 0.95), rgba(10, 15, 25, 0.98));
-}
-.main-header {
-    font-size: 2.5rem;
-    font-weight: 700;
-    background: linear-gradient(90deg, #38bdf8, #10b981);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 1rem;
-}
-.metric-card {
-    background: rgba(30, 41, 59, 0.8);
-    padding: 20px;
-    border-radius: 12px;
-    border: 1px solid rgba(56, 189, 248, 0.3);
-    margin-bottom: 15px;
-}
-.forecast-card {
-    background: rgba(30, 41, 59, 0.75);
-    padding: 18px;
-    border-radius: 12px;
-    border: 1px solid rgba(56, 189, 248, 0.2);
-    margin-bottom: 12px;
-}
-.bet-card-pending {
-    background: rgba(30, 41, 59, 0.75);
-    padding: 18px;
-    border-radius: 12px;
-    border-left: 6px solid #f59e0b;
-}
-.bet-card-won {
-    background: rgba(16, 185, 129, 0.15);
-    padding: 18px;
-    border-radius: 12px;
-    border-left: 6px solid #10b981;
-}
-.bet-card-lost {
-    background: rgba(239, 68, 68, 0.15);
-    padding: 18px;
-    border-radius: 12px;
-    border-left: 6px solid #ef4444;
-}
+.stApp { background: linear-gradient(rgba(10,15,25,0.95), rgba(10,15,25,0.98)); }
+.main-header { font-size: 2.5rem; font-weight: 700; background: linear-gradient(90deg, #38bdf8, #10b981); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
+.forecast-card { background: rgba(30,41,59,0.75); padding: 18px; border-radius: 12px; border: 1px solid rgba(56,189,248,0.2); margin-bottom: 12px; }
 .ev-positive { color: #10b981; font-weight: 700; }
-.ev-negative { color: #ef4444; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
-# КОНФИГУРАЦИЯ
-HISTORY_FILE = "pro_betting_v3.json"
-
-LEAGUES_DICT = {
-    "England": "🏴󠁧󠁢󠁥󠁮 Англия (АПЛ)",
-    "Spain": "🇪🇸 Испания (Ла Лига)",
-    "Italy": "🇮🇹 Италия (Серия А)",
-    "Germany": "🇩 Германия (Бундеслига)",
-    "France": "🇫🇷 Франция (Лига 1)",
-    "Russia": "🇷🇺 Россия (РПЛ)",
-    "Turkey": "🇹🇷 Турция (Суперлига)"
-}
-
+HISTORY_FILE = "betting_v3.json"
 LEAGUE_CODES = {
-    "🏴󠁧󠁥󠁮 Англия (АПЛ)": "E0.csv",
-    "🇪🇸 Испания (Ла Лига)": "SP1.csv",
-    "🇮🇹 Италия (Серия А)": "I1.csv",
-    "🇩🇪 Германия (Бундеслига)": "D1.csv",
-    "🇫🇷 Франция (Лига 1)": "F1.csv",
-    "🇺 Россия (РПЛ)": "R1.csv",
-    "🇹🇷 Турция (Суперлига)": "T1.csv"
+    "🏴󠁢󠁧 Англия (АПЛ)": "E0.csv",
+    "🇸 Испания": "SP1.csv",
+    "🇮🇹 Италия": "I1.csv",
+    "🇪 Германия": "D1.csv",
+    "🇫🇷 Франция": "F1.csv",
+    "🇷🇺 Россия": "R1.csv",
+    "🇷 Турция": "T1.csv"
 }
 
-# МОДУЛЬ ДАННЫХ
-class DataManager:
-    @staticmethod
-    def load_football_data_csv(leagues: list, season: str = "2526") -> pd.DataFrame:
-        base_url = f"https://www.football-data.co.uk/mmz4281/{season}/"
-        
-        all_data = []
-        for league in leagues:
-            if league in LEAGUE_CODES:
-                url = base_url + LEAGUE_CODES[league]
-                try:
-                    df = pd.read_csv(url)
-                    df['League'] = league
-                    df['Source'] = 'football-data'
-                    all_data.append(df)
-                except Exception as e:
-                    st.warning(f"Не удалось загрузить {league}: {str(e)[:100]}")
-        
-        return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-    
-    @staticmethod
-    def calculate_form(df: pd.DataFrame, team: str, last_n: int = 5) -> dict:
-        if 'HomeTeam' not in df.columns:
-            return {'form': 0.5, 'goals_scored': 1.0, 'goals_conceded': 1.0}
-            
-        team_matches = df[
-            ((df['HomeTeam'] == team) | (df['AwayTeam'] == team)) & 
-            pd.notna(df['FTHG'])
-        ].tail(last_n)
-        
-        if len(team_matches) == 0:
-            return {'form': 0.5, 'goals_scored': 1.0, 'goals_conceded': 1.0}
-        
-        points = 0
-        goals_scored = 0
-        goals_conceded = 0
-        
-        for _, row in team_matches.iterrows():
-            is_home = row['HomeTeam'] == team
-            goals_for = row['FTHG'] if is_home else row['FTAG']
-            goals_against = row['FTAG'] if is_home else row['FTHG']
-            
-            goals_scored += goals_for
-            goals_conceded += goals_against
-            
-            if goals_for > goals_against:
-                points += 3
-            elif goals_for == goals_against:
-                points += 1
-        
-        max_points = last_n * 3
-        form = points / max_points if max_points > 0 else 0.5
-        
-        return {
-            'form': form,
-            'goals_scored': goals_scored / len(team_matches),
-            'goals_conceded': goals_conceded / len(team_matches)
-        }
-    
-    @staticmethod
-    def detect_dropping_odds(row: pd.Series) -> bool:
-        home_open = row.get('B365H', None)
-        home_close = row.get('PSH', None)
-        
-        if pd.notna(home_open) and pd.notna(home_close):
-            try:
-                drop_pct = (float(home_open) - float(home_close)) / float(home_open)
-                return drop_pct > 0.05
-            except:
-                return False
-        
-        return False
-
-# МОДЕЛИ
-class HybridModel:
+class EloModel:
     def __init__(self):
-        self.elo_ratings = {}
-        self.xgb_model = None
-        self.is_trained = False
+        self.ratings = {}
     
-    def update_elo(self, team1: str, team2: str, score1: float, score2: float, k: float = 32):
-        r1 = self.elo_ratings.get(team1, 1500)
-        r2 = self.elo_ratings.get(team2, 1500)
-        
+    def update(self, t1, t2, s1, s2, k=32):
+        r1 = self.ratings.get(t1, 1500)
+        r2 = self.ratings.get(t2, 1500)
         e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
-        e2 = 1 - e1
-        
-        s1 = 1 if score1 > score2 else (0.5 if score1 == score2 else 0)
-        s2 = 1 - s1
-        
-        self.elo_ratings[team1] = r1 + k * (s1 - e1)
-        self.elo_ratings[team2] = r2 + k * (s2 - e2)
+        self.ratings[t1] = r1 + k * (s1 - e1)
+        self.ratings[t2] = r2 + k * (s2 - (1-e1))
     
-    def train(self, df: pd.DataFrame):
-        if 'HomeTeam' not in df.columns or len(df) < 100:
-            return
-        
-        self.is_trained = True
-    
-    def predict(self, home: str, away: str, df: pd.DataFrame) -> tuple:
-        home_elo = self.elo_ratings.get(home, 1500)
-        away_elo = self.elo_ratings.get(away, 1500)
-        
-        p_home_elo = 1 / (1 + 10 ** ((away_elo - home_elo) / 400))
-        p_away_elo = 1 / (1 + 10 ** ((home_elo - away_elo) / 400))
-        p_draw_elo = 0.25 * (1 - abs(p_home_elo - p_away_elo))
-        
-        total = p_home_elo + p_draw_elo + p_away_elo
-        p_home_elo /= total
-        p_draw_elo /= total
-        p_away_elo /= total
-        
-        home_form = DataManager.calculate_form(df, home, 5)
-        away_form = DataManager.calculate_form(df, away, 5)
-        
-        home_lambda = max(0.5, home_form['goals_scored'] * 1.1)
-        away_lambda = max(0.5, away_form['goals_scored'] * 0.9)
-        
-        matrix = np.zeros((6, 6))
-        for h in range(6):
-            for a in range(6):
-                matrix[h, a] = poisson.pmf(h, home_lambda) * poisson.pmf(a, away_lambda)
-        
-        p_home_poisson = np.sum(np.tril(matrix, -1))
-        p_draw_poisson = np.sum(np.diagonal(matrix))
-        p_away_poisson = np.sum(np.triu(matrix, 1))
-        
-        total = p_home_poisson + p_draw_poisson + p_away_poisson
-        if total > 0:
-            p_home_poisson /= total
-            p_draw_poisson /= total
-            p_away_poisson /= total
-        
-        p_home = 0.4 * p_home_elo + 0.6 * p_home_poisson
-        p_draw = 0.4 * p_draw_elo + 0.6 * p_draw_poisson
-        p_away = 0.4 * p_away_elo + 0.6 * p_away_poisson
-        
-        total = p_home + p_draw + p_away
-        return p_home/total, p_draw/total, p_away/total
+    def predict(self, t1, t2):
+        r1 = self.ratings.get(t1, 1500)
+        r2 = self.ratings.get(t2, 1500)
+        p1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
+        p2 = 1 / (1 + 10 ** ((r1 - r2) / 400))
+        pd_raw = 0.25 * (1 - abs(p1 - p2))
+        total = p1 + p2 + pd_raw
+        return p1/total, pd_raw/total, p2/total
 
-# КЕЛЛИ
-class KellyCriterion:
-    @staticmethod
-    def calculate(probability: float, odds: float, bankroll: float, fraction: float = 0.25) -> float:
-        if probability <= 0 or odds <= 1:
-            return 0.0
-        
-        b = odds - 1
-        q = 1 - probability
-        kelly_fraction = (b * probability - q) / b
-        
-        adjusted_fraction = max(0, kelly_fraction * fraction)
-        adjusted_fraction = min(adjusted_fraction, 0.05)
-        
-        return round(bankroll * adjusted_fraction, 2)
-
-# УПРАВЛЕНИЕ ДАННЫМИ
-def load_history() -> dict:
+def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            with open(HISTORY_FILE, "r") as f:
                 return json.load(f)
         except:
             pass
-    return {
-        "bank": 10000.0,
-        "bets": [],
-        "kelly_fraction": 0.25,
-        "statistics": {"total_bets": 0, "won": 0, "lost": 0, "profit": 0.0},
-        "forecasts": [],
-        "backtest": None
-    }
+    return {"bank": 10000.0, "bets": [], "kelly_frac": 0.25, "stats": {"total": 0, "won": 0, "lost": 0, "profit": 0.0}, "forecasts": []}
 
-def save_history(data: dict):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+def save_history(data):
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-# ГЛАВНОЕ ПРИЛОЖЕНИЕ
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.markdown('<div class="main-header">🎯 Pro Betting AI v3.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🎯 Pro Betting AI</div>', unsafe_allow_html=True)
 
-# Боковая панель
-st.sidebar.header("⚙️ Настройки")
-bank = st.session_state.app_data["bank"]
-st.sidebar.metric("💰 Банкролл", f"{bank:.2f} у.е.")
-
-kelly_frac = st.sidebar.slider("Дробь Келли", 0.1, 0.5, float(st.session_state.app_data.get("kelly_fraction", 0.25)), 0.05)
-st.session_state.app_data["kelly_fraction"] = kelly_frac
-
-min_ev = st.sidebar.slider("Минимальный EV (%)", 1, 10, 3, 1) / 100
+st.sidebar.header("️ Настройки")
+st.sidebar.metric(" Банк", f"{st.session_state.app_data['bank']:.2f} у.е.")
+kelly_frac = st.sidebar.slider("Дробь Келли", 0.1, 0.5, st.session_state.app_data.get("kelly_frac", 0.25), 0.05)
+st.session_state.app_data["kelly_frac"] = kelly_frac
+min_ev = st.sidebar.slider("Мин EV %", 1, 10, 3) / 100
 
 if st.sidebar.button("🔄 Сброс"):
-    st.session_state.app_data = {
-        "bank": 10000.0,
-        "bets": [],
-        "kelly_fraction": 0.25,
-        "statistics": {"total_bets": 0, "won": 0, "lost": 0, "profit": 0.0},
-        "forecasts": [],
-        "backtest": None
-    }
+    st.session_state.app_data = {"bank": 10000.0, "bets": [], "kelly_frac": 0.25, "stats": {"total": 0, "won": 0, "lost": 0, "profit": 0.0}, "forecasts": []}
     save_history(st.session_state.app_data)
     st.rerun()
 
-# Вкладки
-tab1, tab2, tab3 = st.tabs(["🎯 Прогнозы", "📋 Ставки", " Статистика"])
+tab1, tab2 = st.tabs(["🎯 Прогнозы", " Ставки"])
 
-# ВКЛАДКА 1: ПРОГНОЗЫ
 with tab1:
-    st.markdown("### 🎯 Анализ матчей с формой команд")
+    st.markdown("### 🔍 Анализ матчей")
     
-    available_leagues = list(LEAGUES_DICT.values())
-    default_league = "🏴󠁢󠁥󠁿 Англия (АПЛ)"
+    leagues = st.multiselect("Лиги:", list(LEAGUE_CODES.keys()), default=["🏴󠁢󠁧 Англия (АПЛ)"])
+    days = st.slider("Дней вперед", 1, 30, 7)
+    show_all = st.checkbox("📊 Показать все матчи (включая прошедшие)", value=False, help="Включите для отладки")
     
-    selected_leagues = st.multiselect(
-        "Выберите лиги:",
-        options=available_leagues,
-        default=[default_league] if default_league in available_leagues else available_leagues[:1]
-    )
-    
-    days = st.slider("Период анализа (дни)", 1, 14, 7)
-    today = pd.Timestamp.now().normalize()
-    future_limit = today + pd.Timedelta(days=days)
-    
-    st.info(f"📅 Диапазон: {today.strftime('%d.%m.%Y')} - {future_limit.strftime('%d.%m.%Y')}")
-    
-    if st.button("🚀 Запустить анализ", type="primary"):
-        if not selected_leagues:
-            st.warning("Выберите хотя бы одну лигу!")
+    if st.button("🚀 Анализ", type="primary"):
+        if not leagues:
+            st.warning("Выберите лиги")
         else:
             with st.spinner("Загрузка данных..."):
-                df = DataManager.load_football_data_csv(selected_leagues)
+                base = "https://www.football-data.co.uk/mmz4281/2526/"
+                all_df = []
+                for league in leagues:
+                    if league in LEAGUE_CODES:
+                        try:
+                            df = pd.read_csv(base + LEAGUE_CODES[league])
+                            df['League'] = league
+                            all_df.append(df)
+                            st.success(f"✅ {league}: {len(df)} матчей")
+                        except Exception as e:
+                            st.error(f"❌ {league}: {str(e)[:100]}")
                 
-                if len(df) == 0:
-                    st.error("Не удалось загрузить данные. Проверьте выбранные лиги.")
+                if not all_df:
                     st.stop()
                 
-                st.success(f"✅ Загружено {len(df)} матчей")
-            
-            with st.spinner("Обучение модели..."):
-                model = HybridModel()
+                df = pd.concat(all_df, ignore_index=True)
+                st.info(f"📊 Всего загружено: {len(df)} матчей")
                 
-                if 'FTHG' in df.columns:
-                    past = df[pd.notna(df['FTHG'])]
-                    for _, row in past.iterrows():
-                        model.update_elo(
-                            row.get('HomeTeam', ''),
-                            row.get('AwayTeam', ''),
-                            float(row.get('FTHG', 0)),
-                            float(row.get('FTAG', 0))
-                        )
+                # Показываем доступные даты
+                if 'Date' in df.columns:
+                    st.write(f"**Даты в данных:** {df['Date'].min()} - {df['Date'].max()}")
+                    st.write(f"**Матчей без результата:** {df['FTHG'].isna().sum() if 'FTHG' in df.columns else 'N/A'}")
                 
-                model.train(past if 'FTHG' in df.columns else df)
-                
-                st.success("✅ Модель обучена")
-            
-            with st.spinner("Генерация прогнозов..."):
+                # Парсинг дат
                 if 'Date' in df.columns:
                     df['MatchDate'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
-                    future = df[
-                        (df['MatchDate'] >= today) & 
-                        (df['MatchDate'] <= future_limit) & 
-                        (pd.isna(df['FTHG']) if 'FTHG' in df.columns else True)
-                    ]
+                    valid_dates = df['MatchDate'].dropna()
+                    if len(valid_dates) > 0:
+                        st.write(f"**Диапазон дат:** {valid_dates.min().strftime('%d.%m.%Y')} - {valid_dates.max().strftime('%d.%m.%Y')}")
+                
+                today = pd.Timestamp.now().normalize()
+                future_limit = today + pd.Timedelta(days=days)
+                
+                # Фильтрация матчей
+                if 'MatchDate' in df.columns:
+                    if show_all:
+                        # Показываем все матчи для отладки
+                        matches_to_analyze = df[df['MatchDate'].notna()].copy()
+                        st.warning(f"🔍 Режим отладки: анализируем {len(matches_to_analyze)} матчей (все)")
+                    else:
+                        # Только будущие матчи без результата
+                        matches_to_analyze = df[
+                            (df['MatchDate'] >= today) & 
+                            (df['MatchDate'] <= future_limit) &
+                            (df['FTHG'].isna() if 'FTHG' in df.columns else True)
+                        ].copy()
+                        st.info(f"📅 Найдено {len(matches_to_analyze)} будущих матчей на {days} дней")
                 else:
-                    future = df
+                    matches_to_analyze = df.copy()
+                    st.warning("️ Колонка Date не найдена, анализируем все матчи")
                 
-                forecasts = []
-                bank = st.session_state.app_data["bank"]
+                if len(matches_to_analyze) == 0:
+                    st.error("❌ Нет матчей для анализа! Попробуйте:")
+                    st.write("1. Увеличить период (ползунок выше)")
+                    st.write("2. Включить чекбокс 'Показать все матчи'")
+                    st.write("3. Выбрать другие лиги")
+                    st.stop()
                 
-                for _, row in future.iterrows():
-                    home = row.get('HomeTeam', '')
-                    away = row.get('AwayTeam', '')
+                # Обучение модели
+                with st.spinner("Обучение модели..."):
+                    elo = EloModel()
+                    past_matches = df[df['FTHG'].notna()] if 'FTHG' in df.columns else pd.DataFrame()
                     
-                    if not home or not away or pd.isna(home) or pd.isna(away):
-                        continue
+                    for _, row in past_matches.iterrows():
+                        h = row.get('HomeTeam', '')
+                        a = row.get('AwayTeam', '')
+                        if h and a:
+                            hg = float(row.get('FTHG', 0))
+                            ag = float(row.get('FTAG', 0))
+                            s1 = 1 if hg > ag else (0.5 if hg == ag else 0)
+                            s2 = 1 - s1
+                            elo.update(h, a, s1, s2)
                     
-                    try:
-                        p_home, p_draw, p_away = model.predict(str(home), str(away), df)
+                    st.success(f"✅ Обучено на {len(past_matches)} матчах")
+                
+                # Генерация прогнозов
+                with st.spinner("Генерация прогнозов..."):
+                    forecasts = []
+                    bank = st.session_state.app_data["bank"]
+                    analyzed_count = 0
+                    
+                    for idx, row in matches_to_analyze.iterrows():
+                        h = row.get('HomeTeam', '')
+                        a = row.get('AwayTeam', '')
                         
-                        home_odd = float(row.get('B365H', row.get('PSH', 1.95)))
-                        draw_odd = float(row.get('B365D', row.get('PSD', 3.40)))
-                        away_odd = float(row.get('B365A', row.get('PSA', 3.10)))
+                        if not h or not a or pd.isna(h) or pd.isna(a):
+                            continue
                         
-                        options = [
-                            ("П1", p_home, home_odd),
-                            ("X", p_draw, draw_odd),
-                            ("П2", p_away, away_odd)
-                        ]
-                        
-                        best = max(options, key=lambda x: x[1] * x[2])
-                        pick, prob, odd = best
-                        
-                        ev = (prob * odd) - 1.0
-                        
-                        is_dropping = DataManager.detect_dropping_odds(row)
-                        
-                        if ev > min_ev:
-                            stake = KellyCriterion.calculate(prob, odd, bank, kelly_frac)
+                        try:
+                            analyzed_count += 1
                             
-                            if stake > 0:
-                                form_home = DataManager.calculate_form(df, str(home), 5)
-                                form_away = DataManager.calculate_form(df, str(away), 5)
+                            # Вероятности Elo
+                            p1, px, p2 = elo.predict(h, a)
+                            
+                            # Пуассон на основе формы
+                            h_matches = past_matches[(past_matches['HomeTeam']==h) | (past_matches['AwayTeam']==h)].tail(5)
+                            a_matches = past_matches[(past_matches['HomeTeam']==a) | (past_matches['AwayTeam']==a)].tail(5)
+                            
+                            h_goals = h_matches['FTHG' if h_matches['HomeTeam']==h else 'FTAG'].mean() if len(h_matches) > 0 else 1.2
+                            a_goals = a_matches['FTAG' if a_matches['HomeTeam']==a else 'FTHG'].mean() if len(a_matches) > 0 else 1.0
+                            
+                            lam_h = max(0.5, h_goals)
+                            lam_a = max(0.5, a_goals)
+                            
+                            # Матрица Пуассона
+                            matrix = np.zeros((6,6))
+                            for i in range(6):
+                                for j in range(6):
+                                    matrix[i,j] = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
+                            
+                            pp1 = np.sum(np.tril(matrix, -1))
+                            ppx = np.sum(np.diag(matrix))
+                            pp2 = np.sum(np.triu(matrix, 1))
+                            total = pp1 + ppx + pp2
+                            if total > 0:
+                                pp1 /= total
+                                ppx /= total
+                                pp2 /= total
+                            
+                            # Ансамбль
+                            ph = 0.4*p1 + 0.6*pp1
+                            px_final = 0.4*px + 0.6*ppx
+                            pa = 0.4*p2 + 0.6*pp2
+                            
+                            # Коэффициенты
+                            odds_h = float(row.get('B365H', row.get('PSH', 1.95)))
+                            odds_x = float(row.get('B365D', row.get('PSD', 3.40)))
+                            odds_a = float(row.get('B365A', row.get('PSA', 3.10)))
+                            
+                            opts = [("П1", ph, odds_h), ("X", px_final, odds_x), ("П2", pa, odds_a)]
+                            pick, prob, odd = max(opts, key=lambda x: x[1]*x[2])
+                            
+                            ev = (prob * odd) - 1.0
+                            
+                            # Расчет ставки
+                            if ev > min_ev:
+                                b = odd - 1
+                                kelly = (b * prob - (1 - prob)) / b
+                                stake = max(0, kelly * kelly_frac) * bank
+                                stake = min(stake, bank * 0.05)
                                 
-                                forecasts.append({
-                                    "league": row.get('League', ''),
-                                    "match": f"{home} vs {away}",
-                                    "date": row.get('MatchDate', today).strftime('%d.%m') if 'MatchDate' in df.columns else today.strftime('%d.%m'),
-                                    "pick": pick,
-                                    "probability": prob,
-                                    "odds": odd,
-                                    "ev": ev,
-                                    "stake": stake,
-                                    "dropping": is_dropping,
-                                    "home_form": form_home['form'],
-                                    "away_form": form_away['form']
-                                })
-                    except Exception as e:
-                        continue
-                
-                st.session_state.app_data["forecasts"] = forecasts
-                save_history(st.session_state.app_data)
-                st.success(f"✅ Найдено {len(forecasts)} ставок с +EV > {min_ev*100:.0f}%")
-                st.rerun()
+                                if stake > 1:
+                                    match_date = row.get('MatchDate', today)
+                                    date_str = match_date.strftime('%d.%m') if pd.notna(match_date) else 'N/A'
+                                    
+                                    forecasts.append({
+                                        "league": row.get('League',''),
+                                        "match": f"{h} vs {a}",
+                                        "date": date_str,
+                                        "pick": pick,
+                                        "prob": prob,
+                                        "odds": odd,
+                                        "ev": ev,
+                                        "stake": round(stake, 2),
+                                        "p1": ph,
+                                        "px": px_final,
+                                        "p2": pa
+                                    })
+                        except Exception as e:
+                            continue
+                    
+                    st.session_state.app_data["forecasts"] = forecasts
+                    save_history(st.session_state.app_data)
+                    
+                    st.success(f"✅ Проанализировано: {analyzed_count} матчей")
+                    st.success(f"🎯 Найдено {len(forecasts)} ставок с EV > {min_ev*100:.0f}%")
+                    
+                    if len(forecasts) == 0:
+                        st.info("💡 Совет: уменьшите 'Мин EV %' в боковой панели до 1-2%")
+                    
+                    st.rerun()
     
+    # Показ прогнозов
     forecasts = st.session_state.app_data.get("forecasts", [])
     
     if forecasts:
         st.markdown(f"### 📊 Найдено {len(forecasts)} выгодных ставок")
         
         for f in forecasts:
-            ev_class = "ev-positive" if f["ev"] > 0 else "ev-negative"
-            dropping_badge = " 📉 DROPPING" if f["dropping"] else ""
-            
             st.markdown(f"""
                 <div class="forecast-card">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                        <span style="background: #38bdf8; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; color: white; font-weight: 700;">
-                            {f["league"]}
-                        </span>
-                        <span style="color: #94a3b8;">{f["date"]}{dropping_badge}</span>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+                        <span style="background:#38bdf8;padding:4px 10px;border-radius:6px;font-size:0.8rem;color:white;font-weight:700">{f['league']}</span>
+                        <span style="color:#94a3b8">{f['date']}</span>
                     </div>
-                    
-                    <div style="font-size: 1.2rem; font-weight: 700; color: #f8fafc; margin-bottom: 8px;">
-                        ⚽ {f["match"]}
+                    <div style="font-size:1.2rem;font-weight:700;color:#f8fafc;margin-bottom:8px">⚽ {f['match']}</div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px">
+                        <div><div style="color:#94a3b8;font-size:0.75rem">Прогноз</div><div style="color:#facc15;font-weight:700;font-size:1.1rem">{f['pick']}</div></div>
+                        <div><div style="color:#94a3b8;font-size:0.75rem">Вероятность</div><div style="color:#4ade80;font-weight:700;font-size:1.1rem">{f['prob']*100:.1f}%</div></div>
+                        <div><div style="color:#94a3b8;font-size:0.75rem">Коэффициент</div><div style="color:#facc15;font-weight:700;font-size:1.1rem">{f['odds']:.2f}</div></div>
+                        <div><div style="color:#94a3b8;font-size:0.75rem">EV (перевес)</div><div class="ev-positive" style="font-size:1.1rem">{f['ev']*100:.1f}%</div></div>
                     </div>
-                    
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px;">
+                    <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:10px;display:flex;justify-content:space-between;align-items:center">
                         <div>
-                            <div style="color: #94a3b8; font-size: 0.75rem;">Прогноз</div>
-                            <div style="color: #facc15; font-weight: 700; font-size: 1.1rem;">{f["pick"]}</div>
+                            <span style="color:#94a3b8;font-size:0.85rem">Рекомендуемая ставка:</span>
+                            <span style="color:#facc15;font-weight:700;font-size:1.1rem;margin-left:8px">{f['stake']:.2f} у.е.</span>
                         </div>
-                        <div>
-                            <div style="color: #94a3b8; font-size: 0.75rem;">Вероятность</div>
-                            <div style="color: #4ade80; font-weight: 700;">{f["probability"]*100:.1f}%</div>
-                        </div>
-                        <div>
-                            <div style="color: #94a3b8; font-size: 0.75rem;">Коэффициент</div>
-                            <div style="color: #facc15; font-weight: 700;">{f["odds"]:.2f}</div>
-                        </div>
-                        <div>
-                            <div style="color: #94a3b8; font-size: 0.75rem;">EV</div>
-                            <div class="{ev_class}">{f["ev"]*100:.1f}%</div>
-                        </div>
-                    </div>
-                    
-                    <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; display: flex; justify-content: space-between;">
-                        <div>
-                            <span style="color: #94a3b8; font-size: 0.85rem;">Ставка (Келли):</span>
-                            <span style="color: #facc15; font-weight: 700; margin-left: 8px;">{f["stake"]:.2f} у.е.</span>
-                        </div>
-                        <div style="color: #64748b; font-size: 0.75rem;">
-                            Форма: {f["home_form"]*100:.0f}% vs {f["away_form"]*100:.0f}%
+                        <div style="color:#64748b;font-size:0.75rem">
+                            Вероятности: П1={f['p1']*100:.0f}% X={f['px']*100:.0f}% П2={f['p2']*100:.0f}%
                         </div>
                     </div>
                 </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("Нет прогнозов. Выберите лиги и нажмите «Запустить анализ».")
+        st.info("👆 Выберите лиги и нажмите «Анализ»")
 
-# ВКЛАДКА 2: СТАВКИ
 with tab2:
-    st.markdown("###  Активные ставки")
-    
+    st.markdown("### 📋 Активные ставки")
     bets = st.session_state.app_data.get("bets", [])
     
     if not bets:
         st.info("Нет активных ставок")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
-        
-        if pending:
-            st.markdown(f"#### ⏳ В ожидании ({len(pending)})")
-            
-            for idx, bet in enumerate(pending):
-                st.markdown(f"""
-                    <div class="bet-card-pending">
-                        <div style="font-size: 1.1rem; font-weight: 700; color: #f8fafc;">
-                            ⚽ {bet.get("match", "")}
-                        </div>
-                        <div style="color: #94a3b8; margin-top: 5px;">
-                            Прогноз: <b style="color: #4ade80;">{bet.get("pick", "")}</b> @ {bet.get("odds", 0):.2f} | 
-                            Ставка: <b style="color: #facc15;">{bet.get("stake", 0):.2f} у.е.</b>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                cols = st.columns(2)
-                with cols[0]:
-                    if st.button(f"✅ Выиграла", key=f"win_{idx}"):
-                        bet["status"] = "won"
-                        profit = bet.get("stake", 0) * bet.get("odds", 0)
-                        st.session_state.app_data["bank"] += profit
-                        st.session_state.app_data["statistics"]["won"] += 1
-                        st.session_state.app_data["statistics"]["profit"] += profit - bet.get("stake", 0)
-                        save_history(st.session_state.app_data)
-                        st.success(f"+{profit:.2f} у.е.")
-                        st.rerun()
-                
-                with cols[1]:
-                    if st.button(f"❌ Проиграла", key=f"loss_{idx}"):
-                        bet["status"] = "lost"
-                        st.session_state.app_data["statistics"]["lost"] += 1
-                        st.session_state.app_data["statistics"]["profit"] -= bet.get("stake", 0)
-                        save_history(st.session_state.app_data)
-                        st.error(f"-{bet.get('stake', 0):.2f} у.е.")
-                        st.rerun()
-        
-        completed = [b for b in bets if b.get("status") in ["won", "lost"]]
-        if completed:
-            st.markdown(f"#### ✅ Завершенные ({len(completed)})")
-            for bet in completed[-10:]:
-                status_emoji = "🎉" if bet.get("status") == "won" else "😢"
-                card_cls = "bet-card-won" if bet.get("status") == "won" else "bet-card-lost"
-                
-                st.markdown(f"""
-                    <div class="{card_cls}">
-                        <div style="font-size: 1rem; font-weight: 700; color: #f8fafc;">
-                            {status_emoji} {bet.get("match", "")} - {bet.get("pick", "")} @ {bet.get("odds", 0):.2f}
-                        </div>
-                        <div style="color: #94a3b8; font-size: 0.85rem; margin-top: 5px;">
-                            Ставка: {bet.get("stake", 0):.2f} у.е. | Результат: {bet.get("status", "").upper()}
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-# ВКЛАДКА 3: СТАТИСТИКА
-with tab3:
-    st.markdown("### 📊 Статистика и эффективность")
-    
-    stats = st.session_state.app_data.get("statistics", {})
-    bank = st.session_state.app_data["bank"]
-    initial_bank = 10000.0
-    
-    total_bets = stats.get("total_bets", 0)
-    won = stats.get("won", 0)
-    lost = stats.get("lost", 0)
-    profit = stats.get("profit", 0.0)
-    
-    win_rate = (won / total_bets * 100) if total_bets > 0 else 0
-    roi = (profit / initial_bank * 100) if initial_bank > 0 else 0
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("💰 Банкролл", f"{bank:.2f} у.е.", f"{bank - initial_bank:+.2f}")
-    
-    with col2:
-        st.metric("📊 Всего ставок", total_bets)
-    
-    with col3:
-        st.metric("🎯 Win Rate", f"{win_rate:.1f}%")
-    
-    with col4:
-        st.metric("📈 ROI", f"{roi:.2f}%")
-    
-    st.markdown("---")
-    
-    if total_bets > 0:
-        st.markdown(f"""
-            <div class="metric-card">
-                <h4 style="color: #f8fafc; margin-bottom: 15px;">📊 Детальная статистика</h4>
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-                    <div>
-                        <div style="color: #94a3b8; font-size: 0.85rem;">Выиграно</div>
-                        <div style="color: #10b981; font-size: 1.5rem; font-weight: 700;">{won}</div>
-                    </div>
-                    <div>
-                        <div style="color: #94a3b8; font-size: 0.85rem;">Проиграно</div>
-                        <div style="color: #ef4444; font-size: 1.5rem; font-weight: 700;">{lost}</div>
-                    </div>
-                    <div>
-                        <div style="color: #94a3b8; font-size: 0.85rem;">Общая прибыль</div>
-                        <div style="color: {'#10b981' if profit > 0 else '#ef4444'}; font-size: 1.5rem; font-weight: 700;">{profit:+.2f} у.е.</div>
-                    </div>
-                    <div>
-                        <div style="color: #94a3b8; font-size: 0.85rem;">Текущий банк</div>
-                        <div style="color: #38bdf8; font-size: 1.5rem; font-weight: 700;">{bank:.2f} у.е.</div>
-                    </div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("Сделайте первые ставки для отображения статистики")
+        for i, bet in enumerate(pending):
+            cols = st.columns(2)
+            with cols[0]:
+                if st.button(f"✅ {bet.get('match','')[:30]}", key=f"w{i}"):
+                    bet["status"] = "won"
+                    profit = bet.get("stake",0) * bet.get("odds",0)
+                    st.session_state.app_data["bank"] += profit
+                    st.session_state.app_data["stats"]["won"] += 1
+                    st.session_state.app_data["stats"]["profit"] += profit - bet.get("stake",0)
+                    save_history(st.session_state.app_data)
+                    st.success(f"+{profit:.2f} у.е.")
+                    st.rerun()
+            with cols[1]:
+                if st.button(f"❌ {bet.get('match','')[:30]}", key=f"l{i}"):
+                    bet["status"] = "lost"
+                    st.session_state.app_data["stats"]["lost"] += 1
+                    st.session_state.app_data["stats"]["profit"] -= bet.get("stake",0)
+                    save_history(st.session_state.app_data)
+                    st.error(f"-{bet.get('stake',0):.2f} у.е.")
+                    st.rerun()
