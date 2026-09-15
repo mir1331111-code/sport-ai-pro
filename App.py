@@ -5,7 +5,7 @@ from scipy.stats import poisson
 import json
 import os
 
-st.set_page_config(page_title="AI Sport Bot Pro", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="AI Sport Bot Pro (Мульти-лига)", page_icon="⚽", layout="wide")
 
 # Дизайн и стили
 st.markdown("""
@@ -97,7 +97,7 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Sport Bot Pro (Автозагрузка данных)")
+st.title("⚽ AI Sport Bot Pro (Мульти-Лига Анализ)")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("⚙️ Настройки и Банк")
@@ -113,88 +113,83 @@ if st.sidebar.button("🔄 Полный сброс системы"):
 
 # --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3 = st.tabs([
-    "🌐 Автозагрузка и Анализ", 
+    "🌐 Массовая загрузка и Анализ", 
     "📜 История и Активные ставки", 
     "⚙️ О системе"
 ])
 
 with tab1:
-    st.markdown("### 📥 Автоматическая загрузка расписания из интернета")
-    st.write("Выберите лигу или вставьте прямую ссылку на CSV-файл (например, с Football-Data.co.uk), и приложение само загрузит матчи и проанализирует их.")
+    st.markdown("### 📥 Выбор лиг для одновременного скачивания")
+    st.write("Отметьте нужные чемпионата. Приложение скачает их все поочередно, объединит и проанализирует каждый матч.")
 
-    league_choice = st.selectbox(
-        "Выберите источник / лигу (Football-Data):",
-        [
-            "Английская Премьер-лига (АПЛ / E0)",
-            "Испанская Ла Лига (SP1)",
-            "Итальянская Серия А (I1)",
-            "Немецкая Бундеслига (D1)",
-            "Французская Лига 1 (F1)",
-            "Свой вариант (ввести ссылку ниже)"
-        ]
-    )
-
-    # Словарь дефолтных ссылок на актуальные сезоны Football-Data
-    urls_map = {
-        "Английская Премьер-лига (АПЛ / E0)": "https://www.football-data.co.uk/mmz425/2526/E0.csv",
-        "Испанская Ла Лига (SP1)": "https://www.football-data.co.uk/mmz425/2526/SP1.csv",
-        "Итальянская Серия А (I1)": "https://www.football-data.co.uk/mmz425/2526/I1.csv",
-        "Немецкая Бундеслига (D1)": "https://www.football-data.co.uk/mmz425/2526/D1.csv",
-        "Французская Лига 1 (F1)": "https://www.football-data.co.uk/mmz425/2526/F1.csv"
+    leagues_dict = {
+        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "https://www.football-data.co.uk/mmz425/2526/E0.csv",
+        "🇪🇸 Испания (Ла Лига)": "https://www.football-data.co.uk/mmz425/2526/SP1.csv",
+        "🇮🇹 Италия (Серия А)": "https://www.football-data.co.uk/mmz425/2526/I1.csv",
+        "🇩🇪 Германия (Бундеслига)": "https://www.football-data.co.uk/mmz425/2526/D1.csv",
+        "🇫🇷 Франция (Лига 1)": "https://www.football-data.co.uk/mmz425/2526/F1.csv",
+        "🇳🇱 Нидерланды (Эредивизи)": "https://www.football-data.co.uk/mmz425/2526/N1.csv",
+        "🇵🇹 Португалия (Примейра)": "https://www.football-data.co.uk/mmz425/2526/P1.csv",
+        "🇧🇪 Бельгия (Про-лига)": "https://www.football-data.co.uk/mmz425/2526/B1.csv"
     }
 
-    if league_choice != "Свой вариант (ввести ссылку ниже)":
-        default_url = urls_map[league_choice]
-    else:
-        default_url = "https://www.football-data.co.uk/mmz425/2526/E0.csv"
+    selected_leagues = st.multiselect(
+        "Выберите лиги для анализа:",
+        options=list(leagues_dict.keys()),
+        default=["🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", "🇪🇸 Испания (Ла Лига)"]
+    )
 
-    custom_url = st.text_input("Прямая ссылка на CSV-файл:", value=default_url)
+    if st.button("🚀 Скачать выбранные лиги и запустить ИИ-анализ", type="primary"):
+        if not selected_leagues:
+            st.warning("Пожалуйста, выберите хотя бы одну лигу!")
+        else:
+            all_dfs = []
+            for league_name in selected_leagues:
+                url = leagues_dict[league_name]
+                try:
+                    df_temp = pd.read_csv(url)
+                    df_temp['League_Source'] = league_name
+                    all_dfs.append(df_temp)
+                except Exception as e:
+                    st.warning(f"Не удалось загрузить {league_name}: {e}")
 
-    if st.button("🚀 Скачать данные по ссылке и запустить ИИ", type="primary"):
-        try:
-            df = pd.read_csv(custom_url)
-            st.success(f"Данные успешно скачаны! Загружено строк: {len(df)}")
-            
-            with st.expander("👀 Предпросмотр скачанных данных"):
-                st.dataframe(df.head(10))
-
-            xg_w = current_weights.get("xg_w", 1.0)
-            found_forecasts = []
-            app_data = st.session_state.app_data
-            bets = app_data["bets"]
-            existing_match_names = {b["match"] for b in bets}
-            bank = app_data["bank"]
-            
-            # Поиск колонок в стандартных форматах футбольной статистики
-            h_col = 'HomeTeam' if 'HomeTeam' in df.columns else next((c for c in df.columns if 'home' in c.lower()), None)
-            a_col = 'AwayTeam' if 'AwayTeam' in df.columns else next((c for c in df.columns if 'away' in c.lower()), None)
-            
-            if not h_col or not a_col:
-                st.error("В скачанном файле не найдены колонки HomeTeam / AwayTeam.")
+            if not all_dfs:
+                st.error("Не удалось загрузить ни один из выбранных файлов.")
             else:
+                combined_df = pd.concat(all_dfs, ignore_index=True)
+                st.success(f"Успешно загружено лиг: {len(all_dfs)}. Всего матчей в базе: {len(combined_df)}")
+
+                xg_w = current_weights.get("xg_w", 1.0)
+                found_forecasts = []
+                app_data = st.session_state.app_data
+                bets = app_data["bets"]
+                existing_match_names = {b["match"] for b in bets}
+                bank = app_data["bank"]
+
                 processed_count = 0
-                for _, row in df.iterrows():
-                    home_team = row.get(h_col)
-                    away_team = row.get(a_col)
-                    
+                for _, row in combined_df.iterrows():
+                    home_team = row.get('HomeTeam')
+                    away_team = row.get('AwayTeam')
+                    league_src = row.get('League_Source', 'Футбол')
+
                     if pd.isna(home_team) or pd.isna(away_team):
                         continue
-                        
+
                     home_odd = float(row.get('B365H', row.get('PSH', 1.95))) if pd.notna(row.get('B365H', row.get('PSH', 1.95))) else 1.95
                     draw_odd = float(row.get('B365D', row.get('PSD', 3.40))) if pd.notna(row.get('B365D', row.get('PSD', 3.40))) else 3.40
                     away_odd = float(row.get('B365A', row.get('PSA', 3.10))) if pd.notna(row.get('B365A', row.get('PSA', 3.10))) else 3.10
-                    
+
                     processed_count += 1
-                    
+
                     # Расчет Пуассона
                     h_lam = max(0.6, min(3.5, 1.4 * xg_w))
                     a_lam = max(0.5, min(3.2, 1.1))
-                    
+
                     matrix = np.zeros((6, 6))
                     for h in range(6):
                         for a in range(6):
                             matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
-                    
+
                     p_home = np.sum(np.tril(matrix, -1))
                     p_draw = np.sum(np.diagonal(matrix))
                     p_away = np.sum(np.triu(matrix, 1))
@@ -203,22 +198,22 @@ with tab1:
                         p_home /= total
                         p_draw /= total
                         p_away /= total
-                        
+
                     options = [
                         ("П1", p_home, home_odd),
                         ("Ничья (X)", p_draw, draw_odd),
                         ("П2", p_away, away_odd)
                     ]
-                    
+
                     best_pick = max(options, key=lambda x: x[1] * x[2])
                     pick_name, prob, odd = best_pick
-                    
+
                     edge = (prob * odd) - 1.0
                     decision = "🟢 СТАВИМ" if edge > -0.08 and odd < 3.0 else "🔴 НЕ СТАВИМ"
-                    reason = f"Анализ онлайн-данных. Шанс модели: {prob*100:.1f}%."
-                    
+                    reason = f"Мульти-лига анализ. Шанс модели: {prob*100:.1f}%."
+
                     forecast_item = {
-                        "league_name": league_choice.split('(')[0].strip(),
+                        "league_name": league_src,
                         "league_color": "#38bdf8",
                         "match": f"{home_team} vs {away_team}",
                         "pick": pick_name,
@@ -228,7 +223,7 @@ with tab1:
                         "decision": decision
                     }
                     found_forecasts.append(forecast_item)
-                    
+
                     if "СТАВИМ" in decision and "НЕ" not in decision:
                         if forecast_item["match"] not in existing_match_names and bank >= STAKE_SIZE:
                             bank -= STAKE_SIZE
@@ -250,17 +245,14 @@ with tab1:
                 app_data["bank"] = bank
                 app_data["scanned_forecasts"] = found_forecasts
                 save_history(app_data)
-                st.success(f"Обработано матчей: {processed_count}. Результаты обновлены!")
+                st.success(f"Обработано матчей суммарно: {processed_count}. Все результаты обновлены!")
                 st.rerun()
 
-        except Exception as e:
-            st.error(f"Не удалось загрузить данные по ссылке: {e}")
-
-    st.markdown("### 📋 Результаты анализа:", unsafe_allow_html=True)
+    st.markdown("### 📋 Результаты анализа по всем лигам:", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
-        st.info("Нет активных прогнозов. Нажмите кнопку загрузки выше.")
+        st.info("Нет активных прогнозов. Выберите лиги выше и нажмите кнопку запуска.")
     else:
         for idx, f in enumerate(forecasts):
             l_name = f.get("league_name", "Спорт")
@@ -330,4 +322,4 @@ with tab2:
 
 with tab3:
     st.markdown("### ℹ️ О системе")
-    st.write("Теперь приложение само скачивает таблицы с сайта по прямым ссылкам, избавляя вас от ручного скачивания файлов на компьютер.")
+    st.write("Режим мульти-лиги позволяет загружать сразу несколько топ-чемпионатов Европы в один клик и параллельно анализировать их все через математическую модель.")
