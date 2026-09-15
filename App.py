@@ -74,22 +74,15 @@ st.markdown("""
 HISTORY_FILE = "bet_history.json"
 STAKE_SIZE = 100.0
 
-# --- КОНФИГУРАЦИЯ ЛИГ С ЦВЕТАМИ ---
-LEAGUES_CONFIG = {
-    'soccer_epl': {'name': 'Англия (ПЛ)', 'color': '#38bdf8'},
-    'soccer_spain_la_liga': {'name': 'Испания (Ла Лига)', 'color': '#f43f5e'},
-    'soccer_italy_serie_a': {'name': 'Италия (Серия А)', 'color': '#3b82f6'},
-    'soccer_germany_bundesliga': {'name': 'Германия (Бундеслига)', 'color': '#ef4444'},
-    'soccer_france_ligue_one': {'name': 'Франция (Лига 1)', 'color': '#8b5cf6'},
-    'soccer_netherlands_eredivisie': {'name': 'Нидерланды (Эредивизи)', 'color': '#f97316'},
-    'soccer_portugal_primeira_liga': {'name': 'Португалия (Примейра)', 'color': '#10b981'},
-    'soccer_turkey_super_lig': {'name': 'Турция (Суперлига)', 'color': '#eab308'},
-    'soccer_russia_premier_league': {'name': 'Россия (РПЛ)', 'color': '#06b6d4'},
-    'soccer_usa_mls': {'name': 'США (MLS)', 'color': '#ec4899'},
-    'soccer_uefa_champions_league': {'name': 'Лига Чемпионов УЕФА', 'color': '#6366f1'},
-    'soccer_uefa_europa_league': {'name': 'Лига Европы УЕФА', 'color': '#f59e0b'},
-    'soccer_uefa_conference_league': {'name': 'Лига Конференций УЕФА', 'color': '#14b8a6'},
-    'soccer_efl_champ': {'name': 'Англия (Ченпионшип)', 'color': '#64748b'}
+# --- БЕСПЛАТНЫЕ ЛИГИ И КОДЫ ДАТАСЕТОВ ---
+FREE_LEAGUES = {
+    'E0': {'name': 'Англия (Премьер-лига)', 'color': '#38bdf8'},
+    'SP1': {'name': 'Испания (Ла Лига)', 'color': '#f43f5e'},
+    'I1': {'name': 'Италия (Серия А)', 'color': '#3b82f6'},
+    'D1': {'name': 'Германия (Бундеслига)', 'color': '#ef4444'},
+    'F1': {'name': 'Франция (Лига 1)', 'color': '#8b5cf6'},
+    'N1': {'name': 'Нидерланды (Эредивизи)', 'color': '#f97316'},
+    'P1': {'name': 'Португалия (Примейра)', 'color': '#10b981'}
 }
 
 def reset_full_system():
@@ -135,12 +128,10 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Football Bot Pro — Рабочая лошадка")
+st.title("⚽ AI Football Bot Pro — Рабочая лошадка (Без ключей API)")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
-st.sidebar.header("🔑 Настройки API и Банк")
-odds_api_key = st.sidebar.text_input("The Odds API Key", type="password")
-hours_ahead = st.sidebar.slider("Искать матчи на сколько часов вперед?", min_value=6, max_value=168, value=72, step=6)
+st.sidebar.header("⚙️ Настройки модели и Банк")
 min_edge = st.sidebar.slider("Мин. перевес (Edge)", min_value=0.0, max_value=0.05, value=0.0, step=0.001, format="%.3f")
 
 st.sidebar.markdown("---")
@@ -157,8 +148,8 @@ if st.sidebar.button("🔄 Полный сброс системы"):
     st.sidebar.success("Система сброшена!")
     st.rerun()
 
-# --- СКАНИРОВАНИЕ И НОВЫЕ ПРОГНОЗЫ ---
-def scan_new_forecasts(api_key):
+# --- БЕСПЛАТНЫЙ СКАНЕР ИЗ ОТКРЫТЫХ ИСТОЧНИКОВ ---
+def scan_free_forecasts():
     weights = st.session_state.app_data["weights"]
     xg_w = weights.get("xg_w", 1.0)
     odds_limit = weights.get("odds_limit", 2.5)
@@ -167,49 +158,54 @@ def scan_new_forecasts(api_key):
     checked_count = 0
     debug_logs = []
     
-    for league_key, cfg in LEAGUES_CONFIG.items():
-        url = f"https://api.the-odds-api.com/v4/sports/{league_key}/odds/?apiKey={api_key}&regions=eu,uk&markets=h2h&oddsFormat=decimal"
-        try:
-            response = requests.get(url, timeout=8)
-            if response.status_code != 200:
-                debug_logs.append(f"❌ {cfg['name']}: Статус `{response.status_code}` | Ответ: {response.text[:120]}")
+    seasons_to_try = ["2627", "2526"]
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    for league_code, cfg in FREE_LEAGUES.items():
+        df_league = None
+        for season in seasons_to_try:
+            url = f"https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv"
+            try:
+                response = requests.get(url, headers=headers, timeout=8)
+                if response.status_code == 200:
+                    df_league = pd.read_csv(io.StringIO(response.text))
+                    break
+            except:
                 continue
+                
+        if df_league is None or df_league.empty:
+            debug_logs.append(f"⚠️ {cfg['name']}: не удалось загрузить данные расписания")
+            continue
             
-            debug_logs.append(f"✅ {cfg['name']}: Статус 200")
-            events = response.json()
-            for event in events:
-                commence_time = event.get("commence_time")
-                if commence_time:
-                    match_dt = datetime.datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-                    now_dt = datetime.datetime.now(datetime.timezone.utc)
-                    diff_hours = (match_dt - now_dt).total_seconds() / 3600
-                    if diff_hours < 0 or diff_hours > hours_ahead:
-                        continue
-                
-                home_team = event.get("home_team")
-                away_team = event.get("away_team")
-                bookmakers = event.get("bookmakers", [])
-                
-                if not bookmakers:
+        debug_logs.append(f"✅ {cfg['name']}: успешно загружено строк ({len(df_league)})")
+        
+        if 'HomeTeam' not in df_league.columns or 'AwayTeam' not in df_league.columns:
+            continue
+            
+        # Ищем матчи без сыгранного счета (FTHG пустой) — это предстоящие матчи с коэффициентами
+        for _, row in df_league.iterrows():
+            fthg = row.get('FTHG')
+            if pd.isna(fthg):
+                home_team = row.get('HomeTeam')
+                away_team = row.get('AwayTeam')
+                if pd.isna(home_team) or pd.isna(away_team):
                     continue
                 
-                markets = bookmakers[0].get("markets", [])
-                outcomes = []
-                for m in markets:
-                    if m.get("key") == "h2h":
-                        outcomes = m.get("outcomes", [])
-                        break
+                # Берем коэффициенты Bet365 или Pinnacle из открытой таблицы
+                home_odd = row.get('B365H') if pd.notna(row.get('B365H')) else row.get('PSH', 1.9)
+                draw_odd = row.get('B365D') if pd.notna(row.get('B365D')) else row.get('PSD', 3.2)
+                away_odd = row.get('B365A') if pd.notna(row.get('B365A')) else row.get('PSA', 1.9)
                 
-                if len(outcomes) < 2:
-                    continue
-                
-                odds_dict = {o["name"]: o["price"] for o in outcomes}
-                home_odd = odds_dict.get(home_team, 1.9)
-                away_odd = odds_dict.get(away_team, 1.9)
-                draw_odd = odds_dict.get("Draw", 3.2)
+                try:
+                    home_odd = float(home_odd)
+                    draw_odd = float(draw_odd)
+                    away_odd = float(away_odd)
+                except:
+                    home_odd, draw_odd, away_odd = 1.9, 3.2, 1.9
                 
                 checked_count += 1
                 
+                # Расчет по модели Пуассона
                 h_lam = max(0.6, min(3.5, 1.4 * xg_w))
                 a_lam = max(0.5, min(3.2, 1.1))
                 
@@ -249,7 +245,6 @@ def scan_new_forecasts(api_key):
                     reason = f"🟢 Шанс: {win_pct:.1f}% | 🔴 Риск: {lose_pct:.1f}% (Edge: +{edge*100:.1f}%)"
                     
                     found_forecasts.append({
-                        "league_key": league_key,
                         "league_name": cfg['name'],
                         "league_color": cfg['color'],
                         "match": f"{home_team} vs {away_team}",
@@ -258,17 +253,14 @@ def scan_new_forecasts(api_key):
                         "prob": prob,
                         "reason": reason
                     })
-        except Exception as e:
-            debug_logs.append(f"⚠️ {cfg['name']}: Исключение — {str(e)}")
-            continue
-            
+                    
     st.session_state.app_data["scanned_forecasts"] = found_forecasts
     save_history(st.session_state.app_data)
     return checked_count, len(found_forecasts), debug_logs
 
-# --- ЗАГРУЗКА АРХИВА ---
+# --- ЗАГРУЗКА АРХИВА ПРОШЛЫХ МАТЧЕЙ ---
 def load_public_football_archive():
-    seasons = ["2425", "2324", "2223"]
+    seasons = ["2526", "2425", "2324"]
     archive_items = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
@@ -298,7 +290,7 @@ def load_public_football_archive():
     else:
         return 0, "Не удалось загрузить архив."
 
-# --- ДООБУЧЕНИЕ ---
+# --- ДООБУЧЕНИЕ ИИ ---
 def fine_tune_ai_system():
     weights = st.session_state.app_data["weights"]
     archive = st.session_state.app_data.get("archive_matches", [])
@@ -307,7 +299,7 @@ def fine_tune_ai_system():
     
     total_samples = len(archive) + len(settled)
     if total_samples == 0:
-        return "⚠️ Нет данных для дообучения. Загрузите архив матчей выше или сделайте ставки во вкладке 'Новые прогнозы'."
+        return "⚠️ Нет данных для дообучения. Загрузите архив матчей ниже или сделайте ставки во вкладке 'Новые прогнозы'."
     
     correct_preds = 0
     evaluated_count = 0
@@ -364,24 +356,16 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-    st.markdown("### 🚀 Сканирование лиг и новые прогнозы модели")
-    st.write("Здесь отображаются только свежие матчи, найденные сканером. Убедитесь, что в боковой панели введен правильный API-ключ.")
+    st.markdown("### 🚀 Сканирование бесплатных источников и расписаний")
+    st.write("Нажмите кнопку ниже, чтобы бок о бок проверить актуальные расписания и коэффициенты топ-лиг из открытых баз.")
     
-    if st.button("🔎 Запустить сканирование матчей", type="primary"):
-        if not odds_api_key:
-            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели слева!")
-        else:
-            with st.spinner("Сканирование лиг и расчет моделей..."):
-                checked, found, logs = scan_new_forecasts(odds_api_key)
-                st.success(f"Проверено матчей: {checked}. Найдено выгодных прогнозов: {found}.")
-                
-                # Если везде ошибки, выведем подсказку
-                if checked == 0:
-                    st.error("⚠️ Ни один запрос к API не удался. Проверьте правильность API-ключа в боковой панели или лимит бесплатных запросов.")
-
-                with st.expander("🔍 Логи сканирования (проверка статусов API)", expanded=(checked == 0)):
-                    for l in logs:
-                        st.write(l)
+    if st.button("🔎 Найти свежие матчи и коэффициенты", type="primary"):
+        with st.spinner("Загрузка расписаний и расчет модели Пуассона..."):
+            checked, found, logs = scan_free_forecasts()
+            st.success(f"Проверено предстоящих матчей: {checked}. Найдено подходящих прогнозов: {found}.")
+            with st.expander("🔍 Логи загрузки бесплатных баз данных"):
+                for l in logs:
+                    st.write(l)
 
     st.markdown("### 📋 Свежие прогнозы:", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
@@ -570,4 +554,4 @@ with tab3:
 
 with tab4:
     st.markdown("### ℹ️ О системе и лигах")
-    st.write("Рабочая лошадка для анализа матчей по распределению Пуассона. Поддерживает все топ-лиги и кубки Европы, РПЛ, MLS, Турцию, Голландию, Португалию и еврокубки с цветовой маркировкой.")
+    st.write("Рабочая лошадка для анализа матчей по распределению Пуассона. Работает полностью на бесплатных открытых базах данных расписаний и коэффициентов топ-лиг Европы.")
