@@ -5,7 +5,6 @@ import io
 import json
 import os
 import math
-import time
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -13,21 +12,24 @@ st.set_page_config(page_title="Football Betting AI Expert Pro", page_icon="🚀"
 
 HISTORY_FILE = "betting_expert_data.json"
 
-LEAGUES = {
-    "🏴󠁧󠁥󠁧 Англия (АПЛ)": "E0.csv",
+# Сезонные файлы (только сыгранные матчи - для обучения)
+SEASONAL_LEAGUES = {
+    "🏴󠁧󠁥󠁧󠁿 Англия (АПЛ)": "E0.csv",
     "🇪🇸 Испания (Ла Лига)": "SP1.csv",
-    "🇮 Италия (Серия А)": "I1.csv",
+    "🇮🇹 Италия (Серия А)": "I1.csv",
     "🇩🇪 Германия (Бундеслига)": "D1.csv",
-    "🇫 Франция (Лига 1)": "F1.csv",
+    "🇫🇷 Франция (Лига 1)": "F1.csv",
     "🇳🇱 Нидерланды": "N1.csv",
     "🇵🇹 Португалия": "P1.csv",
     "🇹🇷 Турция": "T1.csv",
     "🇧🇪 Бельгия": "B1.csv",
-    "🇷🇺 Россия": "R1.csv"
+    "🇷🇺 Россия": "R1.csv",
+    "🏆 Лига Чемпионов": "C1.csv",
+    "🏆 Лига Европы": "E1.csv"
 }
 
 # ============================================================
-# ИСПРАВЛЕННЫЙ ДВИЖОК
+# ДВИЖОК
 # ============================================================
 class Engine:
     def __init__(self):
@@ -37,24 +39,21 @@ class Engine:
         self.away_goals = []
 
     def add_result(self, h, a, hg, ag):
-        # Elo с домашним бонусом
         rh = self.elo.get(h, 1500)
         ra = self.elo.get(a, 1500)
         eh = 1 / (1 + 10 ** ((ra - (rh + 60)) / 400))
         sh = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
         self.elo[h] = rh + 32 * (sh - eh)
         self.elo[a] = ra + 32 * ((1 - sh) - (1 - eh))
-
         s = self.stats
         s[h]["hs"].append(hg); s[h]["hc"].append(ag)
         s[a]["as"].append(ag); s[a]["ac"].append(hg)
         s[h]["form"].append(3 if hg > ag else (1 if hg == ag else 0))
         s[a]["form"].append(3 if ag > hg else (1 if hg == ag else 0))
         self.home_goals.append(hg); self.away_goals.append(ag)
-
         for t in (h, a):
             for k in s[t]:
-                s[t][k] = s[t][k][-12:]  # храним последние 12
+                s[t][k] = s[t][k][-12:]
 
     def _mean(self, lst, default=1.0):
         return sum(lst) / len(lst) if lst else default
@@ -64,24 +63,19 @@ class Engine:
         return (sum(f) / (len(f) * 3)) if f else 0.5
 
     def predict(self, h, a):
-        """ИСПРАВЛЕНО: сила атаки/обороны как ОТНОШЕНИЕ к среднему по лиге"""
         lh = self._mean(self.home_goals, 1.5)
         la = self._mean(self.away_goals, 1.2)
-
         sh, sa = self.stats[h], self.stats[a]
 
-        att_h = self._mean(sh["hs"], lh) / lh      # атака дома относительно лиги
-        def_h = self._mean(sh["hc"], la) / la      # оборона дома (пропускает)
-        att_a = self._mean(sa["as"], la) / la      # атака гостей
-        def_a = self._mean(sa["ac"], lh) / lh      # оборона гостей (пропускает)
-
+        att_h = self._mean(sh["hs"], lh) / lh
+        def_h = self._mean(sh["hc"], la) / la
+        att_a = self._mean(sa["as"], la) / la
+        def_a = self._mean(sa["ac"], lh) / lh
         form_h, form_a = self._form(h), self._form(a)
 
-        # ПРАВИЛЬНАЯ формула: свои голы * чужая дыра в обороне
         lam_h = max(0.3, min(4.0, lh * att_h * def_a * 1.10 * (0.85 + 0.30 * form_h)))
         lam_a = max(0.25, min(3.5, la * att_a * def_h * 0.95 * (0.85 + 0.30 * form_a)))
 
-        # Пуассон + Dixon-Coles поправка
         p_h = p_d = p_a = 0.0
         for i in range(7):
             for j in range(7):
@@ -94,7 +88,6 @@ class Engine:
         tot = p_h + p_d + p_a
         p_h, p_d, p_a = p_h / tot, p_d / tot, p_a / tot
 
-        # Elo-смесь
         e = 1 / (1 + 10 ** ((self.elo.get(a, 1500) - self.elo.get(h, 1500) - 60) / 400))
         pd_e = 0.20 + 0.12 * (1 - abs(e - 0.5) * 2)
         pe_h, pe_a = e * (1 - pd_e), (1 - e) * (1 - pd_e)
@@ -107,16 +100,15 @@ class Engine:
 
         probs = {"П1": f_h, "X": f_d, "П2": f_a}
         ranked = sorted(probs.items(), key=lambda x: -x[1])
-        margin = ranked[0][1] - ranked[1][1]  # отрыв от 2-го исхода
+        margin = ranked[0][1] - ranked[1][1]
         data_games = min(len(sh["hs"]) + len(sh["as"]), len(sa["hs"]) + len(sa["as"]))
-
         return probs, ranked[0], margin, (lam_h, lam_a), data_games
 
     def _pois(self, l, k):
         return math.exp(-l) * l ** k / math.factorial(k)
 
 # ============================================================
-# ДАННЫЕ (CSV с РЕАЛЬНЫМИ коэффициентами, без API-ключа)
+# ЗАГРУЗКА ДАННЫХ
 # ============================================================
 @st.cache_data(ttl=1800)
 def find_season():
@@ -130,13 +122,26 @@ def find_season():
     return "2526"
 
 @st.cache_data(ttl=1800)
-def load_league(file, season):
+def load_seasonal(file, season):
+    """Загрузка СЫГРАННЫХ матчей (для обучения модели)"""
     try:
         r = requests.get(f"https://www.football-data.co.uk/mmz4281/{season}/{file}",
                          timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         return list(csv.DictReader(io.StringIO(r.text)))
-    except Exception:
+    except Exception as e:
+        return []
+
+@st.cache_data(ttl=600)
+def load_fixtures():
+    """КЛЮЧЕВОЙ ФАЙЛ! Будущие матчи с реальными коэффициентами букмекеров"""
+    try:
+        url = "https://www.football-data.co.uk/fixtures.csv"
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        return list(csv.DictReader(io.StringIO(r.text)))
+    except Exception as e:
+        st.error(f"Ошибка загрузки fixtures.csv: {e}")
         return []
 
 def parse_date(s):
@@ -148,7 +153,7 @@ def parse_date(s):
     return None
 
 def get_odds(row):
-    for pref in ("B365", "PS", "Max", "WH"):
+    for pref in ("B365", "BS", "PS", "BW", "WH", "Max"):
         h, d, a = row.get(pref + "H"), row.get(pref + "D"), row.get(pref + "A")
         if h and d and a:
             try:
@@ -157,9 +162,29 @@ def get_odds(row):
                 continue
     return None
 
-# ============================================================
-# КЕЛЛИ + РИСКИ
-# ============================================================
+def match_fixture_league(fixture_div):
+    """Сопоставление кода лиги из fixtures.csv с нашим словарём"""
+    mapping = {
+        "E0": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)",
+        "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия Ч",
+        "SP1": "🇪🇸 Испания (Ла Лига)",
+        "SP2": "🇪🇸 Испания 2",
+        "I1": "🇮🇹 Италия (Серия А)",
+        "I2": "🇮🇹 Италия B",
+        "D1": "🇩🇪 Германия (Бундеслига)",
+        "D2": "🇩🇪 Германия 2",
+        "F1": "🇫🇷 Франция (Лига 1)",
+        "F2": "🇫🇷 Франция 2",
+        "N1": "🇳🇱 Нидерланды",
+        "P1": "🇵🇹 Португалия",
+        "T1": "🇹🇷 Турция",
+        "B1": "🇧🇪 Бельгия",
+        "R1": "🇷🇺 Россия",
+        "C1": "🏆 Лига Чемпионов",
+        "E1": "🏆 Лига Европы",
+    }
+    return mapping.get(fixture_div)
+
 def kelly(prob, odds, bank, frac):
     if prob <= 0 or odds <= 1:
         return 0.0
@@ -173,7 +198,7 @@ def load_data():
             return json.load(open(HISTORY_FILE, encoding="utf-8"))
         except Exception:
             pass
-    return {"bank": 10000.0, "bets": [], "forecasts": [], "funnel": None,
+    return {"bank": 10000.0, "bets": [], "forecasts": [],
             "stats": {"won": 0, "lost": 0, "profit": 0}}
 
 def save_data(d):
@@ -189,12 +214,12 @@ with st.sidebar:
     bank = st.session_state.data["bank"]
     st.metric("💰 Банк", f"{bank:.2f} у.е.")
     kelly_frac = st.slider("Келли (дробь)", 0.10, 0.40, 0.25, 0.05)
-    min_ev = st.slider("Мин. EV (%)", 0, 15, 3) / 100
-    min_prob = st.slider("Мин. вероятность (%)", 35, 75, 45) / 100
-    min_margin = st.slider("Мин. отрыв от 2-го исхода (%)", 0, 25, 6) / 100
+    min_ev = st.slider("Мин. EV (%)", 0, 15, 2) / 100
+    min_prob = st.slider("Мин. вероятность (%)", 30, 75, 40) / 100
+    min_margin = st.slider("Мин. отрыв (%)", 0, 25, 4) / 100
     if st.button("🔄 Сброс"):
         st.session_state.data = load_data.__wrapped__() if hasattr(load_data, "__wrapped__") else {
-            "bank": 10000.0, "bets": [], "forecasts": [], "funnel": None,
+            "bank": 10000.0, "bets": [], "forecasts": [],
             "stats": {"won": 0, "lost": 0, "profit": 0}}
         save_data(st.session_state.data)
         st.cache_data.clear()
@@ -203,64 +228,78 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🔍 Сканер матчей", "📋 Портфель", "📊 Статистика"])
 
 with tab1:
-    st.header("Поиск валуйных ставок с РЕАЛЬНЫМИ коэффициентами")
-    sel = st.multiselect("Лиги", list(LEAGUES.keys()), default=list(LEAGUES.keys())[:5])
-    days = st.slider("Горизонт (дней)", 1, 21, 10)
-    show_all = st.checkbox("Показать все матчи окна (даже без EV)", value=True)
+    st.header("⚽ Поиск валуйных ставок")
+    st.info("""
+    **🔑 Ключевое изменение:**  
+    Матчи теперь берутся из **fixtures.csv** — это РАСПИСАНИЕ БУДУЩИХ МАТЧЕЙ с реальными коэффициентами букмекеров.  
+    Модель обучается на сыгранных матчах из сезонных CSV.
+    """)
+
+    days = st.slider("Горизонт (дней)", 1, 21, 14)
+    show_all = st.checkbox("Показать все матчи (даже без EV)", value=True)
 
     if st.button("⚡ Сканировать", type="primary"):
-        if not sel:
-            st.warning("Выбери лиги")
-            st.stop()
-
         season = find_season()
-        st.session_state.data["season"] = season
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         limit = today + timedelta(days=days)
 
-        funnel = {"loaded": 0, "played": 0, "in_window": 0, "with_odds": 0, "passed": 0}
+        funnel = {"fixtures_loaded": 0, "in_window": 0, "with_odds": 0, "trained": 0, "passed": 0}
         engine = Engine()
-        all_rows = []
 
+        # ШАГ 1: Обучаем модель на сыгранных матчах
         prog = st.progress(0.0, text="Обучение модели на сыгранных матчах...")
-        for i, name in enumerate(sel):
-            rows = load_league(LEAGUES[name], season)
-            funnel["loaded"] += len(rows)
-            parsed = []
+        for i, (name, file) in enumerate(SEASONAL_LEAGUES.items()):
+            rows = load_seasonal(file, season)
             for r in rows:
-                r["_date"] = parse_date(r.get("Date", ""))
-                r["_league"] = name
-                parsed.append(r)
-            # хронологически для обучения
-            for r in sorted([x for x in parsed if x["_date"]], key=lambda x: x["_date"]):
+                d = parse_date(r.get("Date", ""))
+                if not d:
+                    continue
                 if r.get("FTHG") not in (None, "") and r.get("FTAG") not in (None, ""):
                     try:
                         engine.add_result(r["HomeTeam"], r["AwayTeam"],
                                           float(r["FTHG"]), float(r["FTAG"]))
-                        funnel["played"] += 1
+                        funnel["trained"] += 1
                     except Exception:
                         continue
-            all_rows.extend(parsed)
-            prog.progress((i + 1) / len(sel), text=f"Обучение: {name}")
+            prog.progress((i + 1) / len(SEASONAL_LEAGUES), text=f"Обучение: {name}")
         prog.empty()
+        st.success(f"✅ Модель обучена на {funnel['trained']} сыгранных матчах")
 
+        # ШАГ 2: Загружаем БУДУЩИЕ матчи из fixtures.csv
+        with st.spinner("Загрузка расписания будущих матчей..."):
+            fixtures = load_fixtures()
+            funnel["fixtures_loaded"] = len(fixtures)
+
+        if not fixtures:
+            st.error("❌ Не удалось загрузить fixtures.csv")
+            st.stop()
+
+        st.success(f"✅ В расписании {len(fixtures)} матчей")
+
+        # ШАГ 3: Фильтруем и прогнозируем
         forecasts = []
         existing = {b["match"] for b in st.session_state.data["bets"]}
         added = 0
 
-        for r in all_rows:
-            d = r["_date"]
-            if not d or not (today <= d <= limit):
+        for r in fixtures:
+            d = parse_date(r.get("Date", ""))
+            if not d:
+                continue
+            if not (today <= d <= limit):
                 continue
             funnel["in_window"] += 1
-            if r.get("FTHG") not in (None, ""):
-                continue  # сыграно
+
             odds = get_odds(r)
             if not odds:
                 continue
             funnel["with_odds"] += 1
 
-            h, a = r.get("HomeTeam", ""), r.get("AwayTeam", "")
+            h = r.get("HomeTeam", "").strip()
+            a = r.get("AwayTeam", "").strip()
+            div = r.get("Div", "")
+            league = match_fixture_league(div) or f"Лига {div}"
+            time_str = r.get("Time", "")
+
             if not h or not a:
                 continue
 
@@ -269,23 +308,23 @@ with tab1:
             odd = {"П1": oh, "X": od, "П2": oa}[pick]
             ev = prob * odd - 1
 
-            passed = (prob >= min_prob) and (margin >= min_margin) and (ev >= min_ev) and games >= 3
+            passed = (prob >= min_prob) and (margin >= min_margin) and (ev >= min_ev)
             if passed:
                 funnel["passed"] += 1
 
             if passed or show_all:
                 stake = kelly(prob, odd, bank, kelly_frac) if passed else 0.0
                 forecasts.append({
-                    "league": r["_league"], "match": f"{h} vs {a}",
-                    "date": d.strftime("%d.%m %H:%M") if r.get("Time") else d.strftime("%d.%m"),
+                    "league": league, "match": f"{h} vs {a}",
+                    "date": d.strftime("%d.%m") + (f" {time_str}" if time_str else ""),
                     "pick": pick, "prob": prob, "odd": odd, "ev": ev,
                     "margin": margin, "lams": lams, "games": games,
                     "stake": stake, "passed": passed
                 })
 
-                if passed and prob >= 0.55 and f"{h} vs {a}" not in existing and stake > 0:
+                if passed and f"{h} vs {a}" not in existing and stake > 0:
                     st.session_state.data["bets"].append({
-                        "match": f"{h} vs {a}", "league": r["_league"],
+                        "match": f"{h} vs {a}", "league": league,
                         "pick": pick, "odds": odd, "stake": stake,
                         "status": "pending", "prob": prob})
                     existing.add(f"{h} vs {a}")
@@ -295,22 +334,22 @@ with tab1:
         st.session_state.data["forecasts"] = forecasts
         st.session_state.data["funnel"] = funnel
         save_data(st.session_state.data)
-        st.success(f"✅ Готово. Валуйных: {funnel['passed']}. В портфель добавлено: {added}")
+        st.success(f"✅ Найдено валуйных: **{funnel['passed']}**. В портфель добавлено: **{added}**")
         st.rerun()
 
-    # ДИАГНОСТИКА ВОРОНКИ
     funnel = st.session_state.data.get("funnel")
     if funnel:
-        with st.expander("🔬 Почему столько матчей прошло фильтр (диагностика)"):
-            st.write(f"- Загружено строк: **{funnel['loaded']}**")
-            st.write(f"- Сыгранных (обучение): **{funnel['played']}**")
-            st.write(f"- Матчей в окне дат: **{funnel['in_window']}**")
-            st.write(f"- Из них с коэффициентами: **{funnel['with_odds']}**")
-            st.write(f"- Прошли фильтры EV/вероятность/отрыв: **{funnel['passed']}**")
+        with st.expander("🔬 Диагностика"):
+            st.write(f"- Матчей в fixtures.csv: **{funnel['fixtures_loaded']}**")
+            st.write(f"- Обучено на сыгранных: **{funnel['trained']}**")
+            st.write(f"- В окне дат: **{funnel['in_window']}**")
+            st.write(f"- С коэффициентами: **{funnel['with_odds']}**")
+            st.write(f"- Прошли фильтры: **{funnel['passed']}**")
 
     forecasts = st.session_state.data.get("forecasts", [])
     if forecasts:
-        st.subheader(f"📊 Матчи в окне: {len(forecasts)}")
+        valui = [f for f in forecasts if f["passed"]]
+        st.subheader(f"📊 {len(forecasts)} матчей ({len(valui)} валуйных)")
         for f in forecasts:
             color = "#10b981" if f["passed"] else "#64748b"
             badge = "🟢 ВАЛУЙ" if f["passed"] else "⚪ наблюдение"
@@ -328,45 +367,19 @@ with tab1:
                 <div><span style="color:#94a3b8">EV:</span> <b style="color:{'#10b981' if f['ev']>0 else '#ef4444'}">{f['ev']*100:+.1f}%</b></div>
                 <div><span style="color:#94a3b8">Отрыв:</span> <b>{f['margin']*100:.1f}%</b></div>
               </div>
-              <div style="margin-top:8px;color:#cbd5e1;font-size:.85rem">xG: {f['lams'][0]:.2f}–{f['lams'][1]:.2f} | данных матчей: {f['games']} | ставка Келли: <b style="color:#facc15">{f['stake']:.2f}</b></div>
+              <div style="margin-top:8px;color:#cbd5e1;font-size:.85rem">xG: {f['lams'][0]:.2f}–{f['lams'][1]:.2f} | игр в базе: {f['games']} | Келли: <b style="color:#facc15">{f['stake']:.2f}</b></div>
             </div>""", unsafe_allow_html=True)
     else:
-        st.info("Нажми «Сканировать». Диагностика покажет, на каком этапе отсеиваются матчи.")
+        st.info("Нажми «Сканировать»")
 
 with tab2:
     st.header("📋 Портфель")
-    if st.button("🔄 Синхронизировать результаты"):
-        season = st.session_state.data.get("season", find_season())
-        upd = 0
-        for bet in [b for b in st.session_state.data["bets"] if b["status"] == "pending"]:
-            rows = load_league(LEAGUES.get(bet["league"], "E0.csv"), season)
-            h_t, a_t = bet["match"].split(" vs ")
-            for r in rows:
-                if r.get("HomeTeam") == h_t and r.get("AwayTeam") == a_t and r.get("FTHG") not in (None, ""):
-                    hg, ag = float(r["FTHG"]), float(r["FTAG"])
-                    res = "П1" if hg > ag else ("X" if hg == ag else "П2")
-                    if res == bet["pick"]:
-                        bet["status"] = "won"
-                        profit = bet["stake"] * (bet["odds"] - 1)
-                        st.session_state.data["bank"] += bet["stake"] + profit
-                        st.session_state.data["stats"]["won"] += 1
-                        st.session_state.data["stats"]["profit"] += profit
-                    else:
-                        bet["status"] = "lost"
-                        st.session_state.data["stats"]["lost"] += 1
-                        st.session_state.data["stats"]["profit"] -= bet["stake"]
-                    upd += 1
-                    break
-        save_data(st.session_state.data)
-        st.success(f"Обновлено: {upd}")
-        st.rerun()
-
     bets = st.session_state.data["bets"]
     if not bets:
         st.info("Портфель пуст")
     for b in bets:
         icon = {"pending": "⏳", "won": "🟢", "lost": "🔴"}[b["status"]]
-        st.markdown(f"{icon} **{b['match']}** | {b['pick']} @ {b['odds']:.2f} | {b['stake']:.2f} у.е. | P={b.get('prob',0)*100:.0f}%")
+        st.markdown(f"{icon} **{b['match']}** ({b['league']}) | {b['pick']} @ {b['odds']:.2f} | {b['stake']:.2f} у.е. | P={b.get('prob',0)*100:.0f}%")
 
 with tab3:
     s = st.session_state.data["stats"]
