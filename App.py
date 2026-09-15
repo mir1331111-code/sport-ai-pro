@@ -189,7 +189,6 @@ with tab1:
         all_forecasts = []
         auto_added_count = 0
         
-        # Получаем текущие уже добавленные матчи, чтобы не дублировать
         existing_matches = {b["match"] for b in st.session_state.data["bets"]}
         
         with st.spinner("Сканируем лиги, рассчитываем вероятности и формируем зеленый портфель..."):
@@ -235,7 +234,6 @@ with tab1:
                     stake = kelly_stake(best_prob, best_odd, bank, kelly_frac)
                     commentary = get_ai_deep_analysis(home, away, l_name, p_h, p_d, p_a, openai_key)
                     
-                    # Если проходимость высокая — это зеленый свет (ТОП ВАРИАНТ)
                     is_top = best_prob >= 0.55
                     status_label = "🔥 ТОП ВАРИАНТ (🟢 Добро)" if is_top else "🟢 РАБОЧИЙ МАТЧ"
                     
@@ -258,7 +256,6 @@ with tab1:
                     
                     all_forecasts.append(forecast_item)
                     
-                    # Автоматически закидываем в портфель/статистику топ-варианты
                     if is_top and match_str not in existing_matches and stake > 0:
                         st.session_state.data["bets"].append({
                             "match": match_str,
@@ -282,7 +279,6 @@ with tab1:
     if forecasts:
         st.subheader(f"📊 Отсканированные матчи ({len(forecasts)})")
         for idx, f in enumerate(forecasts):
-            # Зеленая подсветка для топовых вариантов
             if f.get("is_top", False):
                 with st.container():
                     st.success(f"### 🟢 ТОП МАТЧ (Добро): {f['match']} ({f['league']})")
@@ -314,7 +310,6 @@ with tab1:
 with tab2:
     st.header("📋 Управление портфелем и проверка результатов")
     
-    # Кнопка автопроверки результатов через API
     if st.button("🔄 Автопроверка результатов матчей через API", type="primary"):
         if not api_key:
             st.error("❌ Введи API-ключ в боковой панели!")
@@ -326,10 +321,8 @@ with tab2:
                 st.info("Нет ожидающих матчей для проверки.")
             else:
                 updated_count = 0
-                # Соберем уникальные лиги из висящих ставок
                 leagues_to_check = set(b.get("league_code") for b in pending_bets if b.get("league_code"))
                 
-                # Подгрузим свежие матчи по этим лигам
                 league_matches_cache = {}
                 for l_code in leagues_to_check:
                     league_matches_cache[l_code] = fetch_api_matches(l_code, api_key)
@@ -339,13 +332,12 @@ with tab2:
                     if not l_code or l_code not in league_matches_cache:
                         continue
                     
-                    match_name = bet.get("match") # формат "Home vs Away"
+                    match_name = bet.get("match")
                     parts = match_name.split(" vs ")
                     if len(parts) != 2:
                         continue
                     h_target, a_target = parts[0].strip(), parts[1].strip()
                     
-                    # Ищем матч в ответе API
                     for api_m in league_matches_cache[l_code]:
                         if api_m.get("status") == "FINISHED":
                             h_name = api_m.get("homeTeam", {}).get("name")
@@ -359,7 +351,6 @@ with tab2:
                                 if h_goals is None or a_goals is None:
                                     continue
                                 
-                                # Определяем исход
                                 if h_goals > a_goals:
                                     actual_res = "П1"
                                 elif h_goals == a_goals:
@@ -395,7 +386,7 @@ with tab2:
         st.info("Портфель пуст.")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
-        completed = [b for b in bets if b.get("status"] in ["won", "lost"]]
+        completed = [b for b in bets if b.get("status") in ["won", "lost"]]
         
         if pending:
             st.subheader(f"⏳ Ожидающие матчи ({len(pending)})")
