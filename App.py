@@ -167,21 +167,18 @@ def scan_real_fixtures():
             
         debug_logs.append(f"✅ Успешно загружен файл расписаний (всего строк: {len(df)})")
         
-        # Фильтрация по датам (текущая дата: 15 сентября 2026)
         today = datetime.date(2026, 9, 15)
         max_date = today + datetime.timedelta(days=days_ahead)
         
-        # Колонка с датой обычно называется 'Date' (формат DD/MM/YYYY или DD/MM/YY)
         if 'Date' in df.columns:
             df['ParsedDate'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.date
             df_filtered = df[(df['ParsedDate'] >= today) & (df['ParsedDate'] <= max_date)].copy()
         else:
-            df_filtered = df.head(50).copy() # резерв если формат отличается
+            df_filtered = df.head(50).copy()
             
         debug_logs.append(f"📅 Найдено матчей в диапазоне от {today} до {max_date}: {len(df_filtered)}")
         
         if df_filtered.empty:
-            # Если точных дат не нашлось, берем первые 20 актуальных строк из файла
             df_filtered = df.head(20).copy()
             debug_logs.append("⚠️ Точных совпадений по датам не найдено, взяты ближайшие доступные события из календаря.")
 
@@ -195,7 +192,6 @@ def scan_real_fixtures():
             if pd.isna(home_team) or pd.isna(away_team):
                 continue
                 
-            # Коэффициенты букмекеров (Bet365 / Pinnacle)
             home_odd = row.get('B365H') if pd.notna(row.get('B365H')) else row.get('PSH', 1.95)
             draw_odd = row.get('B365D') if pd.notna(row.get('B365D')) else row.get('PSD', 3.40)
             away_odd = row.get('B365A') if pd.notna(row.get('B365A')) else row.get('PSA', 3.10)
@@ -210,7 +206,6 @@ def scan_real_fixtures():
             checked_count += 1
             cfg = LEAGUE_CONFIG[div]
             
-            # Расчет вероятностей по модели Пуассона
             h_lam = max(0.6, min(3.5, 1.4 * xg_w))
             a_lam = max(0.5, min(3.2, 1.1))
             
@@ -237,7 +232,6 @@ def scan_real_fixtures():
             best_pick = max(options, key=lambda x: x[1] * x[2])
             pick_name, prob, odd = best_pick
             
-            # Краткий анализ состава и формы
             squad_status = "Оптимальный состав, ключевые игроки здоровы."
             if odd > 2.2:
                 squad_status = "Есть потери в защите / ротация состава."
@@ -262,10 +256,8 @@ def scan_real_fixtures():
     except Exception as e:
         debug_logs.append(f"❌ Ошибка соединения: {str(e)}")
 
-    # Сортировка от больших шансов на победу к меньшим
     found_forecasts.sort(key=lambda x: x['prob'], reverse=True)
     
-    # Автоматическое размещение ставок для вердикта "СТАВИМ"
     bets = st.session_state.app_data["bets"]
     existing_match_names = {b["match"] for b in bets}
     bank = st.session_state.app_data["bank"]
@@ -330,7 +322,8 @@ def fine_tune_ai_system():
     if total_samples == 0:
         return "⚠️ Нет данных для дообучения."
     
-    correct_preds = len(archive[:100]) + len([b for b in settled if b.get("status"] == "won"])
+    # Исправлена ошибка в строке ниже (b.get("status") вместо b.get("status"])
+    correct_preds = len(archive[:100]) + len([b for b in settled if b.get("status") == "won"])
     evaluated_count = len(archive[:100]) + len(settled)
     accuracy = (correct_preds / evaluated_count) if evaluated_count > 0 else 0.5
     
