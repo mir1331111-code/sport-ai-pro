@@ -20,11 +20,11 @@ SPORTS={
  "🏐 Волейбол":dict(src="espn",espn=["volleyball/womens-college-volleyball"],tsdb_sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
  "🏒 Хоккей":dict(src="espn",espn=["hockey/nhl","hockey/ahl"],tsdb_sport="Ice Hockey",kw=["NHL","KHL","AHL"],max=3,k=24,ha=40,div=120,tot=True,pois=True),
 }
-DIV_NAMES={"E0":"🏴󠁢󠁮󠁿 АПЛ","E1":"🏴󠁥󠁮󠁧󠁿 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+DIV_NAMES={"E0":"🏴󠁥󠁮󠁧 АПЛ","E1":"🏴󠁢󠁥󠁮 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+ "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 
 st.markdown("""
 <style>
@@ -134,7 +134,7 @@ class BinElo:
         p=1/(1+10**(-((r1+self.ha)-r2)/self.div))
         return p,1-p
 
-# ---------- ESPN (основной для не-футбола) ----------
+# ---------- ESPN ----------
 @st.cache_data(ttl=7200)
 def espn_events(path,dates):
     try:
@@ -161,7 +161,7 @@ def espn_parse(ev):
     except Exception as e:
         log_err("espn parse",e); return None
 
-# ---------- ФУТБОЛ: НЕ ТРОГАЕМ, КАК БЫЛО ----------
+# ---------- ФУТБОЛ (не тронут) ----------
 class Engine:
     def __init__(self):
         self.elo={};self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],"hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
@@ -401,7 +401,6 @@ def scan_football(PR,today,limit,bank):
     cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
     return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
 
-# ---------- СКАН ДРУГИХ ВИДОВ: ESPN + резерв TSDB ----------
 def scan_sport(sport,cfg,PR,today,limit,bank):
     rep=[];cards=[];bets=[];trained=0;inwin=0;passed=0
     pf=(today-timedelta(days=60)).strftime("%Y%m%d");pt=(today-timedelta(days=1)).strftime("%Y%m%d")
@@ -417,13 +416,13 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
             train_ev+=pe;fut_ev+=fe;src=["espn",path]
     if not train_ev and not fut_ev:
         for lid,lname in tsdb_leagues_for(cfg):
-            past=[e for e in tsdb_events(lid,"past")]
-            nxt=[e for e in tsdb_events(lid,"next")]
+            past=tsdb_events(lid,"past");nxt=tsdb_events(lid,"next")
             rep.append(f"TSDB {lname}: история {len(past)} · расписание {len(nxt)}")
             pe=[];fe=[]
             for e in past:
                 d=parse_date(e.get("dateEvent",""));s1,s2=_f(e.get("intHomeScore")),_f(e.get("intAwayScore"))
-                if d and s1 is not None and s2 is not None: pe.append({"date":d,"home":e.get("strHomeTeam"),"away":e.get("strAwayTeam"),"hs":s1,"as_":s2,"done":True,"hml":None,"aml":None})
+                if d and s1 is not None and s2 is not None:
+                    pe.append({"date":d,"home":e.get("strHomeTeam"),"away":e.get("strAwayTeam"),"hs":s1,"as_":s2,"done":True,"hml":None,"aml":None})
             for e in nxt:
                 d=parse_date(e.get("dateEvent",""))
                 if d: fe.append({"date":d,"home":e.get("strHomeTeam"),"away":e.get("strAwayTeam"),"hs":None,"as_":None,"done":False,"hml":None,"aml":None})
@@ -439,7 +438,7 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
         if cfg.get("tot"): totals.append(x["hs"]+x["as_"])
     mu=sum(totals)/len(totals) if totals else None
     line=math.floor(mu)+0.5 if mu else None
-    if trained>0 and inwin==0 and not fut_ev:
+    if trained>0 and not fut_ev:
         rep.append("⚠️ Межсезонье: в окне дат нет запланированных матчей")
     for x in fut_ev:
         try:
@@ -499,13 +498,30 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
     cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
     return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
 
-# ---------- состояние ----------
+# ---------- состояние + НОРМАЛИЗАЦИЯ СТАРОГО ФАЙЛА ----------
 def new_data():
     return {"bank":10000.0,"bets":[],"cards":{},"funnel":{},"report":{},"meta":{},
             "stats":{"won":0,"lost":0,"profit":0,"push":0}}
+def normalize(D):
+    if not isinstance(D,dict): return new_data()
+    base=new_data()
+    for k,v in base.items():
+        if k not in D or D[k] is None:
+            D[k]=json.loads(json.dumps(v))
+    if not isinstance(D.get("cards"),dict): D["cards"]={}
+    if not isinstance(D.get("funnel"),dict): D["funnel"]={}
+    if not isinstance(D.get("report"),dict): D["report"]={}
+    if not isinstance(D.get("bets"),list): D["bets"]=[]
+    if not isinstance(D.get("stats"),dict): D["stats"]=base["stats"]
+    for b in D["bets"]:
+        if not isinstance(b,dict): continue
+        b.setdefault("status","pending");b.setdefault("stake",0.0)
+        b.setdefault("odds",1.0);b.setdefault("prob",0.0);b.setdefault("match","?")
+    return D
 def load_data():
     if os.path.exists(HISTORY_FILE):
-        try: return json.load(open(HISTORY_FILE,encoding="utf-8"))
+        try:
+            return normalize(json.load(open(HISTORY_FILE,encoding="utf-8")))
         except Exception as e: log_err("load",e)
     return new_data()
 def save_data(d):
@@ -524,7 +540,6 @@ def apply_settle(D,idx,outcome):
         b["status"]="lost";D2["stats"]["lost"]+=1;D2["stats"]["profit"]-=b["stake"]
     return D2
 
-# ---------- СИНХРОНИЗАЦИЯ: только сыгранные матчи ----------
 def auto_settle(D):
     D2=clone(D);upd=0;today=date.today()
     season=find_season();cache={}
@@ -605,7 +620,7 @@ def render_card(c,PR):
 </div>"""
 
 # ================= UI =================
-if "data" not in st.session_state: st.session_state.data=load_data()
+if "data" not in st.session_state: st.session_state.data=normalize(load_data())
 D=st.session_state.data
 pend=sum(1 for b in D["bets"] if b["status"]=="pending")
 st.markdown(f"""
@@ -651,7 +666,7 @@ with tab1:
                 cards,new_bets,funnel,rep=scan_football(PR,today,limit,D["bank"])
             else:
                 cards,new_bets,funnel,rep=scan_sport(sport,cfg,PR,today,limit,D["bank"])
-        D2=clone(D)
+        D2=normalize(clone(D))
         D2["cards"][sport]=cards;D2["funnel"][sport]=funnel;D2["report"][sport]=rep
         exist={b["match"]+"|"+b["pick"] for b in D2["bets"]}
         add=[b for b in new_bets if b["match"]+"|"+b["pick"] not in exist]
@@ -671,7 +686,7 @@ with tab1:
 with tab2:
     st.header("💼 Портфель (все виды)")
     if st.button("🔄 Автосинхронизация результатов"):
-        D2,upd=auto_settle(D)
+        D2,upd=auto_settle(normalize(D))
         st.session_state.data=D2;save_data(D2)
         st.success(f"Закрыто СЫГРАННЫХ: {upd}");st.rerun()
     st.caption("⚠️ Закрываются только матчи с датой < сегодня и найденным счётом. Идущие/будущие не трогаются.")
