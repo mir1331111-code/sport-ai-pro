@@ -5,7 +5,6 @@ import requests
 import json
 import os
 from datetime import datetime, timedelta
-from scipy.stats import poisson
 import numpy as np
 
 st.set_page_config(page_title="Multi-Sport Betting AI", page_icon="🎯", layout="wide")
@@ -32,6 +31,21 @@ def load_csv(url):
         return list(csv.DictReader(io.StringIO(r.text)))
     except Exception as e:
         return []
+
+def find_active_season():
+    """Приоритетный поиск сезона 2026/2027 (код 2627)"""
+    base_url = "https://www.football-data.co.uk/mmz4281/"
+    # Сначала проверяем актуальный сезон 2026/2027, если его нет — откатываемся на 2526
+    seasons = ["2627", "2526"]
+    for season in seasons:
+        test_url = f"{base_url}{season}/E0.csv"
+        try:
+            r = requests.head(test_url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
+            if r.status_code == 200:
+                return season
+        except:
+            continue
+    return "2627"
 
 def parse_date(date_str):
     """Парсинг даты"""
@@ -101,7 +115,7 @@ def kelly_stake(prob, odds, bank, fraction=0.25):
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 
-st.title("🎯 Football Betting AI")
+st.title("🎯 Football Betting AI (2026/2027)")
 
 # Боковая панель
 with st.sidebar:
@@ -121,7 +135,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🎯 Прогнозы", "📋 Ставки", "📊 Статистика"])
 
 with tab1:
-    st.header("Анализ матчей (Football-Data)")
+    st.header("Анализ матчей сезона 2026/2027")
     
     leagues = {
         "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "E0",
@@ -144,29 +158,26 @@ with tab1:
     
     if st.button("🚀 Запустить анализ", type="primary"):
         league_code = leagues[selected_league]
-        season = "2526" # Сезон 2025/2026
+        season = find_active_season() # Автоматически выберет '2627'
         url = f"https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv"
         
         if debug_mode:
-            st.info(f"URL: {url}")
+            st.info(f"Используемый сезон: {season} | URL: {url}")
         
-        with st.spinner("Загрузка данных с сервера..."):
+        with st.spinner("Загрузка данных сезона 2026/2027..."):
             data = load_csv(url)
             
             if not data:
-                st.error("❌ Не удалось загрузить данные. Проверьте подключение к интернету.")
+                st.error("❌ Не удалось загрузить данные. Возможно, файлы сезона 2026/2027 еще полностью не сформированы на источнике.")
                 st.stop()
             
-            st.success(f"✅ Загружено {len(data)} записей")
+            st.success(f"✅ Успешно загружено {len(data)} записей (Сезон: {season})")
         
-        with st.spinner("Обработка и анализ матчей..."):
+        with st.spinner("Обработка и расчет моделей..."):
             today = datetime.now()
             limit = today + timedelta(days=days)
             
             elo = calculate_elo(data)
-            
-            if debug_mode:
-                st.write(f"Команд в базе Elo: {len(elo)}")
             
             forecasts = []
             
@@ -238,17 +249,16 @@ with tab1:
             save_data(st.session_state.data)
             
             if forecasts:
-                st.success(f"✅ Найдено {len(forecasts)} выгодных ставок!")
+                st.success(f"✅ Найдено {len(forecasts)} перспективных ставок!")
             else:
-                st.warning("⚠️ Не найдено ставок с заданным EV. Попробуйте увеличить период анализа или снизить мин. EV в настройках.")
+                st.warning("⚠️ Нет матчей под заданные фильтры EV. Попробуйте расширить диапазон дней или поставить галочку «Показать все матчи».")
             
             st.rerun()
 
-    # Отображение прогнозов через нативные компоненты Streamlit
     forecasts = st.session_state.data.get("forecasts", [])
     
     if forecasts:
-        st.subheader(f"📊 Найдено выгодных ставок: {len(forecasts)}")
+        st.subheader(f"📊 Доступные прогнозы: {len(forecasts)}")
         
         for idx, f in enumerate(forecasts):
             with st.container():
@@ -279,7 +289,7 @@ with tab1:
                     st.success("Ставка успешно добавлена во вкладку «Ставки»!")
                 st.markdown("---")
     else:
-        st.info("👆 Выберите лигу и нажмите кнопку «Запустить анализ»")
+        st.info("👆 Нажмите «Запустить анализ», чтобы подгрузить матчи текущего сезона")
 
 with tab2:
     st.header("📋 Управление активными ставками")
@@ -287,7 +297,7 @@ with tab2:
     bets = st.session_state.data.get("bets", [])
     
     if not bets:
-        st.info("У вас нет добавленных ставок. Добавьте их из вкладки «Прогнозы».")
+        st.info("У вас нет добавленных ставок. Перейдите во вкладку «Прогнозы».")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
         completed = [b for b in bets if b.get("status") in ["won", "lost"]]
@@ -352,7 +362,7 @@ with tab3:
     st.markdown("---")
     st.markdown("""
     ### ℹ️ Справка
-    - **Elo + Probability Model**: Рассчитывает реальные шансы команд на основе истории матчей текущего сезона.
-    - **Критерий Келли**: Автоматически рассчитывает безопасный размер ставки для защиты вашего банкролла.
+    - **Модель Elo**: Анализирует результаты матчей сезона 2026/2027 в реальном времени.
+    - **Банкролл-менеджмент**: Критерий Келли минимизирует риски просадки банка.
     """)
     
