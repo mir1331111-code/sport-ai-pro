@@ -5,7 +5,7 @@ from scipy.stats import poisson
 import json
 import os
 
-st.set_page_config(page_title="AI Sport Bot Pro (Мульти-лига)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="AI Sport Bot Pro", page_icon="⚽", layout="wide")
 
 # Дизайн и стили
 st.markdown("""
@@ -97,7 +97,7 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Sport Bot Pro (Мульти-Лига Анализ)")
+st.title("⚽ AI Sport Bot Pro (Универсальный анализ)")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("⚙️ Настройки и Банк")
@@ -113,146 +113,134 @@ if st.sidebar.button("🔄 Полный сброс системы"):
 
 # --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3 = st.tabs([
-    "🌐 Массовая загрузка и Анализ", 
+    "🎯 Добавить матч / Турнир", 
     "📜 История и Активные ставки", 
     "⚙️ О системе"
 ])
 
 with tab1:
-    st.markdown("### 📥 Выбор лиг для одновременного скачивания")
-    st.write("Отметьте нужные чемпионата. Приложение скачает их все поочередно, объединит и проанализирует каждый матч.")
-
-    leagues_dict = {
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "https://www.football-data.co.uk/mmz425/2526/E0.csv",
-        "🇪🇸 Испания (Ла Лига)": "https://www.football-data.co.uk/mmz425/2526/SP1.csv",
-        "🇮🇹 Италия (Серия А)": "https://www.football-data.co.uk/mmz425/2526/I1.csv",
-        "🇩🇪 Германия (Бундеслига)": "https://www.football-data.co.uk/mmz425/2526/D1.csv",
-        "🇫🇷 Франция (Лига 1)": "https://www.football-data.co.uk/mmz425/2526/F1.csv",
-        "🇳🇱 Нидерланды (Эредивизи)": "https://www.football-data.co.uk/mmz425/2526/N1.csv",
-        "🇵🇹 Португалия (Примейра)": "https://www.football-data.co.uk/mmz425/2526/P1.csv",
-        "🇧🇪 Бельгия (Про-лига)": "https://www.football-data.co.uk/mmz425/2526/B1.csv"
-    }
-
-    selected_leagues = st.multiselect(
-        "Выберите лиги для анализа:",
-        options=list(leagues_dict.keys()),
-        default=["🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", "🇪🇸 Испания (Ла Лига)"]
-    )
-
-    if st.button("🚀 Скачать выбранные лиги и запустить ИИ-анализ", type="primary"):
-        if not selected_leagues:
-            st.warning("Пожалуйста, выберите хотя бы одну лигу!")
-        else:
-            all_dfs = []
-            for league_name in selected_leagues:
-                url = leagues_dict[league_name]
-                try:
-                    df_temp = pd.read_csv(url)
-                    df_temp['League_Source'] = league_name
-                    all_dfs.append(df_temp)
-                except Exception as e:
-                    st.warning(f"Не удалось загрузить {league_name}: {e}")
-
-            if not all_dfs:
-                st.error("Не удалось загрузить ни один из выбранных файлов.")
+    st.markdown("### ✍️ Ручной ввод матча из любого турнира (ЛЧ, РПЛ, Турция, МЛС и др.)")
+    st.write("Введите название команд, выберите турнир и укажите коэффициенты букмекера. ИИ мгновенно произведет расчет.")
+    
+    with st.form("match_input_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            tournament = st.selectbox("Турнир / Лига", [
+                "⭐ Лига Чемпионов УЕФА", 
+                "🇪🇺 Лига Европы УЕФА", 
+                "🇪🇺 Лига Конференций", 
+                "🇷🇺 Россия (РПЛ)", 
+                "🇹🇷 Турция (Суперлига)", 
+                "🇺🇸 США (MLS)", 
+                "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", 
+                "🇪🇸 Испания (Ла Лига)", 
+                "🇮🇹 Италия (Серия А)", 
+                "🇩🇪 Германия (Бундеслига)",
+                "🌐 Другой турнир"
+            ])
+            home_team = st.text_input("Хозяева", placeholder="например, Зенит / Реал")
+        with col2:
+            custom_tourn = st.text_input("Уточнение (если Другой турнир)", placeholder="например, Кубок России")
+            away_team = st.text_input("Гости", placeholder="например, Спартак / Манчестер")
+            
+        st.markdown("---")
+        st.write("📈 **Коэффициенты букмекера:**")
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            odd_home = st.number_input("Кф на П1", min_value=1.01, max_value=20.0, value=2.10, step=0.01)
+        with col4:
+            odd_draw = st.number_input("Кф на Ничья (X)", min_value=0.0, max_value=20.0, value=3.40, step=0.01)
+        with col5:
+            odd_away = st.number_input("Кф на П2", min_value=1.01, max_value=20.0, value=3.20, step=0.01)
+            
+        submitted = st.form_submit_button("🚀 Рассчитать и добавить в ставки", type="primary")
+        
+        if submitted:
+            if not home_team or not away_team:
+                st.error("Пожалуйста, укажите названия команд!")
             else:
-                combined_df = pd.concat(all_dfs, ignore_index=True)
-                st.success(f"Успешно загружено лиг: {len(all_dfs)}. Всего матчей в базе: {len(combined_df)}")
-
                 xg_w = current_weights.get("xg_w", 1.0)
-                found_forecasts = []
+                
+                # Расчет по модели Пуассона
+                h_lam = max(0.6, min(3.5, 1.4 * xg_w))
+                a_lam = max(0.5, min(3.2, 1.1))
+                
+                matrix = np.zeros((6, 6))
+                for h in range(6):
+                    for a in range(6):
+                        matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+                
+                p_home = np.sum(np.tril(matrix, -1))
+                p_draw = np.sum(np.diagonal(matrix))
+                p_away = np.sum(np.triu(matrix, 1))
+                
+                total = p_home + p_draw + p_away
+                if total > 0:
+                    p_home /= total
+                    p_draw /= total
+                    p_away /= total
+                    
+                options = [
+                    ("П1", p_home, odd_home),
+                    ("Ничья (X)", p_draw, odd_draw if odd_draw > 0 else 0.01),
+                    ("П2", p_away, odd_away)
+                ]
+                
+                best_pick = max(options, key=lambda x: x[1] * x[2] if x[2] > 0 else -1)
+                pick_name, prob, odd = best_pick
+                
+                edge = (prob * odd) - 1.0
+                decision = "🟢 СТАВИМ" if edge > -0.08 and odd < 3.2 else "🔴 НЕ СТАВИМ"
+                reason = f"Анализ матча. Шанс модели: {prob*100:.1f}%."
+                
+                tourn_label = tournament if "Другой" not in tournament else (custom_tourn or "Матч")
+                
+                new_forecast = {
+                    "league_name": tourn_label,
+                    "league_color": "#38bdf8",
+                    "match": f"{home_team} vs {away_team}",
+                    "pick": pick_name,
+                    "odd": odd,
+                    "prob": prob,
+                    "reason": reason,
+                    "decision": decision
+                }
+                
                 app_data = st.session_state.app_data
-                bets = app_data["bets"]
-                existing_match_names = {b["match"] for b in bets}
-                bank = app_data["bank"]
-
-                processed_count = 0
-                for _, row in combined_df.iterrows():
-                    home_team = row.get('HomeTeam')
-                    away_team = row.get('AwayTeam')
-                    league_src = row.get('League_Source', 'Футбол')
-
-                    if pd.isna(home_team) or pd.isna(away_team):
-                        continue
-
-                    home_odd = float(row.get('B365H', row.get('PSH', 1.95))) if pd.notna(row.get('B365H', row.get('PSH', 1.95))) else 1.95
-                    draw_odd = float(row.get('B365D', row.get('PSD', 3.40))) if pd.notna(row.get('B365D', row.get('PSD', 3.40))) else 3.40
-                    away_odd = float(row.get('B365A', row.get('PSA', 3.10))) if pd.notna(row.get('B365A', row.get('PSA', 3.10))) else 3.10
-
-                    processed_count += 1
-
-                    # Расчет Пуассона
-                    h_lam = max(0.6, min(3.5, 1.4 * xg_w))
-                    a_lam = max(0.5, min(3.2, 1.1))
-
-                    matrix = np.zeros((6, 6))
-                    for h in range(6):
-                        for a in range(6):
-                            matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
-
-                    p_home = np.sum(np.tril(matrix, -1))
-                    p_draw = np.sum(np.diagonal(matrix))
-                    p_away = np.sum(np.triu(matrix, 1))
-                    total = p_home + p_draw + p_away
-                    if total > 0:
-                        p_home /= total
-                        p_draw /= total
-                        p_away /= total
-
-                    options = [
-                        ("П1", p_home, home_odd),
-                        ("Ничья (X)", p_draw, draw_odd),
-                        ("П2", p_away, away_odd)
-                    ]
-
-                    best_pick = max(options, key=lambda x: x[1] * x[2])
-                    pick_name, prob, odd = best_pick
-
-                    edge = (prob * odd) - 1.0
-                    decision = "🟢 СТАВИМ" if edge > -0.08 and odd < 3.0 else "🔴 НЕ СТАВИМ"
-                    reason = f"Мульти-лига анализ. Шанс модели: {prob*100:.1f}%."
-
-                    forecast_item = {
-                        "league_name": league_src,
-                        "league_color": "#38bdf8",
-                        "match": f"{home_team} vs {away_team}",
-                        "pick": pick_name,
-                        "odd": odd,
-                        "prob": prob,
-                        "reason": reason,
-                        "decision": decision
-                    }
-                    found_forecasts.append(forecast_item)
-
-                    if "СТАВИМ" in decision and "НЕ" not in decision:
-                        if forecast_item["match"] not in existing_match_names and bank >= STAKE_SIZE:
-                            bank -= STAKE_SIZE
-                            new_bet = {
-                                "id": len(bets) + 1,
-                                "match": forecast_item["match"],
-                                "league_name": forecast_item["league_name"],
-                                "league_color": forecast_item["league_color"],
-                                "pick": pick_name,
-                                "odd": odd,
-                                "stake": STAKE_SIZE,
-                                "status": "pending",
-                                "reason": f"{reason} | Рекомендация: {pick_name}",
-                                "prob": prob
-                            }
-                            bets.append(new_bet)
-                            existing_match_names.add(forecast_item["match"])
-
-                app_data["bank"] = bank
-                app_data["scanned_forecasts"] = found_forecasts
+                app_data["scanned_forecasts"].insert(0, new_forecast)
+                
+                if "СТАВИМ" in decision:
+                    bank = app_data["bank"]
+                    if bank >= STAKE_SIZE:
+                        bank -= STAKE_SIZE
+                        app_data["bank"] = bank
+                        new_bet = {
+                            "id": len(app_data["bets"]) + 1,
+                            "match": new_forecast["match"],
+                            "league_name": new_forecast["league_name"],
+                            "league_color": new_forecast["league_color"],
+                            "pick": pick_name,
+                            "odd": odd,
+                            "stake": STAKE_SIZE,
+                            "status": "pending",
+                            "reason": f"{reason} | Рекомендация: {pick_name}",
+                            "prob": prob
+                        }
+                        app_data["bets"].append(new_bet)
+                        st.success(f"Матч успешно проанализирован! Авто-ставка {STAKE_SIZE} у.е. добавлена в историю.")
+                    else:
+                        st.warning("Прогноз создан, но недостаточно средств в банкролле.")
+                else:
+                    st.info("Матч проанализирован. Вердикт: Не ставить (отрицательное математическое ожидание).")
+                
                 save_history(app_data)
-                st.success(f"Обработано матчей суммарно: {processed_count}. Все результаты обновлены!")
                 st.rerun()
 
-    st.markdown("### 📋 Результаты анализа по всем лигам:", unsafe_allow_html=True)
+    st.markdown("### 📋 Проанализированные матчи:", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
-        st.info("Нет активных прогнозов. Выберите лиги выше и нажмите кнопку запуска.")
+        st.info("Список пуст. Добавьте матч через форму выше.")
     else:
         for idx, f in enumerate(forecasts):
             l_name = f.get("league_name", "Спорт")
@@ -322,4 +310,4 @@ with tab2:
 
 with tab3:
     st.markdown("### ℹ️ О системе")
-    st.write("Режим мульти-лиги позволяет загружать сразу несколько топ-чемпионатов Европы в один клик и параллельно анализировать их все через математическую модель.")
+    st.write("Теперь вы можете добавлять любые матчи из Лиги Чемпионов, РПЛ, турецкой лиги, МЛС или международных турниров в один клик. Модель автоматически посчитает вероятности и вынесет вердикт.")
