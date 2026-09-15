@@ -139,31 +139,42 @@ class Engine:
         p1,px,_=self._p1px(lh,la,rho)
         f1=w*p1+(1-w)*e*(1-pde);fd=w*px+(1-w)*pde;f2=max(1e-6,1-f1-fd)
         return f1,fd,f2
+    def _loglik(self,rows,rho,w):
+        """Negative log-likelihood of a rho/w combo on a set of (lh,la,e,pde,out) rows."""
+        ll=0.0
+        for lh,la,e,pde,out in rows:
+            f1,fd,f2=self._probs_from(lh,la,rho,w,e,pde)
+            ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
+        return ll
     def _fit_league(self,lg):
-        win=self.hist[lg][-150:]
-        if len(win)<120: return
+        # Wider window + hold-out validation so grid search isn't scored on
+        # the same data it was chosen from (was: 150-match window, in-sample only).
+        win=self.hist[lg][-400:]
+        if len(win)<200: return
+        split=int(len(win)*0.8)
+        train,holdout=win[:split],win[split:]
         cur=self.lp[lg];best_ws=None
         for ws in (0.20,0.35,0.50):
-            ll=0.0
-            for gh,ga,sh,sa,e,pde,out in win:
-                lh=(1-ws)*gh+ws*sh;la=(1-ws)*ga+ws*sa
-                f1,fd,f2=self._probs_from(lh,la,cur["rho"],cur["w_dc"],e,pde)
-                ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
+            rows=[((1-ws)*gh+ws*sh,(1-ws)*ga+ws*sa,e,pde,out) for gh,ga,sh,sa,e,pde,out in train]
+            ll=self._loglik(rows,cur["rho"],cur["w_dc"])
             if best_ws is None or ll<best_ws[0]: best_ws=(ll,ws)
-        cur["w_shots"]=best_ws[1]
-        data=[]
-        for gh,ga,sh,sa,e,pde,out in win:
-            lh=(1-best_ws[1])*gh+best_ws[1]*sh;la=(1-best_ws[1])*ga+best_ws[1]*sa
-            data.append(({r:self._p1px(lh,la,r)[0:2] for r in (-0.20,-0.13,-0.06,0.0)},e,pde,out))
+        ws_pick=best_ws[1]
+        train_rows=[((1-ws_pick)*gh+ws_pick*sh,(1-ws_pick)*ga+ws_pick*sa,e,pde,out) for gh,ga,sh,sa,e,pde,out in train]
+        hold_rows=[((1-ws_pick)*gh+ws_pick*sh,(1-ws_pick)*ga+ws_pick*sa,e,pde,out) for gh,ga,sh,sa,e,pde,out in holdout]
         best=None
         for rho in (-0.20,-0.13,-0.06,0.0):
             for w in (0.60,0.72,0.85):
-                ll=0.0
-                for rowm,e,pde,out in data:
-                    p1,px=rowm[rho]
-                    f1=w*p1+(1-w)*e*(1-pde);fd=w*px+(1-w)*pde;f2=max(1e-6,1-f1-fd)
-                    ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
+                ll=self._loglik(train_rows,rho,w)
                 if best is None or ll<best[0]: best=(ll,rho,w)
+        # Only accept the new fit if it actually improves (or ties) the held-out
+        # likelihood versus the previous parameters — guards against overfitting
+        # a 3x4 grid on a still-smallish window.
+        if hold_rows:
+            ll_new=self._loglik(hold_rows,best[1],best[2])
+            ll_old=self._loglik(hold_rows,cur["rho"],cur["w_dc"])
+            if ll_new>ll_old:  # worse (higher NLL) on holdout -> keep old params
+                return
+        cur["w_shots"]=ws_pick
         cur["rho"],cur["w_dc"]=best[1],best[2]
     def record_market(self,mkt,won,odd):
         r=self.market_roi[mkt];r["n"]+=1;r["profit"]=0.9*r["profit"]+0.1*((odd-1) if won else -1)
@@ -195,11 +206,23 @@ class Engine:
                 self.hsth.append(hst);self.hsta.append(ast)
         for team in (h,a):
             for key in t[team]: t[team][key]=t[team][key][-12:]
+        # keep league-level goal pools bounded too (was unbounded -> slow leak
+        # over a long session and a slowly-stalening baseline lambda)
+        if len(self.hg)>4000: self.hg=self.hg[-4000:]
+        if len(self.ag)>4000: self.ag=self.ag[-4000:]
+        if len(self.hsth)>4000: self.hsth=self.hsth[-4000:]
+        if len(self.hsta)>4000: self.hsta=self.hsta[-4000:]
     def h2h_adjust(self,h,a,lh,la):
+        # H2H history carries weak independent signal once team strength (Elo,
+        # goal/shot rates) is already in lh/la — it was nudging lambdas off
+        # only 3 meetings. Now requires more history and the shift is smaller
+        # and shrunk further for thin samples.
         hist=self.h2h.get((h,a),[])
-        if len(hist)<3: return lh,la,0
-        shift=(sum(hist)/len(hist))*0.15
-        return max(0.3,lh+shift/2),max(0.25,la-shift/2),len(hist)
+        n=len(hist)
+        if n<5: return lh,la,n
+        shrink=min(1.0,(n-4)/6.0)  # ramps 0->1 as n goes 5->10+
+        shift=(sum(hist)/n)*0.08*shrink
+        return max(0.3,lh+shift/2),max(0.25,la-shift/2),n
     def predict(self,h,a,lg="G"):
         P0=self.lp[lg];ws=P0["w_shots"];N=MATRIX_N
         lh_g=self._m(self.hg,1.5);la_g=self._m(self.ag,1.2)
@@ -233,14 +256,20 @@ class Engine:
         yellows=((self._m(sh["yfh"],2)+self._m(sa["yaa"],2))/2,(self._m(sa["yfa"],2)+self._m(sh["yah"],2))/2)
         return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,"agree":agree,
                 "lams":(lam_h,lam_a),"lams_g":(lam_g_h,lam_g_a),"lams_s":(lam_s_h,lam_s_a),
-                "games":games,"corners":corners,"yellows":yellows,"h2h_n":h2h_n,"e":e,"pde":pde}
+                "games":games,"corners":corners,"yellows":yellows,"h2h_n":h2h_n,"e":e,"pde":pde,
+                # raw (pre-market-blend) probabilities kept alongside the blended
+                # ones so the UI/EV logic can show how much of any "edge" comes
+                # from the model itself vs. from the market prior it was blended with.
+                "p1_raw":f1,"x_raw":fd,"p2_raw":f2}
     def learn_step(self,h,a,hg,ag,row=None,lg="G",match_num=None,total=None):
         P=self.predict(h,a,lg)
         out=0 if hg>ag else (1 if hg==ag else 2)
         self.calib+=[(self._logit(P["p1"]),1.0 if out==0 else 0.0),
                      (self._logit(P["x"]),1.0 if out==1 else 0.0),
                      (self._logit(P["p2"]),1.0 if out==2 else 0.0)]
+        if len(self.calib)>6000: self.calib=self.calib[-6000:]  # was unbounded
         self.hist[lg].append((P["lams_g"][0],P["lams_g"][1],P["lams_s"][0],P["lams_s"][1],P["e"],P["pde"],out))
+        if len(self.hist[lg])>1200: self.hist[lg]=self.hist[lg][-1200:]  # was unbounded
         if row:
             for mkt,pick,prob,odd,won in [("1X2","П1",P["p1"],_f(row.get("B365H")),hg>ag),
                                           ("1X2","X",P["x"],_f(row.get("B365D")),hg==ag),
@@ -393,7 +422,12 @@ def ai_verdict(c):
         gap=max(abs(c.get("p1",0)-m[0]),abs(c.get("px",c.get("x",0))-m[1]),abs(c.get("p2",0)-m[2]))
         parts.append(f"Pinnacle: П1 {m[0]*100:.0f}/X {m[1]*100:.0f}/П2 {m[2]*100:.0f}%; расхождение {gap*100:.0f} п.п. — "
                      +("модель видит alpha" if gap>=DISAGREE_MIN else "консенсус с рынком")+".")
-    if c.get("h2h_n",0)>=3: parts.append(f"H2H: {c['h2h_n']} встреч учтены.")
+    raw=c.get("raw")
+    if raw and m:
+        raw_gap=max(abs(raw[0]-m[0]),abs(raw[1]-m[1]),abs(raw[2]-m[2]))
+        parts.append(f"До подмешивания рынка модель сама расходилась с Pinnacle на {raw_gap*100:.0f} п.п. "
+                     "(после блендинга расхождение выше по построению, поэтому не путать с независимым edge).")
+    if c.get("h2h_n",0)>=5: parts.append(f"H2H: {c['h2h_n']} встреч учтены (слабый вес).")
     if c.get("cup"): parts.append("Кубковый матч: темп ниже.")
     return main,alt,avoid," ".join(parts),gap
 
@@ -544,7 +578,7 @@ def render_match_card(c,thr,PR):
     chips=chip_html(c["league"])+chip_html(f"📅 {c['date']} · {c['when']}","when")
     if c["games"]<PR["min_games"]: chips+=chip_html("⚠️ мало данных","warn")
     if c.get("cup"): chips+=chip_html("🏆 Кубок","warn")
-    if c.get("h2h_n",0)>=3: chips+=chip_html(f"⚔ H2H:{c['h2h_n']}")
+    if c.get("h2h_n",0)>=5: chips+=chip_html(f"⚔ H2H:{c['h2h_n']}")
     if not c.get("agree",True): chips+=chip_html("⚠️ движки не согласны","warn")
     main,alt,avoid,vtext,gap=ai_verdict(c)
     ch,ca=c["corners"];yh,ya=c["yellows"]
@@ -670,6 +704,7 @@ with tab1:
                 inwin+=1
                 lg=r.get("Div","G")
                 P=engine.predict(h,a,lg)
+                raw=(P["p1_raw"],P["x_raw"],P["p2_raw"])
                 mkt=market_probs(r)
                 P=blend_market(P,mkt,PR["w_market"])
                 league=r.get("League") or DIV_NAMES.get(lg,"Лига "+str(lg))
@@ -710,7 +745,7 @@ with tab1:
                 cards.append({"div":lg,"league":league,"match":f"{h} vs {a}",
                     "date":d.strftime("%d.%m")+(f" {r.get('Time')}" if r.get("Time") else ""),"when":when,
                     "rows":rows,"best":best,"hot":hot[:3],"tag":tag,"lams":P["lams"],
-                    "lams_g":P["lams_g"],"lams_s":P["lams_s"],"mkt":mkt,"gap":gap,"agree":P["agree"],
+                    "lams_g":P["lams_g"],"lams_s":P["lams_s"],"mkt":mkt,"raw":raw,"gap":gap,"agree":P["agree"],
                     "clv":card_clv,"p1":P["p1"],"px":P["x"],"p2":P["p2"],
                     "corners":P["corners"],"yellows":P["yellows"],"games":P["games"],"h2h_n":P["h2h_n"],
                     "fh":engine.form_str(h),"fa":engine.form_str(a),"cup":is_cup(r)})
