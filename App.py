@@ -9,7 +9,7 @@ import datetime
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
-# Роскошные обои стадиона на фоне интерфейса + стилизация карточек
+# Фоновые обои стадиона + стильные карточки
 st.markdown("""
     <style>
     .stApp {
@@ -18,13 +18,6 @@ st.markdown("""
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
-    }
-    .match-card {
-        border-radius: 12px;
-        padding: 18px;
-        margin-bottom: 18px;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.6);
-        backdrop-filter: blur(8px);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -60,7 +53,7 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Football Bot Pro — Статистический Анализатор")
+st.title("⚽ AI Football Bot Pro — Автоматический Анализатор")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("🔑 Настройки и API-ключи")
@@ -158,7 +151,7 @@ def train_on_real_recent_matches(odds_key):
     save_history(data)
     return f"Проанализировано матчей: {analyzed_count}. Скорректировано весов: {errors_fixed}."
 
-# --- ПРОВЕРКА СТАВОК ---
+# --- АВТОМАТИЧЕСКАЯ ПРОВЕРКА СТАВОК ---
 def update_pending_results(odds_key):
     pending_bets = [b for b in st.session_state.app_data["bets"] if b["status"] == "pending"]
     if not pending_bets:
@@ -258,19 +251,22 @@ class UltimateBot:
         return 0.45, 0.25, 0.30
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
-tab1, tab2, tab3 = st.tabs(["🎯 Анализ матчей", "📊 История и Самообучение ИИ", "⚙️ О системе"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎯 Анализ и Авто-ставки", "📊 Статистика и История", "🧠 Самообучение ИИ", "⚙️ О системе"])
 
 with tab1:
-    if st.button("🚀 Загрузить матчи и проанализировать"):
+    if st.button("🚀 Загрузить матчи и запустить автоматические ставки"):
         if not odds_api_key:
             st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
         else:
-            with st.spinner("Анализ расписания и расчет вероятностей..."):
+            with st.spinner("ИИ анализирует матчи и автоматически размещает ставки..."):
                 bot = UltimateBot(odds_api_key, hours_ahead, current_weights)
                 matches = bot.fetch_fixtures()
                 
                 if matches:
                     analyzed_matches = []
+                    existing_match_keys = {b["match"] for b in st.session_state.app_data["bets"]}
+                    auto_placed_count = 0
+
                     for m in matches:
                         home, away = m['home'], m['away']
                         bh, bd, ba = m['h_odd'], m['d_odd'], m['a_odd']
@@ -284,6 +280,8 @@ with tab1:
                         max_allowed_odd = current_weights.get("odds_limit", 2.2)
                         reason_text = get_smart_reason(m, best_edge)
                         
+                        match_key = f"{home} vs {away}"
+                        
                         if best_edge[3] > 0.05 and best_edge[2] <= max_allowed_odd:
                             status = "green"
                             ai_text = f"✅ Валуйный сигнал на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес).<br>💡 *Обоснование:* {reason_text}"
@@ -294,6 +292,20 @@ with tab1:
                             status = "red"
                             ai_text = f"❌ Матч отклонен (нет перевеса или лимиты нарушены).<br>💡 *Причина:* {reason_text}"
 
+                        # Автоматическая ставка (только если матч подходит и на него еще не ставили)
+                        if status != "red" and match_key not in existing_match_keys:
+                            if st.session_state.app_data["bank"] >= STAKE_SIZE:
+                                st.session_state.app_data["bank"] -= STAKE_SIZE
+                                bet_record = {
+                                    "match": match_key,
+                                    "home": home, "away": away, "league": m.get('league', ''),
+                                    "pick": best_edge[0], "odd": best_edge[2],
+                                    "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
+                                }
+                                st.session_state.app_data["bets"].append(bet_record)
+                                existing_match_keys.add(match_key)
+                                auto_placed_count += 1
+
                         analyzed_matches.append({
                             'home': home, 'away': away, 'league': m.get('league', ''), 'time': m.get('time', ''),
                             'bh': bh, 'bd': bd, 'ba': ba,
@@ -301,37 +313,36 @@ with tab1:
                             'status': status, 'ai_text': ai_text
                         })
                     
-                    st.success(f"Успешно проанализировано матчей: {len(analyzed_matches)}")
+                    save_history(st.session_state.app_data)
+                    st.success(f"Проанализировано матчей: {len(analyzed_matches)}. Автоматически сделано новых ставок: {auto_placed_count}")
                     st.session_state.current_board = analyzed_matches
                 else:
                     st.info("В выбранном диапазоне матчей не найдено.")
 
     if "current_board" in st.session_state:
-        st.markdown("### 🏆 Рекомендации матчей")
+        st.markdown("### 🏆 Результаты анализа и Авто-ставки")
         for idx, m in enumerate(st.session_state.current_board):
             league_name = m['league']
             is_cup = league_name in CUP_LEAGUES
             status = m['status']
             
-            # Настройка цветов рамок и фона для каждого типа матча
             if is_cup:
-                border_color = "#ffc107"  # Желтый (Кубок / Еврокубок)
+                border_color = "#ffc107"
                 bg_color = "rgba(255, 193, 7, 0.12)"
                 badge_text = "🏆 **[КУБКОВЫЙ / ЕВРОКУБКОВЫЙ ТУРНИР]** — ⚠️ *Повышенный риск ротации состава!*"
             elif status == "green":
-                border_color = "#28a745"  # Зеленый (Отличный валуй)
+                border_color = "#28a745"
                 bg_color = "rgba(40, 167, 69, 0.12)"
-                badge_text = "🟢 **[ВЫСОКИЙ ВАЛУЙ]** — Рекомендовано к ставке"
+                badge_text = "🟢 **[ВЫСОКИЙ ВАЛУЙ]** — Ставка оформлена автоматически"
             elif status == "blue":
-                border_color = "#17a2b8"  # Синий (Умеренный)
+                border_color = "#17a2b8"
                 bg_color = "rgba(23, 162, 184, 0.12)"
-                badge_text = "🔵 **[УМЕРЕННЫЙ СИГНАЛ]** — Ставка под контролем"
+                badge_text = "🔵 **[УМЕРЕННЫЙ СИГНАЛ]** — Ставка оформлена автоматически"
             else:
-                border_color = "#dc3545"  # Красный (Пропуск)
+                border_color = "#dc3545"
                 bg_color = "rgba(220, 53, 69, 0.12)"
-                badge_text = "🔴 **[ПРОПУСК МАТЧА]** — Высокие риски / нет перевеса"
+                badge_text = "🔴 **[ПРОПУСК МАТЧА]** — Риски высоки, ставка не делается"
 
-            # Рендер карточки с полноценной цветной подсветкой и логотипами-иконками
             st.markdown(f"""
             <div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.4);">
                 <p style="color: {border_color}; font-weight: bold; margin-bottom: 6px; font-size: 13px;">{badge_text}</p>
@@ -343,26 +354,51 @@ with tab1:
                 <p style="font-style: italic; color: #f8fafc; margin-bottom: 0;">{m['ai_text']}</p>
             </div>
             """, unsafe_allow_html=True)
-            
-            if m['status'] != "red":
-                if st.button(f"💵 Поставить 100 у.е. на матч №{idx+1}", key=f"bet_{idx}"):
-                    if st.session_state.app_data["bank"] >= STAKE_SIZE:
-                        st.session_state.app_data["bank"] -= STAKE_SIZE
-                        bet_record = {
-                            "match": f"{m['home']} vs {m['away']}",
-                            "home": m['home'], "away": m['away'], "league": m['league'],
-                            "pick": m['best_edge'][0], "odd": m['best_edge'][2],
-                            "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
-                        }
-                        st.session_state.app_data["bets"].append(bet_record)
-                        save_history(st.session_state.app_data)
-                        st.success("Ставка успешно принята!")
-                        st.rerun()
-                    else:
-                        st.error("Не хватает средств в виртуальном банке!")
 
 with tab2:
-    st.markdown("### 🧠 Панель самообучения ИИ и История")
+    st.markdown("### 📊 Статистика и Процент проходов")
+    bets = st.session_state.app_data.get("bets", [])
+    total_bets = len(bets)
+    won_bets = len([b for b in bets if b["status"] == "won"])
+    lost_bets = len([b for b in bets if b["status"] == "lost"])
+    pending_bets = len([b for b in bets if b["status"] == "pending"])
+    settled_count = won_bets + lost_bets
+    win_rate = (won_bets / settled_count * 100) if settled_count > 0 else 0.0
+
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    col_m1.metric("Всего ставок", total_bets)
+    col_m2.metric("Выиграно / Проиграно", f"{won_bets} / {lost_bets}")
+    col_m3.metric("Процент проходов (Win Rate)", f"{win_rate:.1f}%")
+    col_m4.metric("В ожидании", pending_bets)
+
+    st.markdown("---")
+    st.markdown("### 📝 История ставок (на что ставили)")
+    if bets:
+        for idx, b in enumerate(reversed(bets)):
+            if b["status"] == "won":
+                b_color = "#28a745"
+                b_text = "✅ Выиграла"
+            elif b["status"] == "lost":
+                b_color = "#dc3545"
+                b_text = "❌ Проиграла"
+            else:
+                b_color = "#17a2b8"
+                b_text = "⏳ Ожидается"
+
+            st.markdown(f"""
+            <div style="background-color: rgba(255,255,255,0.05); border-left: 4px solid {b_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                <p style="margin: 0; color: #ffffff; font-weight: bold;">{total_bets - idx}. Матч: {b['match']} <span style="font-size: 12px; color: #94a3b8;">({b.get('league', 'Лига')})</span></p>
+                <p style="margin: 6px 0 0 0; color: #cbd5e1; font-size: 14px;">
+                    🎯 Выбор ИИ: <b style="color: #38bdf8;">{b['pick']}</b> &nbsp;|&nbsp; 📊 Кэф: <code>{b['odd']}</code> &nbsp;|&nbsp; 💰 Сумма: <code>{b['stake']} у.е.</code> &nbsp;|&nbsp; Статус: <span style="color: {b_color}; font-weight: bold;">{b_text}</span>
+                </p>
+                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">📅 Дата создания: {b.get('date', '—')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("История ставок пока пуста. Запустите анализ в первой вкладке, чтобы бот автоматически подобрал и сделал ставки.")
+
+with tab3:
+    st.markdown("### 🧠 Панель самообучения ИИ")
     
     col_l1, col_l2 = st.columns(2)
     with col_l1:
@@ -375,7 +411,7 @@ with tab2:
                 st.rerun()
             
     with col_l2:
-        if st.button("🔄 Проверить результаты моих ставок"):
+        if st.button("🔄 Проверить результаты и обновить баланс банка"):
             if not odds_api_key:
                 st.warning("Введите API ключ!")
             else:
@@ -384,24 +420,14 @@ with tab2:
                 st.rerun()
 
     history_data = st.session_state.app_data
-    st.metric("Баланс банка", f"{history_data['bank']:.2f} у.е.")
+    st.metric("Текущий баланс банка", f"{history_data['bank']:.2f} у.е.")
     
-    st.markdown("#### Активные веса модели:")
+    st.markdown("#### Активные веса модели ИИ:")
     st.json(history_data["weights"])
-    
-    st.markdown("---")
-    st.markdown("#### 📊 История ставок:")
-    bets_list = history_data["bets"]
-    if not bets_list:
-        st.write("История пока пуста.")
-    else:
-        for b in bets_list:
-            status_emoji = "🟢" if b['status'] == 'won' else ("🔴" if b['status'] == 'lost' else "⏳")
-            st.write(f"{status_emoji} **{b['match']}** | Выбор: **{b['pick']}** (Кэф: {b.get('odd', 0)}) | Статус: **{b['status']}**")
 
-with tab3:
+with tab4:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Программа использует математическое распределение Пуассона, анализирует котировки через The Odds API 
-    и выводит данные в интерфейсе с цветовой индикацией валуев, кубковых матчей и стадионными обоями.
+    Программа автоматически анализирует матчи, проверяет их на отсутствие дубликатов, 
+    самостоятельно размещает виртуальные ставки на перспективные события, ведет детальную статистику проходов и обновляет банк при завершении матчей.
     """)
