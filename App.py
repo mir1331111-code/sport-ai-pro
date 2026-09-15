@@ -48,7 +48,7 @@ def load_history():
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if "weights" not in data:
-                    data["weights"] = {"xg_w": 1.0, "odds_limit": 2.2}
+                    data["weights"] = {"xg_w": 1.0, "form_w": 0.5, "odds_limit": 2.2}
                 if "archive_matches" not in data:
                     data["archive_matches"] = []
                 return data
@@ -98,33 +98,39 @@ LEAGUES = [
     'soccer_turkey_super_lig'
 ]
 
-# --- ЗАГРУЗКА АРХИВА С FOOTBALL-DATA.CO.UK ---
+# --- ЗАГРУЗКА ИСПРАВЛЕННОГО АРХИВА С FOOTBALL-DATA.CO.UK ---
 def load_public_football_archive():
-    url = "https://www.football-data.co.uk/mmzz/2425/E0.csv"
-    try:
-        df = pd.read_csv(url)
-        archive_items = []
-        for _, row in df.iterrows():
-            home = row.get('HomeTeam')
-            away = row.get('AwayTeam')
-            fthg = row.get('FTHG')
-            ftag = row.get('FTAG')
+    seasons = ["2526", "2425", "2324", "2223"]
+    archive_items = []
+    
+    for season in seasons:
+        url = f"https://www.football-data.co.uk/{season}/E0.csv"
+        try:
+            df = pd.read_csv(url)
+            for _, row in df.iterrows():
+                home = row.get('HomeTeam')
+                away = row.get('AwayTeam')
+                fthg = row.get('FTHG')
+                ftag = row.get('FTAG')
+                
+                if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                    winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                    archive_items.append({
+                        "match": f"{home} vs {away}",
+                        "winner": winner,
+                        "source": f"Football-Data ({season})"
+                    })
+            if archive_items:
+                break
+        except Exception:
+            continue
             
-            if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
-                winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
-                archive_items.append({
-                    "match": f"{home} vs {away}",
-                    "winner": winner,
-                    "source": "Football-Data CSV (EPL)"
-                })
-        
-        if archive_items:
-            st.session_state.app_data["archive_matches"] = archive_items
-            save_history(st.session_state.app_data)
-            return len(archive_items), f"Успешно загружено {len(archive_items)} реальных матчей из архива!"
-    except Exception as e:
-        return 0, f"Ошибка загрузки архива: {e}"
-    return 0, "Не удалось найти данные."
+    if archive_items:
+        st.session_state.app_data["archive_matches"] = archive_items
+        save_history(st.session_state.app_data)
+        return len(archive_items), f"Успешно загружено {len(archive_items)} реальных матчей из архива!"
+    else:
+        return 0, "Не удалось загрузить архив. Проверьте соединение."
 
 # --- ГЕНЕРАТОР ОБОСНОВАНИЙ ---
 def get_smart_reason(pick, odd, edge):
@@ -164,7 +170,6 @@ def analyze_upcoming_matches(api_key):
             
             for event in events:
                 commence_time = event.get("commence_time")
-                # Фильтрация по времени (на сколько часов вперед)
                 if commence_time:
                     match_dt = datetime.datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
                     now_dt = datetime.datetime.now(datetime.timezone.utc)
@@ -179,7 +184,6 @@ def analyze_upcoming_matches(api_key):
                 if not bookmakers:
                     continue
                 
-                # Берем коэффициенты из первой доступной букмекерской конторы
                 markets = bookmakers[0].get("markets", [])
                 outcomes = []
                 for m in markets:
@@ -197,7 +201,6 @@ def analyze_upcoming_matches(api_key):
                 
                 checked_count += 1
                 
-                # Расчет по Пуассону с учетом весов ИИ
                 h_lam = max(0.6, min(3.5, 1.4 * xg_w))
                 a_lam = max(0.5, min(3.2, 1.1))
                 
@@ -215,7 +218,6 @@ def analyze_upcoming_matches(api_key):
                     p_draw /= total
                     p_away /= total
                 
-                # Определяем лучший валуйный выбор
                 options = [
                     ("П1", p_home, home_odd),
                     ("Ничья (X)", p_draw, draw_odd),
@@ -231,12 +233,10 @@ def analyze_upcoming_matches(api_key):
                             max_edge = edge
                             best_pick = (name, prob, odd, edge)
                 
-                # Если найден валуйный сигнал и банк позволяет сделать ставку
                 if best_pick and best_pick[3] > 0.02:
                     pick_name, prob, odd, edge = best_pick
                     match_str = f"{home_team} vs {away_team}"
                     
-                    # Проверяем, нет ли уже такой ставки в истории
                     existing_matches = [b["match"] for b in st.session_state.app_data["bets"]]
                     if match_str not in existing_matches:
                         if st.session_state.app_data["bank"] >= STAKE_SIZE:
@@ -264,7 +264,6 @@ def train_on_epochs_multisource(epochs=3):
     logs = []
     training_items = []
     
-    # 1. Завершенные ставки пользователя
     settled_bets = [b for b in st.session_state.app_data["bets"] if b["status"] in ["won", "lost"]]
     for b in settled_bets:
         training_items.append({
@@ -272,7 +271,6 @@ def train_on_epochs_multisource(epochs=3):
             "is_win": (b["status"] == "won")
         })
 
-    # 2. Скачанный архив матчей
     arch = st.session_state.app_data.get("archive_matches", [])
     for item in arch:
         training_items.append({
@@ -281,7 +279,7 @@ def train_on_epochs_multisource(epochs=3):
         })
 
     if not training_items:
-        return 0, ["⚠️ База для обучения пуста! Нажмите кнопку '📥 Загрузить архив реальных матчей' во вкладке обучения или сделайте ставки."]
+        return 0, ["⚠️ База для обучения пуста! Нажмите кнопку '📥 Загрузить архив реальных матчей' во вкладке обучения."]
 
     total_events_processed = 0
     
@@ -333,7 +331,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["🎯 Анализ и Авто-ставки", 
 
 with tab1:
     st.markdown("### 🚀 Автоматический поиск матчей и валуйных ставок")
-    st.write("Нажмите кнопку ниже, чтобы бот опросил The Odds API, проанализировал расписание матчей на ближайшие часы через пуассоновскую модель и автоматически разместил виртуальные ставки.")
+    st.write("Нажмите кнопку ниже, чтобы бот опросил The Odds API, проанализировал расписание матчей через модель и автоматически разместил виртуальные ставки.")
     
     if st.button("🔎 Запустить сканирование и сделать ставки"):
         if not odds_api_key:
