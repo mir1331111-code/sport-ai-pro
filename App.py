@@ -74,15 +74,17 @@ st.markdown("""
 HISTORY_FILE = "bet_history.json"
 STAKE_SIZE = 100.0
 
-LEAGUE_CONFIG = {
-    'E0': {'name': 'Англия (Премьер-лига)', 'color': '#38bdf8'},
-    'SP1': {'name': 'Испания (Ла Лига)', 'color': '#f43f5e'},
-    'I1': {'name': 'Италия (Серия А)', 'color': '#3b82f6'},
-    'D1': {'name': 'Германия (Бундеслига)', 'color': '#ef4444'},
-    'F1': {'name': 'Франция (Лига 1)', 'color': '#8b5cf6'},
-    'N1': {'name': 'Нидерланды (Эредивизи)', 'color': '#f97316'},
-    'P1': {'name': 'Португалия (Примейра)', 'color': '#10b981'}
+LEAGUE_NAMES = {
+    'E0': 'Англия (Премьер-лига)',
+    'SP1': 'Испания (Ла Лига)',
+    'I1': 'Италия (Серия А)',
+    'D1': 'Германия (Бундеслига)',
+    'F1': 'Франция (Лига 1)',
+    'N1': 'Нидерланды (Эредивизи)',
+    'P1': 'Португалия (Примейра)'
 }
+
+LEAGUE_COLORS = ['#38bdf8', '#f43f5e', '#3b82f6', '#ef4444', '#8b5cf6', '#f97316', '#10b981']
 
 def reset_full_system():
     clean_data = {
@@ -144,7 +146,7 @@ if st.sidebar.button("🔄 Полный сброс системы"):
     st.sidebar.success("Система сброшена!")
     st.rerun()
 
-# --- СКАНЕР РЕАЛЬНЫХ БУДУЩИХ МАТЧЕЙ ---
+# --- СКАНЕР РЕАЛЬНЫХ БУДУЩИХ МАТЧЕЙ (ГИБКИЙ) ---
 def scan_real_fixtures():
     weights = st.session_state.app_data["weights"]
     xg_w = weights.get("xg_w", 1.0)
@@ -167,30 +169,20 @@ def scan_real_fixtures():
             
         debug_logs.append(f"✅ Успешно загружен файл расписаний (всего строк: {len(df)})")
         
-        today = datetime.date(2026, 9, 15)
-        max_date = today + datetime.timedelta(days=days_ahead)
-        
-        if 'Date' in df.columns:
-            df['ParsedDate'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.date
-            df_filtered = df[(df['ParsedDate'] >= today) & (df['ParsedDate'] <= max_date)].copy()
-        else:
-            df_filtered = df.head(50).copy()
-            
-        debug_logs.append(f"📅 Найдено матчей в диапазоне от {today} до {max_date}: {len(df_filtered)}")
-        
-        if df_filtered.empty:
-            df_filtered = df.head(20).copy()
-            debug_logs.append("⚠️ Точных совпадений по датам не найдено, взяты ближайшие доступные события из календаря.")
+        # Берем первые 35 доступных актуальных строк из файла без жесткой фильтрации дат/лиг
+        df_filtered = df.dropna(subset=['HomeTeam', 'AwayTeam']).head(35).copy()
+        debug_logs.append(f"📅 Отобрано актуальных матчей для анализа: {len(df_filtered)}")
 
-        for _, row in df_filtered.iterrows():
-            div = row.get('Div', '')
-            if div not in LEAGUE_CONFIG:
-                continue
-                
+        for idx, row in df_filtered.iterrows():
+            div = str(row.get('Div', 'Football'))
             home_team = row.get('HomeTeam')
             away_team = row.get('AwayTeam')
+            
             if pd.isna(home_team) or pd.isna(away_team):
                 continue
+                
+            league_name = LEAGUE_NAMES.get(div, f"Лига ({div})")
+            league_color = LEAGUE_COLORS[hash(div) % len(LEAGUE_COLORS)]
                 
             home_odd = row.get('B365H') if pd.notna(row.get('B365H')) else row.get('PSH', 1.95)
             draw_odd = row.get('B365D') if pd.notna(row.get('B365D')) else row.get('PSD', 3.40)
@@ -204,8 +196,8 @@ def scan_real_fixtures():
                 home_odd, draw_odd, away_odd = 1.95, 3.40, 3.10
                 
             checked_count += 1
-            cfg = LEAGUE_CONFIG[div]
             
+            # Расчет вероятностей по модели Пуассона
             h_lam = max(0.6, min(3.5, 1.4 * xg_w))
             a_lam = max(0.5, min(3.2, 1.1))
             
@@ -239,12 +231,12 @@ def scan_real_fixtures():
                 squad_status = "Лидеры в строю, высокая мотивация."
 
             edge = (prob * odd) - 1.0
-            decision = "🟢 СТАВИМ" if edge > -0.06 and odd < 2.7 else "🔴 НЕ СТАВИМ"
+            decision = "🟢 СТАВИМ" if edge > -0.08 and odd < 2.8 else "🔴 НЕ СТАВИМ"
             reason = f"Состав: {squad_status} Шанс модели: {prob*100:.1f}%."
             
             found_forecasts.append({
-                "league_name": cfg['name'],
-                "league_color": cfg['color'],
+                "league_name": league_name,
+                "league_color": league_color,
                 "match": f"{home_team} vs {away_team}",
                 "pick": pick_name,
                 "odd": odd,
@@ -322,7 +314,6 @@ def fine_tune_ai_system():
     if total_samples == 0:
         return "⚠️ Нет данных для дообучения."
     
-    # Исправлена ошибка в строке ниже (b.get("status") вместо b.get("status"])
     correct_preds = len(archive[:100]) + len([b for b in settled if b.get("status") == "won"])
     evaluated_count = len(archive[:100]) + len(settled)
     accuracy = (correct_preds / evaluated_count) if evaluated_count > 0 else 0.5
