@@ -13,18 +13,17 @@ def log_err(tag,e):
     ERR.append(f"[{tag}] {type(e).__name__}: {e}")
     if len(ERR)>300: ERR.pop(0)
 
+# ТОЛЬКО ФУТБОЛ + ВОЛЕЙБОЛ + ХОККЕЙ
 SPORTS={
  "⚽ Футбол":dict(src="fd"),
- "🎾 Теннис":dict(src="espn",espn=["tennis/atp","tennis/wta"],tsdb_sport="Tennis",kw=["ATP","WTA"],max=3,k=24,ha=0,div=150),
- "🏀 Баскетбол":dict(src="espn",espn=["basketball/wnba","basketball/nba","basketball/mens-college-basketball"],tsdb_sport="Basketball",kw=["NBA","WNBA","EuroLeague"],max=3,k=24,ha=100,div=250,tot=True,sigma=12),
  "🏐 Волейбол":dict(src="espn",espn=["volleyball/womens-college-volleyball"],tsdb_sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
  "🏒 Хоккей":dict(src="espn",espn=["hockey/nhl","hockey/ahl"],tsdb_sport="Ice Hockey",kw=["NHL","KHL","AHL"],max=3,k=24,ha=40,div=120,tot=True,pois=True),
 }
-DIV_NAMES={"E0":"🏴󠁥󠁮󠁧 АПЛ","E1":"🏴󠁢󠁥󠁮 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+DIV_NAMES={"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁥󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁳󠁣󠁴󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+ "G1":"🇬 Греция","R1":"🇷 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 
 st.markdown("""
 <style>
@@ -87,6 +86,11 @@ def ml_dec(ml):
     if ml is None: return None
     ml=float(ml)
     return round(ml/100+1,2) if ml>0 else round(100/abs(ml)+1,2)
+def _odd_s(rw):
+    o=rw.get("odd")
+    if o: return f"{o:.2f}"
+    p=max(rw.get("prob") or 0.01,0.01)
+    return f"фейр {1/p:.2f}"
 
 # ---------- TheSportsDB (резерв) ----------
 @st.cache_data(ttl=86400)
@@ -161,7 +165,7 @@ def espn_parse(ev):
     except Exception as e:
         log_err("espn parse",e); return None
 
-# ---------- ФУТБОЛ (не тронут) ----------
+# ---------- ФУТБОЛ: ДВИЖОК И СКАН НЕ ТРОНУТЫ ----------
 class Engine:
     def __init__(self):
         self.elo={};self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],"hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
@@ -498,7 +502,7 @@ def scan_sport(sport,cfg,PR,today,limit,bank):
     cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
     return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
 
-# ---------- состояние + НОРМАЛИЗАЦИЯ СТАРОГО ФАЙЛА ----------
+# ---------- состояние ----------
 def new_data():
     return {"bank":10000.0,"bets":[],"cards":{},"funnel":{},"report":{},"meta":{},
             "stats":{"won":0,"lost":0,"profit":0,"push":0}}
@@ -595,6 +599,7 @@ def auto_settle(D):
         if out: D2=apply_settle(D2,idx,out); upd+=1
     return D2,upd
 
+# ---------- рендер ----------
 def render_card(c,PR):
     val=c["best"] is not None; hot=c["tag"]=="hot" and not val
     badge=f"<span class='badge {'val' if val else ('hot' if hot else 'no')}'>{'🟢 ВАЛУЙ' if val else ('🔥 P≥'+str(int(PR['thr']*100))+'%' if hot else 'фон')}</span>"
@@ -619,6 +624,50 @@ def render_card(c,PR):
  <div class="mfoot">📚 игр в базе: <b>{c['games']}</b>{' · '+best_html if best_html else ''}</div>
 </div>"""
 
+# ---------- блок «НА ЧТО СТАВИТЬ» (вернул из футбольной версии) ----------
+def build_picks(cards,thr,bank,kf):
+    picks=[]
+    for c in cards:
+        row=None;ptype=None
+        if c["best"]:
+            ok=[r for r in c["rows"] if r["ok"] and r["odd"]]
+            if ok: row=max(ok,key=lambda r:r["ev"]);ptype="value"
+        if row is None:
+            hot=[r for r in c["rows"] if r["prob"]>=thr]
+            if hot: row=max(hot,key=lambda r:r["prob"]);ptype="hot"
+        if row is None: continue
+        ev=row["ev"] or 0.0
+        if ptype=="value":
+            stars="⭐⭐⭐⭐⭐" if ev>=0.10 else ("⭐⭐⭐⭐" if ev>=0.06 else "⭐⭐⭐")
+        else:
+            stars="⭐⭐⭐⭐⭐" if row["prob"]>=0.70 else ("⭐⭐⭐⭐" if row["prob"]>=0.65 else "⭐⭐⭐")
+        stake=kelly(row["prob"],row["odd"],bank,kf) if row["odd"] else round(bank*0.01,2)
+        picks.append({"league":c["league"],"match":c["match"],"date":c["date"],"when":c["when"],
+                      "pick":row["pick"],"prob":row["prob"],"odd_s":_odd_s(row),"stake":stake,
+                      "stars":stars,"type":ptype,"reason":c["verdict"],
+                      "score":(ev if ptype=="value" else 0)+row["prob"]})
+    picks.sort(key=lambda p:(p["type"]=="value",p["score"]),reverse=True)
+    return picks[:8]
+def render_pick(p,i):
+    cls="value" if p["type"]=="value" else "hot"
+    btype="🟢 ВАЛУЙ" if p["type"]=="value" else "🔥 Проходимость"
+    return f"""
+<div class="mcard {cls}" style="padding:12px 16px">
+ <span class="badge {'val' if p['type']=='value' else 'hot'}">{p['stars']}</span>
+ <span class="chip">{p['league']}</span><span class="chip when">📅 {p['date']} · {p['when']}</span>
+ <div class="teams" style="font-size:1.1rem;margin:6px 0 2px">{i}. {p['match']}</div>
+ <div class="verdict">➤ Ставь: <b class="y">{p['pick']}</b> @ <b class="y">{p['odd_s']}</b> ·
+  P <b class="g">{p['prob']*100:.0f}%</b> · сумма <b class="y">{p['stake']:.2f} у.е.</b> · {btype}<br>
+  <span style="color:#cbd5e1">💡 {p['reason']}</span></div>
+</div>"""
+
+LEGEND="""
+**🟢 ВАЛУЙ** — EV>0 против кэфа, ставка ушла в портфель · **🔥 P≥N%** — ставка по проходимости ·
+**✅ в строке рынка** — прошёл все фильтры · **·** — не прошёл · **⭐** — уверенность (5⭐ = EV≥10% или P≥70%) ·
+**P / EV** — вероятность модели / перевес над кэфом · **фейр X.XX** — кэфа нет, это честная цена модели ·
+**⏳🔴** — ожидает / выиграла / проиграла / возврат · **📚 игр** — объём обучения по командам
+"""
+
 # ================= UI =================
 if "data" not in st.session_state: st.session_state.data=normalize(load_data())
 D=st.session_state.data
@@ -626,7 +675,7 @@ pend=sum(1 for b in D["bets"] if b["status"]=="pending")
 st.markdown(f"""
 <div class="hero">
  <h1>🏟 NEURO BET PRO Multi</h1>
- <p>Футбол (football-data, не тронут) · Теннис/Баскет/Волей/Хоккей (ESPN + резерв TheSportsDB) · общий банк и портфель</p>
+ <p>Футбол (football-data, движок не тронут) · Волейбол и Хоккей (ESPN + резерв TheSportsDB) · общий банк и портфель</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pend}</div></div>
@@ -643,6 +692,8 @@ with st.sidebar:
     min_ev=st.slider("Мин. EV, %",0,10,2)/100
     use_dis=st.checkbox("Футбол: только расхождения с рынком",value=True)
     PR=dict(thr=thr,edge=min_edge,ev=min_ev/100,dis=use_dis,w_market=0.40,min_games=8,kelly=kelly_frac)
+    with st.expander("📖 Легенда значков"):
+        st.markdown(LEGEND)
     with st.expander("🐞 Лог ошибок"):
         if ERR:
             for line in ERR[-40:]: st.text(line)
@@ -650,7 +701,7 @@ with st.sidebar:
     if st.button("🔄 Полный сброс"):
         st.session_state.data=new_data();save_data(st.session_state.data);st.cache_data.clear();st.rerun()
 
-tab1,tab2,tab3,tab4=st.tabs(["🛰 Сканер","💼 Портфель","📈 Статистика","🧪 Бэктест"])
+tab1,tab2,tab3,tab4,tab5=st.tabs(["🛰 Сканер","💼 Портфель","📈 Статистика","🧮 Калькулятор","🧪 Бэктест"])
 
 with tab1:
     sport=st.selectbox("Вид спорта",list(SPORTS.keys()),index=0)
@@ -678,6 +729,11 @@ with tab1:
     if fn: st.caption(f"Обучено матчей: {fn['trained']} · в окне дат: {fn['inwin']} · сигналов: {fn['passed']}")
     with st.expander("🔌 Диагностика источников"):
         for line in D.get("report",{}).get(sport,[]): st.text(line)
+    picks=build_picks(D.get("cards",{}).get(sport,[]),thr,D["bank"],kelly_frac)
+    if picks:
+        st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
+        for i,p in enumerate(picks,1):
+            st.markdown(render_pick(p,i),unsafe_allow_html=True)
     for c in D.get("cards",{}).get(sport,[]):
         st.markdown(render_card(c,PR),unsafe_allow_html=True)
     if not D.get("cards",{}).get(sport):
@@ -720,6 +776,17 @@ with tab3:
         st.dataframe(rows,use_container_width=True,hide_index=True)
 
 with tab4:
+    st.header("🧮 EV-калькулятор")
+    q1,q2,q3=st.columns(3)
+    p=q1.number_input("Вероятность, %",1,99,60)
+    o=q2.number_input("Кэф",1.01,30.0,1.80)
+    bk=q3.number_input("Банк",100.0,1e6,float(D["bank"]))
+    ev=(p/100)*o-1
+    st.markdown(f"**EV:** {ev*100:+.1f}% · **Безубыточность:** {100/o:.1f}% · **Келли:** {kelly(p/100,o,bk,kelly_frac):.2f} у.е.")
+    if ev>0.02: st.success("✅ Можно ставить")
+    else: st.warning("⛔ EV мал")
+
+with tab5:
     st.header("🧪 Бэктест (walk-forward)")
     bs=st.selectbox("Вид",list(SPORTS.keys()),key="bt")
     if st.button("▶️ Прогнать",type="primary"):
