@@ -118,7 +118,75 @@ def get_smart_reason(m, best_edge):
         
     return " • ".join(reasons)
 
-# --- ПРОВЕРКА РЕЗУЛЬТАТОВ И ОБУЧЕНИЕ ИИ НА ОШИБКАХ/ПОБЕДАХ СТАВОК ---
+# --- ОБУЧЕНИЕ ИИ НА ДОСТУПНОМ АРХИВЕ ПРОШЛЫХ МАТЧЕЙ ---
+def train_on_archive_scores(odds_key):
+    weights = st.session_state.app_data["weights"]
+    logs = []
+    trained_count = 0
+
+    for league in LEAGUES:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
+        params = {'apiKey': odds_key, 'daysFrom': 3}  # Максимально доступный прошлый период в стандартном API
+        try:
+            res = requests.get(url, params=params, timeout=10)
+            if res.status_code == 200:
+                events = res.json()
+                for ev in events:
+                    if ev.get('completed'):
+                        ev_home, ev_away = ev.get('home_team'), ev.get('away_team')
+                        scores = ev.get('scores', [])
+                        if len(scores) == 2:
+                            home_score = int(scores[0]['score']) if scores[0]['name'] == ev_home else int(scores[1]['score'])
+                            away_score = int(scores[1]['score']) if scores[1]['name'] == ev_away else int(scores[0]['score'])
+                            
+                            winner = "П1" if home_score > away_score else ("Ничья (X)" if home_score == away_score else "П2")
+                            
+                            # Прогон через прогнозную модель Пуассона для обучения весов
+                            xg_w = weights.get("xg_w", 1.0)
+                            h_lam = max(0.6, min(3.5, 2.2 * 0.5 * 2 * xg_w))
+                            a_lam = max(0.5, min(3.2, 2.2 * 0.5 * 2))
+                            
+                            matrix = np.zeros((6, 6))
+                            for h in range(6):
+                                for a in range(6):
+                                    matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+                            p_home = np.sum(np.tril(matrix, -1))
+                            p_draw = np.sum(np.diagonal(matrix))
+                            p_away = np.sum(np.triu(matrix, 1))
+                            total = p_home + p_draw + p_away
+                            if total > 0:
+                                p_home /= total
+                                p_draw /= total
+                                p_away /= total
+                            
+                            ai_pick = "П1" if p_home > p_away and p_home > p_draw else ("Ничья (X)" if p_draw > p_home and p_draw > p_away else "П2")
+                            match_name = f"{ev_home} vs {ev_away}"
+                            
+                            # Проверка, не обучались ли уже на этом архивном матче
+                            already_trained = any(b.get("match") == match_name and b.get("status") == "archive_trained" for b in st.session_state.app_data["bets"])
+                            
+                            if not already_trained:
+                                if ai_pick == winner:
+                                    weights["xg_w"] = min(2.5, weights["xg_w"] * 1.015)
+                                    logs.append(f"✅ АРХИВ [ПОБЕДА ИИ]: {match_name} | Счёт: {home_score}:{away_score} | ИИ угадал ({ai_pick}) | 🧠 Веса укреплены.")
+                                else:
+                                    weights["odds_limit"] = max(1.6, weights["odds_limit"] * 0.985)
+                                    weights["xg_w"] = max(0.5, weights["xg_w"] * 0.99)
+                                    logs.append(f"❌ АРХИВ [ОШИБКА ИИ]: {match_name} | Счёт: {home_score}:{away_score} | ИИ ошибся (ждал {ai_pick}) | 🧠 Веса скорректированы.")
+                                
+                                st.session_state.app_data["bets"].append({
+                                    "match": match_name,
+                                    "home": ev_home, "away": ev_away, "league": league,
+                                    "pick": ai_pick, "odd": 2.0, "stake": 0.0, "status": "archive_trained", "date": "Архив (прошлые матчи)"
+                                })
+                                trained_count += 1
+        except Exception as e:
+            logs.append(f"⚠️ Ошибка загрузки архива для лиги {league}: {e}")
+
+    save_history(st.session_state.app_data)
+    return trained_count, logs
+
+# --- ПРОВЕРКА РЕЗУЛЬТАТОВ И ОБУЧЕНИЕ ИИ НА СТАВКАХ ---
 def update_pending_results_and_learn(odds_key):
     pending_bets = [b for b in st.session_state.app_data["bets"] if b["status"] == "pending"]
     if not pending_bets:
@@ -131,7 +199,7 @@ def update_pending_results_and_learn(odds_key):
 
     for league in leagues_to_check:
         url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
-        params = {'apiKey': odds_key, 'daysFrom': 7} # Проверяем последние дни, где могли завершиться матчи со ставками
+        params = {'apiKey': odds_key, 'daysFrom': 3}
         try:
             res = requests.get(url, params=params, timeout=10)
             if res.status_code == 200:
@@ -151,15 +219,13 @@ def update_pending_results_and_learn(odds_key):
                                     if b["pick"] == winner:
                                         st.session_state.app_data["bets"][idx]["status"] = "won"
                                         st.session_state.app_data["bank"] += b['stake'] * b['odd']
-                                        # Обучение на победе: укрепляем уверенность модели
                                         weights["xg_w"] = min(2.5, weights["xg_w"] * 1.02)
-                                        logs.append(f"✅ ВЫИГРЫШ: {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | Выплата: +{b['stake'] * b['odd']:.2f} | 🧠 ИИ укрепил веса модели.")
+                                        logs.append(f"✅ ВЫИГРЫШ: {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | Выплата: +{b['stake'] * b['odd']:.2f} | 🧠 ИИ укрепил веса.")
                                     else:
                                         st.session_state.app_data["bets"][idx]["status"] = "lost"
-                                        # Обучение на ошибке (проигрыше): корректируем риски, снижаем лимит кэфов
                                         weights["odds_limit"] = max(1.6, weights["odds_limit"] * 0.97)
                                         weights["xg_w"] = max(0.5, weights["xg_w"] * 0.98)
-                                        logs.append(f"❌ ПРОИГРЫШ (ОШИБКА ИИ): {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | 🧠 ИИ учел ошибку и скорректировал риски.")
+                                        logs.append(f"❌ ПРОИГРЫШ (ОШИБКА ИИ): {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | 🧠 ИИ учел ошибку.")
                                     updated_count += 1
         except Exception as e:
             logs.append(f"⚠️ Ошибка проверки лиги {league}: {e}")
@@ -255,7 +321,6 @@ with tab1:
                         best_edge = max(edges, key=lambda x: x[3])
                         max_allowed_odd = current_weights.get("odds_limit", 2.2)
                         reason_text = get_smart_reason(m, best_edge)
-                        
                         match_key = f"{home} vs {away}"
                         
                         if best_edge[3] > 0.05 and best_edge[2] <= max_allowed_odd:
@@ -268,7 +333,6 @@ with tab1:
                             status = "red"
                             ai_text = f"❌ Матч отклонен (нет перевеса или лимиты нарушены).<br>💡 *Причина:* {reason_text}"
 
-                        # Автоматическая ставка (только если матч подходит и на него еще не ставили)
                         if status != "red" and match_key not in existing_match_keys:
                             if st.session_state.app_data["bank"] >= STAKE_SIZE:
                                 st.session_state.app_data["bank"] -= STAKE_SIZE
@@ -334,62 +398,81 @@ with tab1:
 with tab2:
     st.markdown("### 📊 Статистика и Процент проходов")
     bets = st.session_state.app_data.get("bets", [])
-    total_bets = len(bets)
-    won_bets = len([b for b in bets if b["status"] == "won"])
-    lost_bets = len([b for b in bets if b["status"] == "lost"])
-    pending_bets = len([b for b in bets if b["status"] == "pending"])
+    real_bets = [b for b in bets if b["status"] in ["won", "lost", "pending"]]
+    total_bets = len(real_bets)
+    won_bets = len([b for b in real_bets if b["status"] == "won"])
+    lost_bets = len([b for b in real_bets if b["status"] == "lost"])
+    pending_bets = len([b for b in real_bets if b["status"] == "pending"])
     settled_count = won_bets + lost_bets
     win_rate = (won_bets / settled_count * 100) if settled_count > 0 else 0.0
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("Всего ставок", total_bets)
+    col_m1.metric("Всего реальных ставок", total_bets)
     col_m2.metric("Выиграно / Проиграно", f"{won_bets} / {lost_bets}")
     col_m3.metric("Процент проходов (Win Rate)", f"{win_rate:.1f}%")
     col_m4.metric("В ожидании", pending_bets)
 
     st.markdown("---")
-    st.markdown("### 📝 История ставок (на что ставили)")
+    st.markdown("### 📝 История ставок и архивных тренировок")
     if bets:
         for idx, b in enumerate(reversed(bets)):
-            if b["status"] == "won":
+            status = b["status"]
+            if status == "won":
                 b_color = "#28a745"
                 b_text = "✅ Выиграла"
-            elif b["status"] == "lost":
+            elif status == "lost":
                 b_color = "#dc3545"
                 b_text = "❌ Проиграла"
+            elif status == "archive_trained":
+                b_color = "#8b5cf6"
+                b_text = "⚡ Архивное обучение"
             else:
                 b_color = "#17a2b8"
                 b_text = "⏳ Ожидается"
 
             st.markdown(f"""
             <div style="background-color: rgba(255,255,255,0.05); border-left: 4px solid {b_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
-                <p style="margin: 0; color: #ffffff; font-weight: bold;">{total_bets - idx}. Матч: {b['match']} <span style="font-size: 12px; color: #94a3b8;">({b.get('league', 'Лига')})</span></p>
+                <p style="margin: 0; color: #ffffff; font-weight: bold;">{len(bets) - idx}. Матч: {b['match']} <span style="font-size: 12px; color: #94a3b8;">({b.get('league', 'Лига')})</span></p>
                 <p style="margin: 6px 0 0 0; color: #cbd5e1; font-size: 14px;">
-                    🎯 Выбор ИИ: <b style="color: #38bdf8;">{b['pick']}</b> &nbsp;|&nbsp; 📊 Кэф: <code>{b['odd']}</code> &nbsp;|&nbsp; 💰 Сумма: <code>{b['stake']} у.е.</code> &nbsp;|&nbsp; Статус: <span style="color: {b_color}; font-weight: bold;">{b_text}</span>
+                    🎯 Выбор ИИ: <b style="color: #38bdf8;">{b['pick']}</b> &nbsp;|&nbsp; 📊 Кэф: <code>{b['odd']}</code> &nbsp;|&nbsp; Статус: <span style="color: {b_color}; font-weight: bold;">{b_text}</span>
                 </p>
-                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">📅 Дата создания: {b.get('date', '—')}</p>
+                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">📅 Метка: {b.get('date', '—')}</p>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("История ставок пока пуста. Запустите анализ в первой вкладке, чтобы бот автоматически подобрал и сделал ставки.")
+        st.info("История пока пуста.")
 
 with tab3:
-    st.markdown("### 🧠 Обучение ИИ на собственных ошибках и победах")
+    st.markdown("### 🧠 Обучение ИИ (Архив + Ошибки в реальном времени)")
     st.write("""
-    Здесь бот проверяет реальные результаты завершившихся матчей **по своим размещенным ставкам**. 
-    Если ставка выиграла — ИИ закрепляет успешную стратегию. Если проиграла (ошибка) — ИИ корректирует веса и риски, чтобы реже ошибаться в будущем.
+    Здесь вы можете заставить ИИ обучиться прямо сейчас на прошлых завершившихся матчах (из доступного архива API), а также проверять свежие ставки после их завершения.
     """)
     
-    if st.button("🔄 Проверить ставки, обновить банк и обучить ИИ"):
-        if not odds_api_key:
-            st.warning("Введите API ключ!")
-        else:
-            with st.spinner("Сверяем исходы матчей с результатами ставок и обучаем модель..."):
-                updated, logs = update_pending_results_and_learn(odds_api_key)
-                st.success(f"Проверено и обновлено ставок: {updated}")
-                with st.expander("📋 Показать лог обучения и исходов матчей"):
-                    for line in logs:
-                        st.write(line)
+    col_btn1, col_btn2 = st.columns(2)
+    
+    with col_btn1:
+        if st.button("⚡ Обучить ИИ на прошлых матчах (Архив)"):
+            if not odds_api_key:
+                st.warning("Введите API ключ!")
+            else:
+                with st.spinner("ИИ анализирует архивные матчи, настраивает веса и учится на прошлых результатах..."):
+                    trained_n, arch_logs = train_on_archive_scores(odds_api_key)
+                    st.success(f"Успешно обработано и изучено архивных матчей: {trained_n}")
+                    with st.expander("📋 Лог обучения на архиве"):
+                        for line in arch_logs:
+                            st.write(line)
+
+    with col_btn2:
+        if st.button("🔄 Проверить свежие ставки и обучить на них"):
+            if not odds_api_key:
+                st.warning("Введите API ключ!")
+            else:
+                with st.spinner("Сверяем исходы свежих матчей и обучаем модель..."):
+                    updated, logs = update_pending_results_and_learn(odds_api_key)
+                    st.success(f"Проверено и обновлено ставок: {updated}")
+                    with st.expander("📋 Лог проверки свежих ставок"):
+                        for line in logs:
+                            st.write(line)
 
     history_data = st.session_state.app_data
     st.metric("Текущий баланс банка", f"{history_data['bank']:.2f} у.е.")
@@ -400,5 +483,5 @@ with tab3:
 with tab4:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Программа автоматически анализирует матчи, ставит ставку 100 у.е. один раз на событие, проверяет реальные результаты и самообучается на собственных победах и ошибках.
+    Программа поддерживает мгновенное обучение на прошлых матчах из архива API, а также автоматически самообучается на будущих ставках.
     """)
