@@ -135,7 +135,7 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Football Bot Pro — Умный рабочий терминал")
+st.title("⚽ AI Football Bot Pro — Рабочая лошадка")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("🔑 Настройки API и Банк")
@@ -265,14 +265,46 @@ def scan_new_forecasts(api_key):
     save_history(st.session_state.app_data)
     return checked_count, len(found_forecasts), debug_logs
 
-# --- ДООБУЧЕНИЕ ИИ (НЕ С НУЛЯ) ---
-def fine_tune_ai():
+# --- ЗАГРУЗКА АРХИВА ДЛЯ КАЛИБРОВКИ ---
+def load_public_football_archive():
+    seasons = ["2425", "2324", "2223"]
+    archive_items = []
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    for season in seasons:
+        url = f"https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                df = pd.read_csv(io.StringIO(response.text))
+                for _, row in df.iterrows():
+                    home = row.get('HomeTeam')
+                    away = row.get('AwayTeam')
+                    fthg = row.get('FTHG')
+                    ftag = row.get('FTAG')
+                    if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                        winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                        archive_items.append({"match": f"{home} vs {away}", "winner": winner})
+                if archive_items:
+                    break
+        except Exception:
+            continue
+            
+    if archive_items:
+        st.session_state.app_data["archive_matches"] = archive_items
+        save_history(st.session_state.app_data)
+        return len(archive_items), f"Загружено {len(archive_items)} архивных матчей!"
+    else:
+        return 0, "Не удалось загрузить архив."
+
+# --- ДООБУЧЕНИЕ ИИ СОГЛАСНО СИСТЕМЕ ---
+def fine_tune_ai_system():
     weights = st.session_state.app_data["weights"]
     bets = st.session_state.app_data.get("bets", [])
     settled = [b for b in bets if b["status"] in ["won", "lost"]]
     
     if not settled:
-        return "⚠️ Недостаточно завершенных ставок для дообучения. Сделайте несколько ставок и отметьте их результаты."
+        return "⚠️ Недостаточно завершенных ставок для дообучения. Сделайте ставки во вкладке 'Новые прогнозы' и отметьте их исходы."
     
     correct = len([b for b in settled if b["status"] == "won"])
     accuracy = correct / len(settled)
@@ -285,7 +317,7 @@ def fine_tune_ai():
         
     st.session_state.app_data["weights"] = weights
     save_history(st.session_state.app_data)
-    return f"✅ ИИ успешно дообучен на основе {len(settled)} ставок! Точность серии: {accuracy*100:.1f}%. Вес xG изменен: {old_weight:.3f} ➡️ {weights['xg_w']:.3f}"
+    return f"✅ Система дообучена! Проходимость серии: {accuracy*100:.1f}%. Вес xG адаптирован: {old_weight:.3f} ➡️ {weights['xg_w']:.3f}"
 
 # --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -297,16 +329,16 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 with tab1:
     st.markdown("### 🚀 Сканирование лиг и новые прогнозы модели")
-    st.write("Здесь отображаются только свежие матчи, найденные сканером. Каждая лига выделена своим фирменным цветом.")
+    st.write("Здесь отображаются только свежие матчи, найденные сканером. Убедитесь, что в боковой панели введен правильный API-ключ.")
     
     if st.button("🔎 Запустить сканирование матчей", type="primary"):
         if not odds_api_key:
-            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
+            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели слева!")
         else:
-            with st.spinner("Сканирование лиг и расчет пуассоновских моделей..."):
+            with st.spinner("Сканирование лиг и расчет моделей..."):
                 checked, found, logs = scan_new_forecasts(odds_api_key)
                 st.success(f"Проверено матчей: {checked}. Найдено выгодных прогнозов: {found}.")
-                with st.expander("🔍 Логи сканирования"):
+                with st.expander("🔍 Логи сканирования (проверка статусов API)"):
                     for l in logs:
                         st.write(l)
 
@@ -314,7 +346,7 @@ with tab1:
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
-        st.info("Нет активных прогнозов. Запустите сканирование выше.")
+        st.info("Нет активных прогнозов. Нажмите кнопку сканирования выше.")
     else:
         for idx, f in enumerate(forecasts):
             l_name = f.get("league_name", "Лига")
@@ -360,16 +392,14 @@ with tab1:
 
 with tab2:
     st.markdown("### 📜 История ставок и Активные матчи")
-    st.write("Здесь собраны все ваши ставки (и те, что еще ждут матча, и те, которые уже завершились). Также здесь доступна статистика.")
+    st.write("Здесь собраны все ваши ставки: ожидания и завершенные матчи, а также статистика побед и поражений.")
     
-    # Кнопка обновления результатов
     if st.button("🔄 Обновить результаты и статистику"):
         st.success("Данные актуализированы!")
         st.rerun()
 
     bets = st.session_state.app_data.get("bets", [])
     
-    # Блок статистики
     real_bets = [b for b in bets if b["status"] in ["won", "lost", "pending"]]
     total_bets = len(real_bets)
     won_bets = len([b for b in real_bets if b["status"] == "won"])
@@ -445,18 +475,50 @@ with tab2:
             st.markdown("---")
 
 with tab3:
-    st.markdown("### 🧠 Интеллектуальное дообучение ИИ")
-    st.write("Система адаптируется на основе ваших реальных результатов. Нажмите кнопку ниже, чтобы ИИ подстроил веса под текущую проходимость.")
+    st.markdown("### 🧠 Дообучение ИИ и архивные данные")
+    st.write("Система дообучается на основе ваших реальных результатов. Здесь же вы можете загрузить архивные матчи для расширенной калибровки.")
     
-    if st.button("⚡ Запустить дообучение ИИ"):
-        msg = fine_tune_ai()
+    col_a1, col_a2 = st.columns(2)
+    with col_a1:
+        if st.button("📥 Загрузить архив матчей с сайта"):
+            with st.spinner("Загрузка архива..."):
+                count, msg = load_public_football_archive()
+                if count > 0:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+    with col_a2:
+        uploaded_file = st.file_uploader("📂 Или загрузить свой CSV", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df_up = pd.read_csv(uploaded_file)
+                archive_items = []
+                for _, row in df_up.iterrows():
+                    home = row.get('HomeTeam')
+                    away = row.get('AwayTeam')
+                    fthg = row.get('FTHG')
+                    ftag = row.get('FTAG')
+                    if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                        winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                        archive_items.append({"match": f"{home} vs {away}", "winner": winner})
+                if archive_items:
+                    st.session_state.app_data["archive_matches"] = archive_items
+                    save_history(st.session_state.app_data)
+                    st.success(f"Загружено {len(archive_items)} матчей!")
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
+
+    st.markdown(f"📦 Матчей в архиве: **{len(st.session_state.app_data.get('archive_matches', []))}**")
+    st.markdown("---")
+    
+    if st.button("⚡ Запустить дообучение ИИ под систему", type="primary"):
+        msg = fine_tune_ai_system()
         if "✅" in msg:
             st.success(msg)
         else:
             st.warning(msg)
             
     st.markdown("---")
-    st.markdown("#### Отдельное управление весами:")
     if st.button("🔄 Сбросить только веса ИИ к стандарту"):
         st.session_state.app_data["weights"] = {"xg_w": 1.0, "odds_limit": 2.5}
         save_history(st.session_state.app_data)
@@ -468,4 +530,4 @@ with tab3:
 
 with tab4:
     st.markdown("### ℹ️ О системе и лигах")
-    st.write("Рабочая лошадка для анализа матчей по распределению Пуассона. Поддерживает все топ-лигии и кубки Европы, РПЛ, MLS, Турцию, Голландию, Португалию и еврокубки с цветовой маркировкой.")
+    st.write("Рабочая лошадка для анализа матчей по распределению Пуассона. Поддерживает все топ-лиги и кубки Европы, РПЛ, MLS, Турцию, Голландию, Португалию и еврокубки с цветовой маркировкой.")
