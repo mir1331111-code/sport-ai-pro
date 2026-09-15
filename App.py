@@ -226,15 +226,16 @@ with tab1:
                             fthg = float(fthg)
                             ftag = float(ftag)
                             
+                            # Безопасная инициализация всех ключей для команд
                             if home not in team_stats:
-                                team_stats[home] = {'home_goals': [], 'away_conceded': []}
+                                team_stats[home] = {'home_goals': [], 'away_conceded': [], 'away_goals': [], 'home_conceded': []}
                             if away not in team_stats:
-                                team_stats[away] = {'away_goals': [], 'home_conceded': []}
+                                team_stats[away] = {'home_goals': [], 'away_conceded': [], 'away_goals': [], 'home_conceded': []}
                                 
                             team_stats[home]['home_goals'].append(fthg)
-                            team_stats[away]['home_conceded'].append(fthg)
-                            team_stats[away]['away_goals'].append(ftag)
                             team_stats[home]['away_conceded'].append(ftag)
+                            team_stats[away]['away_goals'].append(ftag)
+                            team_stats[away]['home_conceded'].append(fthg)
                             
                             valid_matches_count += 1
                         except Exception:
@@ -246,8 +247,8 @@ with tab1:
                     
                     st.success(f"✅ Проанализировано сыгранных матчей: {valid_matches_count}")
                     
-                    all_home_goals = [g for t in team_stats.values() for g in t['home_goals']]
-                    all_away_goals = [g for t in team_stats.values() for g in t['away_goals']]
+                    all_home_goals = [g for t in team_stats.values() for g in t.get('home_goals', [])]
+                    all_away_goals = [g for t in team_stats.values() for g in t.get('away_goals', [])]
                     
                     league_avg_home = np.mean(all_home_goals) if all_home_goals else 1.4
                     league_avg_away = np.mean(all_away_goals) if all_away_goals else 1.1
