@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="AI Sport Bot Pro (Будущие матчи)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="AI Sport Bot Pro (Будущие матчи)", page_icon="", layout="wide")
 
 # Дизайн и стили
 st.markdown("""
@@ -62,9 +62,9 @@ def get_league_urls():
     seasons = ["2627", "2526", "2425"] 
     
     leagues = {
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "E0.csv",
-        "🇪🇸 Испания (Ла Лига)": "SP1.csv",
-        "🇮🇹 Италия (Серия А)": "I1.csv",
+        "󠁧󠁢󠁮󠁿 Англия (АПЛ)": "E0.csv",
+        "🇸 Испания (Ла Лига)": "SP1.csv",
+        "🇮 Италия (Серия А)": "I1.csv",
         "🇩🇪 Германия (Бундеслига)": "D1.csv",
         "🇫🇷 Франция (Лига 1)": "F1.csv",
         "🇷🇺 Россия (РПЛ)": "R1.csv",
@@ -155,9 +155,9 @@ with tab1:
         "Отметьте лиги и турниры для анализа:",
         options=list(leagues_dict.keys()),
         default=[
-            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", 
-            "🇪🇸 Испания (Ла Лига)", 
-            "🇷🇺 Россия (РПЛ)",
+            "󠁧󠁢󠁮󠁿 Англия (АПЛ)", 
+            "🇪 Испания (Ла Лига)", 
+            "🇺 Россия (РПЛ)",
             "🏆 Лига Чемпионов (УЕФА)"
         ]
     )
@@ -208,27 +208,57 @@ with tab1:
                     past_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG'])]
                     
                     team_stats = {}
+                    valid_matches_count = 0
+                    
                     for _, row in past_matches.iterrows():
-                        home = row['HomeTeam']
-                        away = row['AwayTeam']
-                        fthg = float(row['FTHG'])
-                        ftag = float(row['FTAG'])
-                        
-                        if home not in team_stats:
-                            team_stats[home] = {'home_goals': [], 'away_conceded': []}
-                        if away not in team_stats:
-                            team_stats[away] = {'away_goals': [], 'home_conceded': []}
+                        try:
+                            home = row.get('HomeTeam')
+                            away = row.get('AwayTeam')
                             
-                        team_stats[home]['home_goals'].append(fthg)
-                        team_stats[away]['home_conceded'].append(fthg)
-                        team_stats[away]['away_goals'].append(ftag)
-                        team_stats[home]['away_conceded'].append(ftag)
-
+                            # Пропускаем если команды нет
+                            if pd.isna(home) or pd.isna(away) or home == '' or away == '':
+                                continue
+                                
+                            fthg = row.get('FTHG')
+                            ftag = row.get('FTAG')
+                            
+                            # Пропускаем если нет голов
+                            if pd.isna(fthg) or pd.isna(ftag):
+                                continue
+                                
+                            fthg = float(fthg)
+                            ftag = float(ftag)
+                            
+                            # Инициализируем команды если их нет
+                            if home not in team_stats:
+                                team_stats[home] = {'home_goals': [], 'away_conceded': []}
+                            if away not in team_stats:
+                                team_stats[away] = {'away_goals': [], 'home_conceded': []}
+                                
+                            # Добавляем голы
+                            team_stats[home]['home_goals'].append(fthg)
+                            team_stats[away]['home_conceded'].append(fthg)
+                            team_stats[away]['away_goals'].append(ftag)
+                            team_stats[home]['away_conceded'].append(ftag)
+                            
+                            valid_matches_count += 1
+                        except Exception as e:
+                            # Пропускаем проблемные строки
+                            continue
+                    
+                    if valid_matches_count == 0:
+                        st.error("Не найдено сыгранных матчей для обучения модели. Возможно, сезон еще не начался.")
+                        st.stop()
+                    
+                    st.success(f"✅ Проанализировано сыгранных матчей: {valid_matches_count}")
+                    
                     all_home_goals = [g for t in team_stats.values() for g in t['home_goals']]
                     all_away_goals = [g for t in team_stats.values() for g in t['away_goals']]
                     
                     league_avg_home = np.mean(all_home_goals) if all_home_goals else 1.4
                     league_avg_away = np.mean(all_away_goals) if all_away_goals else 1.1
+                    
+                    st.info(f"📊 Средняя результативность: дома {league_avg_home:.2f}, в гостях {league_avg_away:.2f}")
 
                 with st.spinner(f"2. Прогнозирование матчей до {future_limit.strftime('%d.%m.%Y')}..."):
                     # 2. ПРОГНОЗ: берем только будущие матчи в пределах слайдера
@@ -250,94 +280,101 @@ with tab1:
                     processed_count = 0
                     
                     for _, row in future_matches.iterrows():
-                        home_team = row.get('HomeTeam')
-                        away_team = row.get('AwayTeam')
-                        league_src = row.get('League_Source', 'Турнир')
-                        match_date = row.get('MatchDate')
+                        try:
+                            home_team = row.get('HomeTeam')
+                            away_team = row.get('AwayTeam')
+                            league_src = row.get('League_Source', 'Турнир')
+                            match_date = row.get('MatchDate')
 
-                        if pd.isna(home_team) or pd.isna(away_team) or pd.isna(match_date):
-                            continue
+                            if pd.isna(home_team) or pd.isna(away_team) or pd.isna(match_date):
+                                continue
+                            
+                            if home_team == '' or away_team == '':
+                                continue
 
-                        home_odd = float(row['B365H']) if pd.notna(row.get('B365H')) else (float(row['PSH']) if pd.notna(row.get('PSH')) else 1.95)
-                        draw_odd = float(row['B365D']) if pd.notna(row.get('B365D')) else (float(row['PSD']) if pd.notna(row.get('PSD')) else 3.40)
-                        away_odd = float(row['B365A']) if pd.notna(row.get('B365A')) else (float(row['PSA']) if pd.notna(row.get('PSA')) else 3.10)
+                            home_odd = float(row.get('B365H', 1.95)) if pd.notna(row.get('B365H')) else (float(row.get('PSH', 1.95)) if pd.notna(row.get('PSH')) else 1.95)
+                            draw_odd = float(row.get('B365D', 3.40)) if pd.notna(row.get('B365D')) else (float(row.get('PSD', 3.40)) if pd.notna(row.get('PSD')) else 3.40)
+                            away_odd = float(row.get('B365A', 3.10)) if pd.notna(row.get('B365A')) else (float(row.get('PSA', 3.10)) if pd.notna(row.get('PSA')) else 3.10)
 
-                        processed_count += 1
+                            processed_count += 1
 
-                        # Безопасное получение статистики (если команда новая, берем среднее = сила 1.0)
-                        h_goals = team_stats.get(home_team, {}).get('home_goals', [league_avg_home])
-                        a_conceded = team_stats.get(away_team, {}).get('home_conceded', [league_avg_home])
-                        a_goals = team_stats.get(away_team, {}).get('away_goals', [league_avg_away])
-                        h_conceded = team_stats.get(home_team, {}).get('away_conceded', [league_avg_away])
+                            # Безопасное получение статистики (если команда новая, берем среднее = сила 1.0)
+                            h_goals = team_stats.get(home_team, {}).get('home_goals', [league_avg_home])
+                            a_conceded = team_stats.get(away_team, {}).get('home_conceded', [league_avg_home])
+                            a_goals = team_stats.get(away_team, {}).get('away_goals', [league_avg_away])
+                            h_conceded = team_stats.get(home_team, {}).get('away_conceded', [league_avg_away])
 
-                        h_attack = np.mean(h_goals) / max(0.1, league_avg_home)
-                        a_defense = np.mean(a_conceded) / max(0.1, league_avg_home)
-                        a_attack = np.mean(a_goals) / max(0.1, league_avg_away)
-                        h_defense = np.mean(h_conceded) / max(0.1, league_avg_away)
+                            h_attack = np.mean(h_goals) / max(0.1, league_avg_home)
+                            a_defense = np.mean(a_conceded) / max(0.1, league_avg_home)
+                            a_attack = np.mean(a_goals) / max(0.1, league_avg_away)
+                            h_defense = np.mean(h_conceded) / max(0.1, league_avg_away)
 
-                        # Ожидаемые голы (λ)
-                        h_lam = max(0.3, h_attack * a_defense * league_avg_home * xg_w)
-                        a_lam = max(0.3, a_attack * h_defense * league_avg_away * xg_w)
+                            # Ожидаемые голы (λ)
+                            h_lam = max(0.3, h_attack * a_defense * league_avg_home * xg_w)
+                            a_lam = max(0.3, a_attack * h_defense * league_avg_away * xg_w)
 
-                        # Матрица Пуассона (до 5 голов)
-                        matrix = np.zeros((6, 6))
-                        for h in range(6):
-                            for a in range(6):
-                                matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+                            # Матрица Пуассона (до 5 голов)
+                            matrix = np.zeros((6, 6))
+                            for h in range(6):
+                                for a in range(6):
+                                    matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
 
-                        p_home = np.sum(np.tril(matrix, -1))
-                        p_draw = np.sum(np.diagonal(matrix))
-                        p_away = np.sum(np.triu(matrix, 1))
+                            p_home = np.sum(np.tril(matrix, -1))
+                            p_draw = np.sum(np.diagonal(matrix))
+                            p_away = np.sum(np.triu(matrix, 1))
 
-                        total = p_home + p_draw + p_away
-                        if total > 0:
-                            p_home /= total
-                            p_draw /= total
-                            p_away /= total
+                            total = p_home + p_draw + p_away
+                            if total > 0:
+                                p_home /= total
+                                p_draw /= total
+                                p_away /= total
 
-                        options = [
-                            ("П1", p_home, home_odd),
-                            ("Ничья (X)", p_draw, draw_odd),
-                            ("П2", p_away, away_odd)
-                        ]
+                            options = [
+                                ("П1", p_home, home_odd),
+                                ("Ничья (X)", p_draw, draw_odd),
+                                ("П2", p_away, away_odd)
+                            ]
 
-                        best_pick = max(options, key=lambda x: x[1] * x[2])
-                        pick_name, prob, odd = best_pick
+                            best_pick = max(options, key=lambda x: x[1] * x[2])
+                            pick_name, prob, odd = best_pick
 
-                        edge = (prob * odd) - 1.0
-                        decision = "🟢 СТАВИМ" if edge > 0.03 and odd < 3.5 else "🔴 НЕ СТАВИМ"
-                        
-                        date_str = match_date.strftime('%d.%m')
-                        reason = f"Дата: {date_str}. λ={h_lam:.2f}/{a_lam:.2f}. Шанс: {prob*100:.1f}%, Edge: {edge*100:.1f}%."
+                            edge = (prob * odd) - 1.0
+                            decision = "🟢 СТАВИМ" if edge > 0.03 and odd < 3.5 else "🔴 НЕ СТАВИМ"
+                            
+                            date_str = match_date.strftime('%d.%m')
+                            reason = f"Дата: {date_str}. λ={h_lam:.2f}/{a_lam:.2f}. Шанс: {prob*100:.1f}%, Edge: {edge*100:.1f}%."
 
-                        forecast_item = {
-                            "league_name": league_src,
-                            "league_color": "#38bdf8",
-                            "match": f"{home_team} vs {away_team}",
-                            "pick": pick_name,
-                            "odd": odd,
-                            "prob": prob,
-                            "reason": reason,
-                            "decision": decision
-                        }
-                        found_forecasts.append(forecast_item)
-
-                        if "СТАВИМ" in decision and forecast_item["match"] not in existing_match_names and bank >= STAKE_SIZE:
-                            bank -= STAKE_SIZE
-                            new_bet = {
-                                "id": len(bets) + 1,
-                                "match": forecast_item["match"],
-                                "league_name": forecast_item["league_name"],
-                                "league_color": forecast_item["league_color"],
+                            forecast_item = {
+                                "league_name": league_src,
+                                "league_color": "#38bdf8",
+                                "match": f"{home_team} vs {away_team}",
                                 "pick": pick_name,
                                 "odd": odd,
-                                "stake": STAKE_SIZE,
-                                "status": "pending",
-                                "reason": f"{reason} | Рекомендация: {pick_name}",
-                                "prob": prob
+                                "prob": prob,
+                                "reason": reason,
+                                "decision": decision
                             }
-                            bets.append(new_bet)
-                            existing_match_names.add(forecast_item["match"])
+                            found_forecasts.append(forecast_item)
+
+                            if "СТАВИМ" in decision and forecast_item["match"] not in existing_match_names and bank >= STAKE_SIZE:
+                                bank -= STAKE_SIZE
+                                new_bet = {
+                                    "id": len(bets) + 1,
+                                    "match": forecast_item["match"],
+                                    "league_name": forecast_item["league_name"],
+                                    "league_color": forecast_item["league_color"],
+                                    "pick": pick_name,
+                                    "odd": odd,
+                                    "stake": STAKE_SIZE,
+                                    "status": "pending",
+                                    "reason": f"{reason} | Рекомендация: {pick_name}",
+                                    "prob": prob
+                                }
+                                bets.append(new_bet)
+                                existing_match_names.add(forecast_item["match"])
+                        except Exception as e:
+                            # Пропускаем проблемные матчи
+                            continue
 
                     app_data["bank"] = bank
                     app_data["scanned_forecasts"] = found_forecasts
@@ -395,7 +432,7 @@ with tab2:
             st.markdown(f"""
                 <div class="{card_cls}">
                     <span style="background-color: {l_color}; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; color: #fff; font-weight: 700;">{l_name}</span>
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #f8fafc; margin-top: 6px;">⚽ {match_name}</div>
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #f8fafc; margin-top: 6px;"> {match_name}</div>
                     <div style="font-size: 0.8rem; color: #cbd5e1; margin: 4px 0;">{reason}</div>
                     <div style="font-size: 0.9rem; color: #cbd5e1;">Выбор: <b style="color: #facc15;">{pick}</b> | Кф: <b style="color: #facc15;">{odd:.2f}</b> | Сумма: <b style="color: #4ade80;">{stake} у.е.</b></div>
                     <div style="font-size: 0.85rem; font-weight: 700; margin-top: 4px;">Статус: {status_label}</div>
