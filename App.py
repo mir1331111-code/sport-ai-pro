@@ -58,7 +58,7 @@ STAKE_SIZE = 100.0
 def get_league_urls():
     """Алгоритм автоопределения актуального сезона и правильных URL"""
     base = "https://www.football-data.co.uk/mmz4281/"
-    seasons = ["2627", "2526", "2425"] # Приоритет от самого свежего к старому
+    seasons = ["2627", "2526", "2425"]
     leagues = {
         "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "E0.csv",
         "🇪🇸 Испания (Ла Лига)": "SP1.csv",
@@ -75,7 +75,7 @@ def get_league_urls():
     for season in seasons:
         try:
             test_url = f"{base}{season}/E0.csv"
-            pd.read_csv(test_url, nrows=1) # Пробуем прочитать заголовок
+            pd.read_csv(test_url, nrows=1)
             active_season = season
             break
         except Exception:
@@ -191,25 +191,29 @@ with tab1:
                     existing_match_names = {b["match"] for b in bets}
                     bank = app_data["bank"]
 
-                    # 1. Собираем реальную статистику только по СЫГРАННЫМ матчам для обучения модели
+                    # 1. Собираем статистику с полной безопасной инициализацией ключей
                     team_stats = {}
                     valid_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG'])]
                     
                     for _, row in valid_matches.iterrows():
                         home = row['HomeTeam']
                         away = row['AwayTeam']
-                        fthg = float(row['FTHG'])
-                        ftag = float(row['FTAG'])
+                        try:
+                            fthg = float(row['FTHG'])
+                            ftag = float(row['FTAG'])
+                        except ValueError:
+                            continue
                         
                         if home not in team_stats:
-                            team_stats[home] = {'home_goals': [], 'away_conceded': []}
+                            team_stats[home] = {'home_goals': [], 'home_conceded': [], 'away_goals': [], 'away_conceded': []}
                         if away not in team_stats:
-                            team_stats[away] = {'away_goals': [], 'home_conceded': []}
+                            team_stats[away] = {'home_goals': [], 'home_conceded': [], 'away_goals': [], 'away_conceded': []}
                             
                         team_stats[home]['home_goals'].append(fthg)
-                        team_stats[away]['home_conceded'].append(fthg)
-                        team_stats[away]['away_goals'].append(ftag)
                         team_stats[home]['away_conceded'].append(ftag)
+                        
+                        team_stats[away]['away_goals'].append(ftag)
+                        team_stats[away]['home_conceded'].append(fthg)
 
                     all_home_goals = [g for t in team_stats.values() for g in t['home_goals']]
                     all_away_goals = [g for t in team_stats.values() for g in t['away_goals']]
@@ -220,7 +224,7 @@ with tab1:
                     found_forecasts = []
                     processed_count = 0
                     
-                    # 2. Применяем модель ко всем матчам (включая будущие)
+                    # 2. Прогнозирование матчей
                     for _, row in combined_df.iterrows():
                         home_team = row.get('HomeTeam')
                         away_team = row.get('AwayTeam')
@@ -235,18 +239,15 @@ with tab1:
 
                         processed_count += 1
 
-                        # Алгоритмический расчет силы атаки и обороны (Dixon-Coles упрощенный)
                         h_attack = np.mean(team_stats[home_team]['home_goals']) / max(0.1, league_avg_home) if home_team in team_stats and len(team_stats[home_team]['home_goals']) > 0 else 1.0
                         a_defense = np.mean(team_stats[away_team]['home_conceded']) / max(0.1, league_avg_home) if away_team in team_stats and len(team_stats[away_team]['home_conceded']) > 0 else 1.0
                         
                         a_attack = np.mean(team_stats[away_team]['away_goals']) / max(0.1, league_avg_away) if away_team in team_stats and len(team_stats[away_team]['away_goals']) > 0 else 1.0
                         h_defense = np.mean(team_stats[home_team]['away_conceded']) / max(0.1, league_avg_away) if home_team in team_stats and len(team_stats[home_team]['away_conceded']) > 0 else 1.0
 
-                        # Итоговые лямбды (ожидаемые голы) с учетом веса модели
                         h_lam = max(0.3, h_attack * a_defense * league_avg_home * xg_w)
                         a_lam = max(0.3, a_attack * h_defense * league_avg_away * xg_w)
 
-                        # Матрица Пуассона
                         matrix = np.zeros((6, 6))
                         for h in range(6):
                             for a in range(6):
@@ -271,9 +272,7 @@ with tab1:
                         best_pick = max(options, key=lambda x: x[1] * x[2])
                         pick_name, prob, odd = best_pick
 
-                        # Расчет математического ожидания (Edge)
                         edge = (prob * odd) - 1.0
-                        # Ставим, если преимущество над линией > 3% и кэф не заоблачный
                         decision = "🟢 СТАВИМ" if edge > 0.03 and odd < 3.5 else "🔴 НЕ СТАВИМ"
                         reason = f"Модель: λ={h_lam:.2f}/{a_lam:.2f}. Шанс: {prob*100:.1f}%, Edge: {edge*100:.1f}%."
 
@@ -386,4 +385,4 @@ with tab2:
 
 with tab3:
     st.markdown("### ℹ️ О системе")
-    st.write("Режим массовой автозагрузки использует **алгоритм динамического поиска сезона**, скачивая данные напрямую с серверов football-data.co.uk. Встроенная модель Пуассона рассчитывает силу атаки и обороны каждой команды на основе реальных результатов текущего сезона, игнорируя еще не сыгранные матчи при обучении, но прогнозируя их исход.")
+    st.write("Режим массовой автозагрузки использует **алгоритм динамического поиска сезона**, скачивая данные напрямую с серверов football-data.co.uk. Встроенная модель Пуассона рассчитывает силу атаки и обороны каждой команды на основе реальных результатов текущего сезона.")
