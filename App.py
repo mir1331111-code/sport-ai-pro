@@ -1,3 +1,4 @@
+
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import csv
@@ -13,9 +14,6 @@ import streamlit as st
 st.set_page_config(page_title="NEURO BET PRO v7", page_icon="🏟", layout="wide")
 HISTORY_FILE = "neuro_bet_pro.json"
 MATRIX_N = 9
-REFIT_PLATT_EVERY = 150
-REFIT_STRUCT_EVERY = 300
-DISAGREE_MIN = 0.03
 UA = {"User-Agent": "Mozilla/5.0"}
 
 DEF_LP = lambda: {"w_shots": 0.35, "rho": -0.13, "w_dc": 0.72}
@@ -28,15 +26,15 @@ DIV_NAMES = {
     "D2": "🇩🇪 2.Бундеслига",
     "I1": "🇮🇹 Серия A",
     "I2": "🇮🇹 Серия B",
-    "SP1": "🇪 Ла Лига",
+    "SP1": "🇪🇸 Ла Лига",
     "SP2": "🇪🇸 Сегунда",
-    "F1": "🇫 Лига 1",
+    "F1": "🇫🇷 Лига 1",
     "F2": "🇫🇷 Лига 2",
     "N1": "🇳🇱 Эредивизи",
     "B1": "🇧🇪 Про-лига",
     "P1": "🇵🇹 Примейра",
     "T1": "🇹🇷 Суперлига",
-    "G1": "🇬 Греция",
+    "G1": "🇬🇷 Греция",
     "R1": "🇷🇺 РПЛ",
     "BR1": "🇧🇷 Бразилия",
     "C1": "🏆 ЛЧ",
@@ -45,9 +43,9 @@ DIV_NAMES = {
 }
 TSDB_LEAGUES = {
     "432": "🏴󠁢󠁥󠁮󠁧󠁿 АПЛ",
-    "434": "🇪 Ла Лига",
+    "434": "🇪🇸 Ла Лига",
     "435": "🇮🇹 Серия A",
-    "436": "🇩 Бундеслига",
+    "436": "🇩🇪 Бундеслига",
     "437": "🇫🇷 Лига 1",
     "448": "🏆 ЛЧ",
     "442": "🇺🇸 MLS",
@@ -60,7 +58,6 @@ GOALS = {
         dis=False,
         edge=0.01,
         ev=0.01,
-        corr=(1.30, 2.30),
         min_games=10,
     ),
     "⚖️ Баланс": dict(
@@ -69,7 +66,6 @@ GOALS = {
         dis=True,
         edge=0.02,
         ev=0.02,
-        corr=(1.40, 4.20),
         min_games=8,
     ),
     "💰 Value": dict(
@@ -78,11 +74,9 @@ GOALS = {
         dis=True,
         edge=0.03,
         ev=0.02,
-        corr=(1.40, 4.20),
         min_games=6,
     ),
 }
-CORRIDORS = {"OU": (1.50, 2.80), "AH": (1.60, 2.60), "STAT": (1.40, 4.50)}
 
 st.markdown(
     """
@@ -108,32 +102,6 @@ section[data-testid="stSidebar"] div[data-baseweb="select"] span{color:#e2e8f0 !
  url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1600&auto=format&fit=crop') center/cover;}
 .hero h1{margin:0;font-size:2.3rem;font-weight:900;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.9)}
 .hero p{margin:4px 0 0;color:#dbeafe;font-size:.92rem;text-shadow:0 1px 6px rgba(0,0,0,.9)}
-.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px 18px;margin-bottom:14px}
-.mcard.value{border-color:rgba(16,185,129,.65);box-shadow:0 0 26px rgba(16,185,129,.18)}
-.mcard.hot{border-color:rgba(250,204,21,.6);box-shadow:0 0 26px rgba(250,204,21,.15)}
-.mhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:700}
-.chip.when{background:rgba(250,204,21,.16);color:#fde68a;border-color:rgba(250,204,21,.45)}
-.chip.warn{background:rgba(248,113,113,.18);color:#fecaca;border-color:rgba(248,113,113,.5)}
-.badge{margin-left:auto;padding:4px 12px;border-radius:999px;font-size:.72rem;font-weight:800}
-.badge.val{background:rgba(16,185,129,.22);color:#86efac;border:1px solid rgba(16,185,129,.6)}
-.badge.hot{background:rgba(250,204,21,.2);color:#fde68a;border:1px solid rgba(250,204,21,.6)}
-.badge.no{background:rgba(100,116,139,.2);color:#cbd5e1;border:1px solid rgba(100,116,139,.4)}
-.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:10px 0 2px}
-.teams span{color:#94a3b8;font-weight:400}
-.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:12px;padding:10px 14px;margin:8px 0;color:#e2e8f0;font-size:.88rem}
-.verdict b.y{color:#facc15}.verdict b.g{color:#4ade80}.verdict b.r{color:#f87171}
-.form5{font-size:.72rem;letter-spacing:2px;margin-bottom:6px;color:#cbd5e1}
-.form5 b{padding:1px 5px;border-radius:4px;margin-right:2px}
-.w{background:rgba(16,185,129,.3);color:#86efac}.d{background:rgba(148,163,184,.25);color:#e2e8f0}.l{background:rgba(239,68,68,.25);color:#fca5a5}
-.bar{height:6px;background:rgba(148,163,184,.2);border-radius:99px;overflow:hidden;margin-top:4px}
-.bar i{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#4ade80)}
-.mrow{display:grid;grid-template-columns:70px 96px 1.1fr 70px 70px 62px 74px 26px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid rgba(148,163,184,.14);font-size:.82rem;color:#e2e8f0}
-.mrow.hdr{color:#94a3b8;font-size:.68rem;text-transform:uppercase;border-top:none}
-.ok{color:#4ade80;font-weight:800}.nok{color:#64748b;font-weight:800}
-.evpos{color:#4ade80;font-weight:700}.evneg{color:#f87171;font-weight:700}
-.mfoot{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(148,163,184,.3);color:#cbd5e1;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap}
-.mfoot b{color:#facc15}
 </style>""",
     unsafe_allow_html=True,
 )
@@ -147,7 +115,6 @@ def log_err(tag, e):
     ERR.pop(0)
 
 
-# ================= ДВИЖОК С ПЕРСИСТЕНТНОСТЬЮ =================
 class Engine:
 
   def __init__(self):
@@ -160,13 +127,13 @@ class Engine:
             "ac": [],
             "form": [],
             "cfh": [],
-            "cah": [],
-            "cfa": [],
             "caa": [],
+            "cfa": [],
+            "cah": [],
             "yfh": [],
-            "yah": [],
-            "yfa": [],
             "yaa": [],
+            "yfa": [],
+            "yah": [],
             "hst_h": [],
             "hstc_h": [],
             "hst_a": [],
@@ -255,28 +222,17 @@ class Engine:
   def calibrate(self, p):
     return self._sigmoid(self.platt_a + self.platt_b * self._logit(p))
 
-  def refit_platt(self):
-    if len(self.calib) < 60:
-      return
-    data = self.calib[-3000:]
-    a, b = self.platt_a, self.platt_b
-    n = len(data)
-    for _ in range(60):
-      ga = gb = 0.0
-      for x, y in data:
-        p = self._sigmoid(a + b * x)
-        err = p - y
-        ga += err
-        gb += err * x
-      a -= 0.08 * ga / n
-      b -= 0.08 * gb / n
-      b = min(max(b, 0.3), 3.0)
-    self.platt_a, self.platt_b = a, b
-
   def _p1px(self, lh, la, rho):
     N = MATRIX_N
-    M = [[self._p(lh, i) * self._p(la, j) for j in range(N)] for i in range(N)]
-    tau = {(0, 0): 1 + lh * la * rho, (1, 0): 1 - la * rho, (0, 1): 1 - lh * rho, (1, 1): 1 + rho}
+    M = [
+        [self._p(lh, i) * self._p(la, j) for j in range(N)] for i in range(N)
+    ]
+    tau = {
+        (0, 0): 1 + lh * la * rho,
+        (1, 0): 1 - la * rho,
+        (0, 1): 1 - lh * rho,
+        (1, 1): 1 + rho,
+    }
     for i in range(N):
       for j in range(N):
         if (i, j) in tau:
@@ -293,48 +249,6 @@ class Engine:
     fd = w * px + (1 - w) * pde
     f2 = max(1e-6, 1 - f1 - fd)
     return f1, fd, f2
-
-  def _fit_league(self, lg):
-    win = self.hist[lg][-150:]
-    if len(win) < 120:
-      return
-    cur = self.lp[lg]
-    best_ws = None
-    for ws in (0.20, 0.35, 0.50):
-      ll = 0.0
-      for gh, ga, sh, sa, e, pde, out in win:
-        lh = (1 - ws) * gh + ws * sh
-        la = (1 - ws) * ga + ws * sa
-        f1, fd, f2 = self._probs_from(lh, la, cur["rho"], cur["w_dc"], e, pde)
-        ll -= math.log(min(max((f1, fd, f2)[out], 1e-6), 1 - 1e-6))
-      if best_ws is None or ll < best_ws[0]:
-        best_ws = (ll, ws)
-    cur["w_shots"] = best_ws[1]
-    data = []
-    for gh, ga, sh, sa, e, pde, out in win:
-      lh = (1 - best_ws[1]) * gh + best_ws[1] * sh
-      la = (1 - best_ws[1]) * ga + best_ws[1] * sa
-      data.append(
-          (
-              {r: self._p1px(lh, la, r)[0:2] for r in (-0.20, -0.13, -0.06, 0.0)},
-              e,
-              pde,
-              out,
-          )
-      )
-    best = None
-    for rho in (-0.20, -0.13, -0.06, 0.0):
-      for w in (0.60, 0.72, 0.85):
-        ll = 0.0
-        for rowm, e, pde, out in data:
-          p1, px = rowm[rho]
-          f1 = w * p1 + (1 - w) * e * (1 - pde)
-          fd = w * px + (1 - w) * pde
-          f2 = max(1e-6, 1 - f1 - fd)
-          ll -= math.log(min(max((f1, fd, f2)[out], 1e-6), 1 - 1e-6))
-        if best is None or ll < best[0]:
-          best = (ll, rho, w)
-    cur["rho"], cur["w_dc"] = best[1], best[2]
 
   def record_market(self, mkt, won, odd):
     r = self.market_roi[mkt]
@@ -423,13 +337,21 @@ class Engine:
     def_sh_a = self._m(sa["hstc_a"], lh_s) / lh_s
     att_sh_a = self._m(sa["hst_a"], la_s) / la_s
     def_sh_h = self._m(sh["hstc_h"], la_s) / la_s
-    lam_s_h = max(0.3, min(5.0, lh_s * conv_h * att_sh_h * def_sh_a * (0.85 + 0.30 * fh)))
-    lam_s_a = max(0.25, min(4.5, la_s * conv_a * att_sh_a * def_sh_h * (0.85 + 0.30 * fa)))
+    lam_s_h = max(
+        0.3,
+        min(5.0, lh_s * conv_h * att_sh_h * def_sh_a * (0.85 + 0.30 * fh)),
+    )
+    lam_s_a = max(
+        0.25,
+        min(4.5, la_s * conv_a * att_sh_a * def_sh_h * (0.85 + 0.30 * fa)),
+    )
     lam_h = (1 - ws) * lam_g_h + ws * lam_s_h
     lam_a = (1 - ws) * lam_g_a + ws * lam_s_a
     agree = (lam_g_h - lam_g_a) * (lam_s_h - lam_s_a) > 0
     lam_h, lam_a, h2h_n = self.h2h_adjust(h, a, lam_h, lam_a)
-    e = 1 / (1 + 10 ** ((self.elo.get(a, 1500) - self.elo.get(h, 1500) - 60) / 400))
+    e = 1 / (
+        1 + 10 ** ((self.elo.get(a, 1500) - self.elo.get(h, 1500) - 60) / 400)
+    )
     pde = 0.20 + 0.12 * (1 - abs(e - 0.5) * 2)
     p1, px, M = self._p1px(lam_h, lam_a, P0["rho"])
     f1 = P0["w_dc"] * p1 + (1 - P0["w_dc"]) * e * (1 - pde)
@@ -469,20 +391,11 @@ class Engine:
     }
 
 
-# ================= УТИЛИТЫ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 def _f(v):
   try:
     return float(v)
   except Exception:
     return None
-
-
-def is_cup(row):
-  dv = row.get("Div", "")
-  lg = (row.get("League") or "").lower()
-  return dv in ("C1", "EL", "EC") or any(
-      x in lg for x in ["cup", "champions", "europa", "conference", "libertadores"]
-  )
 
 
 @st.cache_data(ttl=1800)
@@ -560,34 +473,212 @@ def load_fixtures():
   return rows, rep
 
 
-@st.cache_data(ttl=900)
-def load_tsdb():
-  rep = []
-  rows = []
-  for lid, name in TSDB_LEAGUES.items():
-    try:
-      r = requests.get(
-          f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",
-          timeout=15,
-      )
-      ev = (r.json() or {}).get("events") or []
-      for e in ev:
-        rows.append({
-            "Div": "TSDB",
-            "League": name,
-            "Date": e.get("dateEvent", ""),
-            "Time": (e.get("strTime") or "")[:5],
-            "HomeTeam": e.get("strHomeTeam", ""),
-            "AwayTeam": e.get("strAwayTeam", ""),
-        })
-      rep.append(f"TSDB {name}: {len(ev)}")
-    except Exception as e:
-      log_err(f"tsdb {name}", e)
-      rep.append(f"TSDB {name}: ошибка")
-  return rows, rep
-
-
 def parse_date(s):
   for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
     try:
-      return datetime.strptime(str(s).st
+      return datetime.strptime(str(s).strip(), fmt)
+    except Exception:
+      continue
+  return None
+
+
+def odd1(row, keys):
+  for k in keys:
+    v = _f(row.get(k))
+    if v and v > 1.01:
+      return v
+  return None
+
+
+def best_odd(row, pick):
+  m = {
+      "П1": ["MaxH", "B365H", "PSH"],
+      "X": ["MaxD", "B365D", "PSD"],
+      "П2": ["MaxA", "B365A", "PSA"],
+      "ТБ 2.5": ["Max>2.5", "B365>2.5", "P>2.5"],
+      "ТМ 2.5": ["Max<2.5", "B365<2.5", "P<2.5"],
+  }
+  return odd1(row, m.get(pick, []))
+
+
+def market_probs(row):
+  ph, px, pa = _f(row.get("PSH")), _f(row.get("PSD")), _f(row.get("PSA"))
+  if not (ph and px and pa):
+    return None
+  i1, ix, ia = 1 / ph, 1 / px, 1 / pa
+  s = i1 + ix + ia
+  return (i1 / s, ix / s, ia / s)
+
+
+def blend_market(P, mkt, w):
+  if not mkt:
+    return P
+  P = dict(P)
+  P["p1"] = (1 - w) * P["p1"] + w * mkt[0]
+  P["x"] = (1 - w) * P["x"] + w * mkt[1]
+  P["p2"] = (1 - w) * P["p2"] + w * mkt[2]
+  t = P["p1"] + P["x"] + P["p2"] or 1.0
+  P["p1"] /= t
+  P["x"] /= t
+  P["p2"] /= t
+  P["mkt"] = mkt
+  return P
+
+
+def kelly(prob, odds, bank=10000.0, fraction=0.25):
+  if prob <= 0 or odds <= 1.01:
+    return 0.0
+  b = odds - 1.0
+  q = 1.0 - prob
+  f = (b * prob - q) / b
+  if f <= 0:
+    return 0.0
+  return min(bank * f * fraction, bank * 0.05)
+
+
+def render_score_heatmap(M):
+  fig = px.imshow(
+      M,
+      labels=dict(x="Голы гостей", y="Голы хозяев", color="Вероятность"),
+      x=list(range(MATRIX_N)),
+      y=list(range(MATRIX_N)),
+      color_continuous_scale="Tealgrn",
+      aspect="auto",
+  )
+  fig.update_layout(
+      margin=dict(l=10, r=10, t=10, b=10),
+      paper_bgcolor="rgba(0,0,0,0)",
+      plot_bgcolor="rgba(0,0,0,0)",
+      font=dict(color="#e2e8f0"),
+      height=260,
+  )
+  st.plotly_chart(fig, use_container_width=True)
+
+
+engine = Engine.load_state()
+
+st.sidebar.title("🏟 NEURO BET PRO v7")
+mode = st.sidebar.selectbox(
+    "Режим работы", ["🎯 Прогнозы на матчи", "📊 Бэктест и Аналитика"]
+)
+
+if mode == "🎯 Прогнозы на матчи":
+  st.markdown(
+      """
+    <div class="hero">
+        <h1>NEURO BET PRO v7</h1>
+        <p>Нейро-пуассоновский движок с поправками Диксона-Коулза, калибровкой Платта и CLV-фильтрацией</p>
+    </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  season = find_season()
+  divs = list(DIV_NAMES.keys())
+  with st.spinner("🔄 Обновление моделей и расчет коэффициентов лиг..."):
+    data_dict = load_many(divs[:15], season)
+    for div, rows in data_dict.items():
+      if not rows:
+        prev_s = prev_season(season)
+        rows = load_seasonal(div, prev_s)
+      total = len(rows)
+      for idx, r in enumerate(rows):
+        h, a = r.get("HomeTeam"), r.get("AwayTeam")
+        hg, ag = _f(r.get("FTHG")), _f(r.get("FTAG"))
+        if h and a and hg is not None and ag is not None:
+          engine.add(h, a, int(hg), int(ag), row=r, match_num=idx, total=total)
+
+  st.sidebar.header("⚙️ Фильтры прогнозов")
+  selected_goal = st.sidebar.selectbox("Цель стратегии", list(GOALS.keys()))
+  gconf = GOALS[selected_goal]
+
+  fixtures, _ = load_fixtures()
+  tab_matches, tab_all = st.tabs(["🔥 Отобранные матчи", "📋 Все матчи туров"])
+
+  with tab_matches:
+    st.subheader(f"Сигналы под стратегию: {selected_goal}")
+    count = 0
+    for row in fixtures[:50]:
+      h, a = row.get("HomeTeam"), row.get("AwayTeam")
+      div = row.get("Div", "G")
+      if not h or not a:
+        continue
+
+      P = engine.predict(h, a, div if div in DIV_NAMES else "G")
+      mkt = market_probs(row)
+      if mkt:
+        adj = engine.market_adjust("1X2")
+        P = blend_market(
+            P, (mkt[0] + adj, mkt[1], mkt[2] - adj), gconf["w_market"]
+        )
+
+      max_p = max(P["p1"], P["x"], P["p2"])
+      pick = "П1" if max_p == P["p1"] else ("X" if max_p == P["x"] else "П2")
+      odd = best_odd(row, pick)
+
+      if P["games"] < gconf["min_games"]:
+        continue
+      if max_p < gconf["thr"]:
+        continue
+      if gconf["dis"] and not P["agree"]:
+        continue
+
+      count += 1
+      with st.expander(f"🏟 {h} vs {a} ({DIV_NAMES.get(div, div)})"):
+        col1, col2 = st.columns([2, 1])
+        with col1:
+          st.write(
+              f"**Вероятности:** П1: `{P['p1']*100:.1f}%` | Х:"
+              f" `{P['x']*100:.1f}%` | П2: `{P['p2']*100:.1f}%`"
+          )
+          st.write(
+              f"**Ожидаемые голы ($\lambda$):** Хозяева `{P['lams'][0]:.2f}` -"
+              f" Гости `{P['lams'][1]:.2f}`"
+          )
+          if odd:
+            st.write(
+                f"**Рекомендация:** `{pick}` по коэффициенту `{odd}`. Рекомендуемая"
+                f" ставка по Келли:"
+                f" `{kelly(max_p, odd, 10000.0, 0.25):.2f} руб.`"
+            )
+        with col2:
+          render_score_heatmap(P["M"])
+
+    if count == 0:
+      st.info(
+          "Нет матчей, полностью удовлетворяющих жестким фильтрам текущей"
+          " стратегии. Попробуйте изменить параметры в сайдбаре."
+      )
+
+  with tab_all:
+    st.subheader("Полный список ближайших матчей")
+    for row in fixtures[:30]:
+      h, a = row.get("HomeTeam"), row.get("AwayTeam")
+      div = row.get("Div", "G")
+      if h and a:
+        st.text(
+            f"{row.get('Date','')} | {DIV_NAMES.get(div, div)}: {h} — {a}"
+        )
+
+  engine.save_state()
+
+else:
+  st.subheader("📊 Анализ доходности по рынкам и CLV")
+  if engine.market_roi:
+    roi_data = []
+    for mkt, stats in engine.market_roi.items():
+      n = stats["n"]
+      prof = stats["profit"]
+      roi = (prof / n) * 100 if n > 0 else 0
+      roi_data.append({
+          "Рынок": mkt,
+          "Ставок": n,
+          "Прибыль": round(prof, 2),
+          "ROI (%)": round(roi, 2),
+      })
+    st.dataframe(roi_data, use_container_width=True)
+  else:
+    st.info(
+        "Пока недостаточно исторических данных для формирования отчета. Данные"
+        " собираются автоматически по мере просчета матчей."
+    )
