@@ -107,7 +107,7 @@ st.title("⚽ AI Football Bot Pro — Автоматический Анализ�
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("🔑 Настройки и API-ключи")
 odds_api_key = st.sidebar.text_input("The Odds API Key", type="password")
-hours_ahead = st.sidebar.slider("Искать матчи на сколько часов вперед?", min_value=6, max_value=72, value=24, step=6)
+hours_ahead = st.sidebar.slider("Искать матчи на сколько часов вперед?", min_value=6, max_value=168, value=48, step=6)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🧠 Состояние ИИ (Веса обучения)")
@@ -125,14 +125,13 @@ if st.sidebar.button("🔄 Сбросить всё (банк и веса)"):
     st.sidebar.success("История и статистика полностью очищены!")
     st.rerun()
 
-# --- СПИСОК ЛИГ ---
+# --- СПИСОК ЛИГ (Проверенные ключи The Odds API) ---
 LEAGUES = [
     'soccer_epl', 
     'soccer_spain_la_liga', 
     'soccer_italy_serie_a',
     'soccer_germany_bundesliga', 
     'soccer_france_ligue_one', 
-    'soccer_russia_premier_league',
     'soccer_uefa_champions_league',
     'soccer_turkey_super_lig'
 ]
@@ -193,7 +192,7 @@ def get_smart_reason(pick, odd, edge):
         
     return " • ".join(reasons)
 
-# --- АНАЛИЗАТОР МАТЧЕЙ И РАЗМЕЩЕНИЕ СТАВОК ---
+# --- АНАЛИЗАТОР МАТЧЕЙ И РАЗМЕЩЕНИЕ СТАВОК (С ОТЛАДКОЙ) ---
 def analyze_upcoming_matches(api_key):
     weights = st.session_state.app_data["weights"]
     xg_w = weights.get("xg_w", 1.0)
@@ -201,14 +200,20 @@ def analyze_upcoming_matches(api_key):
     
     new_bets_placed = 0
     checked_count = 0
+    debug_logs = []
     
     for league in LEAGUES:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={api_key}&regions=eu&markets=h2h&oddsFormat=decimal"
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={api_key}&regions=eu,uk&markets=h2h&oddsFormat=decimal"
         try:
             response = requests.get(url, timeout=10)
+            debug_logs.append(f"Лига `{league}`: статус ответа `{response.status_code}`")
+            
             if response.status_code != 200:
+                debug_logs.append(f"⚠️ Ошибка по лиге {league}: {response.text[:150]}")
                 continue
+                
             events = response.json()
+            debug_logs.append(f"  └ Найдено событий в сыром ответе: {len(events)}")
             
             for event in events:
                 commence_time = event.get("commence_time")
@@ -294,11 +299,12 @@ def analyze_upcoming_matches(api_key):
                             }
                             st.session_state.app_data["bets"].append(new_bet)
                             new_bets_placed += 1
-        except Exception:
+        except Exception as e:
+            debug_logs.append(f"❌ Ошибка запроса: {str(e)}")
             continue
             
     save_history(st.session_state.app_data)
-    return checked_count, new_bets_placed
+    return checked_count, new_bets_placed, debug_logs
 
 # --- МНОГОКРУГОВОЕ ОБУЧЕНИЕ ИИ ---
 def train_on_epochs_multisource(epochs=3):
@@ -380,14 +386,18 @@ with tab1:
             st.warning("⚠️ Введите API ключ для The Odds API в боковой панели слева!")
         else:
             with st.spinner("ИИ сканирует линии букмекеров и рассчитывает перевес..."):
-                checked, placed = analyze_upcoming_matches(odds_api_key)
+                checked, placed, debug_logs = analyze_upcoming_matches(odds_api_key)
                 st.success(f"Анализ завершен! Проверено матчей: {checked}. Успешно размещено новых ставок: {placed}.")
-                st.rerun()
+                
+                # Выводим отладку, если матчей 0 или произошли ошибки
+                with st.expander("🔍 Подробный лог подключения к API (для отладки)", expanded=(checked == 0)):
+                    for log in debug_logs:
+                        st.write(log)
 
     st.markdown("### 📋 Активные и текущие ставки в работе:")
     bets = st.session_state.app_data.get("bets", [])
     if not bets:
-        st.info("Пока нет ни одной ставки. Запустите сканирование выше.")
+        st.info("Пока ни одной ставки нет. Запустите сканирование выше.")
     else:
         for idx, b in enumerate(bets):
             match_name = b.get("match", "Матч")
@@ -397,7 +407,6 @@ with tab1:
             stake_val = b.get("stake", STAKE_SIZE)
             status = b["status"]
             
-            # Выбор цвета карточки в зависимости от статуса
             card_class = "bet-card-pending"
             if status == "won":
                 card_class = "bet-card-won"
