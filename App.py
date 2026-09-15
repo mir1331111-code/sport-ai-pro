@@ -244,7 +244,7 @@ with tab1:
             
             st.rerun()
 
-    # Отображение прогнозов через нативные компоненты Streamlit (без багов с сырым HTML)
+    # Отображение прогнозов через нативные компоненты Streamlit
     forecasts = st.session_state.data.get("forecasts", [])
     
     if forecasts:
@@ -297,7 +297,7 @@ with tab2:
             for i, bet in enumerate(pending):
                 with st.container():
                     st.markdown(f"**{bet.get('league')}** | `{bet.get('match')}`")
-                    st.write(릎f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма: **{bet.get('stake'):.2f} у.е.**")
+                    st.write(f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма: **{bet.get('stake'):.2f} у.е.**")
                     
                     c1, c2 = st.columns(2)
                     with c1:
@@ -355,3 +355,4 @@ with tab3:
     - **Elo + Probability Model**: Рассчитывает реальные шансы команд на основе истории матчей текущего сезона.
     - **Критерий Келли**: Автоматически рассчитывает безопасный размер ставки для защиты вашего банкролла.
     """)
+    
