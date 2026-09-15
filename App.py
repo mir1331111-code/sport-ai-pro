@@ -1,30 +1,29 @@
 import streamlit as st
-import requests, json, os, csv, io, math
-from datetime import datetime, timedelta
+import requests, csv, io, json, os, math, re
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from math import comb, erf, exp, sqrt
 
-st.set_page_config(page_title="ALL-SPORTS BET PRO", page_icon="🏟", layout="wide")
-OSP_FILE="other_sports_state.json"
-API="https://www.thesportsdb.com/api/v1/json/123"
+st.set_page_config(page_title="NEURO BET PRO Multi", page_icon="🏟", layout="wide")
+HISTORY_FILE="neuro_multi.json"
+MATRIX_N=9
 ERR=[]
 def log_err(tag,e):
     ERR.append(f"[{tag}] {type(e).__name__}: {e}")
     if len(ERR)>300: ERR.pop(0)
 
 SPORTS={
- "Tennis":     dict(icon="🎾",tsdb="Tennis",     k=25,ha=0, scale=250,best_of=2,set_line=2.5,total_type="sets",handi=1.5),
- "Basketball": dict(icon="🏀",tsdb="Basketball", k=20,ha=40,scale=400,sigma=13.0,total_type="points"),
- "Volleyball": dict(icon="🏐",tsdb="Volleyball", k=25,ha=20,scale=250,best_of=3,set_line=3.5,total_type="sets",handi=1.5),
- "Ice Hockey": dict(icon="🏒",tsdb="Ice Hockey", k=25,ha=30,scale=400,goal_line=5.5,total_type="goals",handi=1.5),
+ "⚽ Футбол":dict(src="fd"),
+ "🎾 Теннис":dict(src="tsdb",sport="Tennis",kw=["ATP","WTA","Challenger"],max=4,k=24,ha=0,div=150),
+ "🏀 Баскетбол":dict(src="tsdb",sport="Basketball",kw=["NBA","EuroLeague","WNBA","NCAA"],max=4,k=24,ha=100,div=250,total=220.5,sigma=12),
+ "🏐 Волейбол":dict(src="tsdb",sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
+ "🏒 Хоккей":dict(src="tsdb",sport="Ice Hockey",kw=["NHL","KHL","SHL","Liiga"],max=4,k=24,ha=40,div=120,total=5.5,pois=True),
 }
-PRESETS={
- "Basketball":["NBA","EuroLeague","EuroCup","VTB United","ACB","Super League Turkey","ABA League","Greek Basket","LNB Pro A"],
- "Volleyball":["Italian Volleyball","SuperLega","Polish Volleyball","PlusLiga","Russian Volleyball","Super League","CEV Champions","Nations League","Korean V-League"],
- "Tennis":["ATP","WTA","Davis Cup","Challenger"],
- "Ice Hockey":["NHL","KHL","SHL","Liiga","Extraliga","DEL","Champions Hockey"],
-}
+DIV_NAMES={"E0":"🏴󠁧󠁥󠁧 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁴 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 
 st.markdown("""
 <style>
@@ -36,529 +35,636 @@ div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
 header,#MainMenu,footer{visibility:hidden}
 section[data-testid="stSidebar"]{background:#0b0f1a !important;}
 section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e2e8f0 !important;}
-.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:14px 16px;margin-bottom:12px}
-.mcard.value{border-color:rgba(16,185,129,.6);box-shadow:0 0 22px rgba(16,185,129,.15)}
-.mhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:700}
+section[data-testid="stSidebar"] div[data-baseweb="select"]>div{background:#111827 !important;}
+.hero{padding:18px 24px;border-radius:20px;margin-bottom:14px;border:1px solid rgba(56,189,248,.35);
+ background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(6,78,59,.8) 55%,rgba(120,53,15,.75));}
+.hero h1{margin:0;font-size:2.1rem;font-weight:900;color:#fff}
+.hero p{margin:4px 0 0;color:#dbeafe;font-size:.9rem}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
+.kpi{background:rgba(2,6,23,.92);border:1px solid rgba(148,163,184,.28);border-radius:14px;padding:10px 14px}
+.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.1px}
+.kpi .v{font-size:1.35rem;font-weight:800;color:#fff}
+.kpi .v.g{color:#4ade80}.kpi .v.y{color:#facc15}.kpi .v.r{color:#f87171}
+.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.mcard.value{border-color:rgba(16,185,129,.65)}
+.mcard.hot{border-color:rgba(250,204,21,.6)}
+.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:2px 9px;border-radius:999px;font-size:.7rem;font-weight:700;margin-right:6px}
 .chip.when{background:rgba(250,204,21,.16);color:#fde68a;border-color:rgba(250,204,21,.45)}
-.chip.src{background:rgba(16,185,129,.15);color:#86efac;border-color:rgba(16,185,129,.4)}
-.badge{margin-left:auto;padding:4px 12px;border-radius:999px;font-size:.72rem;font-weight:800}
+.badge{float:right;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:800}
+.badge.val{background:rgba(16,185,129,.22);color:#86efac;border:1px solid rgba(16,185,129,.6)}
 .badge.hot{background:rgba(250,204,21,.2);color:#fde68a;border:1px solid rgba(250,204,21,.6)}
 .badge.no{background:rgba(100,116,139,.2);color:#cbd5e1;border:1px solid rgba(100,116,139,.4)}
 .teams{font-size:1.2rem;font-weight:800;color:#fff;margin:8px 0 2px}
 .teams span{color:#94a3b8;font-weight:400}
-.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:12px;padding:10px 14px;margin:8px 0;color:#e2e8f0;font-size:.86rem}
+.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:8px 12px;margin:6px 0;color:#e2e8f0;font-size:.85rem}
 .verdict b.y{color:#facc15}.verdict b.g{color:#4ade80}.verdict b.r{color:#f87171}
-.meta{color:#94a3b8;font-size:.78rem;margin:4px 0}
-.meta b{color:#facc15}
-.mrow{display:grid;grid-template-columns:130px 1fr 80px 110px;gap:10px;align-items:center;padding:5px 0;border-top:1px solid rgba(148,163,184,.14);font-size:.85rem;color:#e2e8f0}
-.mrow.hdr{color:#94a3b8;font-size:.68rem;text-transform:uppercase;border-top:none}
-.bar{height:6px;background:rgba(148,163,184,.2);border-radius:99px;overflow:hidden;margin-top:4px}
-.bar i{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#4ade80)}
-.pos{color:#4ade80;font-weight:700}.neg{color:#f87171;font-weight:700}
-.form5 b{padding:1px 5px;border-radius:4px;margin-right:2px}
-.w{background:rgba(16,185,129,.3);color:#86efac}.l{background:rgba(239,68,68,.25);color:#fca5a5}
+.mrow{display:grid;grid-template-columns:80px 1fr 80px 80px 80px 30px;gap:8px;padding:5px 0;border-top:1px solid rgba(148,163,184,.12);font-size:.82rem;color:#e2e8f0}
+.ok{color:#4ade80;font-weight:800}.nok{color:#64748b}
+.evpos{color:#4ade80;font-weight:700}.evneg{color:#f87171;font-weight:700}
+.mfoot{margin-top:8px;color:#cbd5e1;font-size:.76rem}
+.mfoot b{color:#facc15}
 </style>""", unsafe_allow_html=True)
 
-# ================= ИСТОЧНИКИ =================
-@st.cache_data(ttl=86400)
-def ts_all_leagues():
-    try:
-        r=requests.get(f"{API}/all_leagues.php",timeout=30)
-        return (r.json() or {}).get("leagues",[]) or []
-    except Exception as e:
-        log_err("all_leagues",e); return []
-@st.cache_data(ttl=3600)
-def ts_events_day(dstr,sport):
-    out=[]
-    try:
-        r=requests.get(f"{API}/eventsday.php?d={dstr}&s={sport}",timeout=20)
-        for e in (r.json() or {}).get("events",[]) or []:
-            hs,as_=e.get("intHomeScore"),e.get("intAwayScore")
-            out.append({"id":e.get("idEvent"),"h":e.get("strHomeTeam") or "","a":e.get("strAwayTeam") or "",
-                "date":e.get("dateEvent") or "","hs":int(hs) if hs not in (None,"") else None,
-                "as":int(as_) if as_ not in (None,"") else None,"league":e.get("strLeague") or sport,"src":"api"})
-    except Exception as e: log_err(f"eventsday {dstr}",e)
-    return out
-@st.cache_data(ttl=3600)
-def espn_day(dstr,sport):
-    """ESPN scoreboard: реальные матчи по дням (для тенниса — основной источник расписания)"""
-    out=[]
-    ymd=dstr.replace("-","")
-    feeds={"Tennis":[("atp","ATP"),("wta","WTA")],
-           "Basketball":[("basketball/nba","NBA"),("basketball/mens-college-basketball","NCAA")],
-           "Ice Hockey":[("hockey/nhl","NHL"),("hockey/khl","KHL")],
-           "Volleyball":[]}
-    for path,lg in feeds.get(sport,[]):
-        url=f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={ymd}"
-        try:
-            r=requests.get(url,timeout=20)
-            js=r.json() or {}
-            for ev in js.get("events",[]) or []:
-                comp=(ev.get("competitions") or [{}])[0]
-                home=away=None; hs=as_=None
-                done=((comp.get("status") or {}).get("type") or {}).get("completed",False)
-                for c in comp.get("competitors") or []:
-                    nm=(c.get("team") or {}).get("displayName") or (c.get("athlete") or {}).get("displayName") or ""
-                    sc=c.get("score")
-                    if c.get("homeAway")=="home": home=nm; hs=int(sc) if sc not in (None,"") else None
-                    else: away=nm; as_=int(sc) if sc not in (None,"") else None
-                if not home or not away: continue
-                out.append({"id":f"espn{lg}{ev.get('id')}{dstr}","h":home,"a":away,"date":dstr,
-                    "hs":hs if done else None,"as":as_ if done else None,"league":lg,"src":"espn"})
-        except Exception as e: log_err(f"espn {path} {dstr}",e)
-    return out
-@st.cache_data(ttl=1800)
-def ts_league_events(lid):
-    out=[]
-    for ep in ("eventspastleague.php","eventsnextleague.php"):
-        try:
-            r=requests.get(f"{API}/{ep}?id={lid}",timeout=20)
-            for e in (r.json() or {}).get("events",[]) or []:
-                hs,as_=e.get("intHomeScore"),e.get("intAwayScore")
-                out.append({"id":f"{lid}-{e.get('idEvent')}-{ep[:4]}","h":e.get("strHomeTeam") or "",
-                    "a":e.get("strAwayTeam") or "","date":e.get("dateEvent") or "",
-                    "hs":int(hs) if hs not in (None,"") else None,
-                    "as":int(as_) if as_ not in (None,"") else None,
-                    "league":e.get("strLeague") or "","src":"api"})
-        except Exception as e: log_err(f"league {lid}",e)
-    return out
-@st.cache_data(ttl=3600)
-def tennis_data_csv():
-    """ATP/WTA за текущий и прошлый год = последние 2 сезона, с реальными кэфами"""
-    rows=[]; rep=[]
-    y=datetime.now().year
-    for year in (y,y-1):
-        for tour in ("atp","wta"):
-            url=f"https://www.tennis-data.co.uk/{year}/{tour}.csv"
-            try:
-                r=requests.get(url,timeout=25,headers={"User-Agent":"Mozilla/5.0"})
-                if r.status_code!=200: rep.append(f"{tour}{year}: HTTP {r.status_code}"); continue
-                rd=list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig","ignore"))))
-                n=0
-                for x in rd:
-                    m=x.get("Match") or ""
-                    if " vs " not in m: continue
-                    h,a=[s.strip() for s in m.split(" vs ")]
-                    win,los=x.get("Winner") or "",x.get("Loser") or ""
-                    try: ws,ls=int(float(x.get("Wsets") or 0)),int(float(x.get("Lsets") or 0))
-                    except Exception: continue
-                    if h==win: hs,as_=ws,ls
-                    elif h==los: hs,as_=ls,ws
-                    else: continue
-                    ow=_f(x.get("B365W")) or _f(x.get("PSW")); ol=_f(x.get("B365L")) or _f(x.get("PSL"))
-                    rows.append({"id":f"td{year}{tour}{n}","h":h,"a":a,"date":x.get("Date") or "",
-                        "hs":hs,"as":as_,"league":("ATP" if tour=="atp" else "WTA")+f" {year}",
-                        "src":"td","odds_h":ow if h==win else ol,"odds_a":ol if h==win else ow})
-                    n+=1
-                rep.append(f"{tour} {year}: {n} матчей (сезон {'нынешний' if year==y else 'прошлый'})")
-            except Exception as e:
-                log_err(f"tennis-data {tour}{year}",e); rep.append(f"{tour}{year}: ошибка")
-    return rows,rep
 def _f(v):
     try: return float(v)
     except Exception: return None
-def pdate(s):
-    for f in ("%Y-%m-%d","%d/%m/%Y","%d.%m.%y"):
-        try: return datetime.strptime((s or "").strip(),f)
+def Phi(x): return 0.5*(1+math.erf(x/math.sqrt(2)))
+def pois_cdf(k,mu): return sum(math.exp(-mu)*mu**i/math.factorial(i) for i in range(k+1))
+def parse_date(s):
+    for fmt in ("%d/%m/%Y","%d/%m/%y","%Y-%m-%d"):
+        try: return datetime.strptime(str(s).strip(),fmt)
         except Exception: continue
     return None
-def parse_upload(buf):
-    rows=[]
-    try:
-        rd=csv.DictReader(io.StringIO(buf.getvalue().decode("utf-8-sig")))
-        mp={}
-        for c in (rd.fieldnames or []):
-            cl=c.strip().lower()
-            if cl in ("date","d","дата"): mp["date"]=c
-            elif cl in ("home","h","hometeam","хозяева"): mp["h"]=c
-            elif cl in ("away","a","awayteam","гости"): mp["a"]=c
-            elif cl in ("hs","home_score","hgoals"): mp["hs"]=c
-            elif cl in ("as","away_score","agoals"): mp["as"]=c
-        for r in rd:
-            try: hs=int(float(r.get(mp.get("hs",""),"") or "")); as_=int(float(r.get(mp.get("as",""),"") or ""))
-            except Exception: hs=as_=None
-            rows.append({"id":f"up{len(rows)}","h":(r.get(mp.get("h","")) or "").strip(),
-                "a":(r.get(mp.get("a","")) or "").strip(),"date":(r.get(mp.get("date","")) or "").strip(),
-                "hs":hs,"as":as_,"league":"📁 CSV","src":"file"})
-    except Exception as e: log_err("upload",e)
-    return rows
-
-# ================= ДВИЖОК =================
-class SportEngine:
-    def __init__(self,cfg):
-        self.cfg=cfg; self.elo={}; self.pts=defaultdict(lambda:{"f":[],"a":[]})
-        self.form=defaultdict(list); self.h2h=defaultdict(list)
-    def add(self,h,a,hs,as_):
-        if hs==as_ or not h or not a: return
-        k=self.cfg["k"]; ha=self.cfg["ha"]
-        rh,ra=self.elo.get(h,1500),self.elo.get(a,1500)
-        e=1/(1+10**(-((rh+ha)-ra)/self.cfg["scale"]))
-        s=1.0 if hs>as_ else 0.0
-        self.elo[h]=rh+k*(s-e); self.elo[a]=ra+k*((1-s)-(1-e))
-        self.pts[h]["f"].append(hs); self.pts[h]["a"].append(as_)
-        self.pts[a]["f"].append(as_); self.pts[a]["a"].append(hs)
-        self.form[h].append(1 if hs>as_ else 0); self.form[a].append(1 if as_>hs else 0)
-        self.h2h[(h,a)].append(f"{hs}:{as_}")
-        for t in (h,a):
-            for kk in self.pts[t]: self.pts[t][kk]=self.pts[t][kk][-20:]
-            self.form[t]=self.form[t][-10:]
-        self.h2h[(h,a)]=self.h2h[(h,a)][-6:]
-    def _m(self,l,d): return sum(l)/len(l) if l else d
-    def form_str(self,t):
-        return "".join("В" if x else "П" for x in self.form[t][-5:]) or "—"
-    def h2h_str(self,h,a):
-        return ", ".join(self.h2h.get((h,a),[])[-4:]) or "—"
-    def best_of(self,p,n):
-        win=0.0; dist={}
-        for k in range(n):
-            pr=comb(n-1+k,k)*(p**n)*((1-p)**k); dist[n+k]=dist.get(n+k,0)+pr; win+=pr
-        for k in range(n):
-            pr=comb(n-1+k,k)*((1-p)**n)*(p**k); dist[n+k]=dist.get(n+k,0)+pr
-        return win,dist
-    def predict(self,h,a):
-        cfg=self.cfg; tt=cfg["total_type"]
-        rh,ra=self.elo.get(h,1500),self.elo.get(a,1500)
-        d=(rh+cfg["ha"])-ra
-        p_ml=1/(1+10**(-d/cfg["scale"]))
-        mk=[]; extra=""
-        if tt=="sets":
-            n=cfg["best_of"]; line=cfg["set_line"]; hd=cfg["handi"]
-            p_match,dist=self.best_of(p_ml,n)
-            p_over=sum(v for s,v in dist.items() if s>line)
-            p_handi=sum(v for s,v in dist.items() if s-n>=hd)
-            mk=[("П1",p_match),("П2",1-p_match),
-                (f"ТБ {line} сетов",p_over),(f"ТМ {line} сетов",1-p_over),
-                (f"Ф1 (-{hd})",p_handi),(f"Ф2 (+{hd})",1-p_handi)]
-            exp_sets=sum(s*v for s,v in dist.items())
-            extra=f"ожидаемые сеты {exp_sets:.1f}"
-        elif tt=="points":
-            fh=self._m(self.pts[h]["f"],80); fa_=self._m(self.pts[h]["a"],80)
-            af=self._m(self.pts[a]["f"],80); aa_=self._m(self.pts[a]["a"],80)
-            mu_h=(fh+aa_)/2; mu_a=(af+fa_)/2; mu=mu_h+mu_a
-            line=math.floor(mu)+0.5; sig=cfg["sigma"]
-            p_over=0.5*(1-erf((line+0.5-mu)/(sig*sqrt(2))))
-            diff=mu_h-mu_a; hline=math.floor(diff)+0.5
-            p_cov=0.5*(1-erf((hline+0.5-diff)/(sig*sqrt(2))))
-            mk=[("П1",p_ml),("П2",1-p_ml),(f"ТБ {line}",p_over),(f"ТМ {line}",1-p_over),
-                (f"Ф1 ({hline:+.1f})",p_cov),(f"Ф2 ({-hline:+.1f})",1-p_cov)]
-            extra=f"ожидаемые очки {mu:.0f} ({mu_h:.0f}–{mu_a:.0f})"
-        else:
-            fh=self._m(self.pts[h]["f"],3); fa_=self._m(self.pts[h]["a"],3)
-            af=self._m(self.pts[a]["f"],3); aa_=self._m(self.pts[a]["a"],3)
-            lh=max(0.5,(fh+aa_)/2); la=max(0.5,(af+fa_)/2); tot=lh+la
-            line=cfg["goal_line"]; hd=cfg["handi"]
-            p_over=1-sum(exp(-tot)*tot**k/math.factorial(k) for k in range(int(line)+1))
-            md=lh-la; vd=lh+la
-            p_cov=0.5*(1-erf((hd+0.5-md)/sqrt(vd if vd>0 else 1)))
-            mk=[("П1",p_ml),("П2",1-p_ml),(f"ТБ {line}",p_over),(f"ТМ {line}",1-p_over),
-                (f"Ф1 (-{hd})",p_cov),(f"Ф2 (+{hd})",1-p_cov)]
-            extra=f"xG {lh:.1f}–{la:.1f}"
-        out=[]
-        for name,p in mk:
-            p=min(max(p,0.01),0.99); fair=1/p
-            out.append({"name":name,"p":p,"fair":fair,"min_ok":round(fair*1.03,2)})
-        return {"markets":out,"elo":(int(rh),int(ra)),"extra":extra,
-                "fh":self.form_str(h),"fa":self.form_str(a),"h2h":self.h2h_str(h,a),
-                "games":min(len(self.form[h]),len(self.form[a]))}
-
-def kelly(prob,odds,bank,frac=0.25):
+def kelly(prob,odds,bank,frac):
     if prob<=0 or odds<=1: return 0.0
-    b=odds-1; k=(b*prob-(1-prob))/b
+    b=odds-1;k=(b*prob-(1-prob))/b
     return round(min(max(0,k*frac),0.05)*bank,2)
 
-# ================= СОСТОЯНИЕ =================
-def osp_load():
-    if os.path.exists(OSP_FILE):
-        try: return json.load(open(OSP_FILE,encoding="utf-8"))
-        except Exception as e: log_err("osp_load",e)
-    return {}
-def osp_save(d):
-    try: json.dump(d,open(OSP_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
-    except Exception as e: log_err("osp_save",e)
-def osp_sport(allst,sport):
-    if sport not in allst:
-        allst[sport]={"bank":5000.0,"bets":[],"stats":{"won":0,"lost":0,"profit":0}}
-    return allst[sport]
-
-# ================= HTML =================
-DEF_P={"markets":[],"elo":(0,0),"extra":"","fh":"—","fa":"—","h2h":"—","games":0}
-def mrows_html(markets):
-    out="<div class='mrow hdr'><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>"
-    for m in markets:
-        w=m["p"]*100
-        out+=f"<div class='mrow'><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{w:.0f}%'></i></div><span style='color:#4ade80'>{w:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>&ge; {m['min_ok']:.2f}</span></div>"
+# ---------- TheSportsDB ----------
+@st.cache_data(ttl=86400)
+def tsdb_all_leagues():
+    try:
+        r=requests.get("https://www.thesportsdb.com/api/v1/json/3/all_leagues.php",timeout=20)
+        return [(l.get("idLeague"),l.get("strLeague"),l.get("strSport")) for l in (r.json() or {}).get("leagues") or []]
+    except Exception as e:
+        log_err("tsdb_all",e); return []
+def tsdb_leagues_for(cfg):
+    out=[]
+    for lid,name,sport in tsdb_all_leagues():
+        if sport!=cfg.get("sport"): continue
+        if cfg.get("kw") and not any(k.lower() in (name or "").lower() for k in cfg["kw"]): continue
+        out.append((lid,name))
+        if len(out)>=cfg.get("max",4): break
+    if not out:  # fallback: любые лиги вида
+        for lid,name,sport in tsdb_all_leagues():
+            if sport==cfg.get("sport"):
+                out.append((lid,name))
+                if len(out)>=cfg.get("max",4): break
     return out
-def form_html(s):
-    return "".join(f"<b class='{'w' if ch=='В' else 'l'}'>{ch}</b>" for ch in s)
-def verdict_html(P,thr):
-    mk=sorted(P.get("markets") or [],key=lambda m:-m.get("p",0))
-    if len(mk)<2:
-        return "<div class='verdict'>🤖 Недостаточно данных для вердикта по этому матчу.</div>"
-    elo=P.get("elo") or (0,0)
-    main,alt,avoid=mk[0],mk[1],min(mk,key=lambda m:m.get("p",0))
-    hot=" 🔥" if main["p"]>=thr else ""
-    line=(f"🤖 <b>Вердикт:</b> ✅ <b class='y'>{main['name']}</b> (P {main['p']*100:.0f}%, ставить при кэфе ≥ {main['min_ok']:.2f}){hot} · "
-          f"🔁 <b class='g'>{alt['name']}</b> (P {alt['p']*100:.0f}%) · ⛔ <b class='r'>{avoid['name']}</b>")
-    why=(f"Elo {elo[0]} vs {elo[1]} · форма {P.get('fh','—')} против {P.get('fa','—')} · H2H: {P.get('h2h','—')} · {P.get('extra','')}")
-    return f"<div class='verdict'>{line}<br><span style='color:#cbd5e1'>{why}</span></div>"
-def card_html(c,thr):
-    P=c.get("P") or DEF_P
-    hot=any(m["p"]>=thr for m in (P.get("markets") or []))
-    badge=f"<span class='badge hot'>🔥 P≥{thr*100:.0f}%</span>" if hot else "<span class='badge no'>фон</span>"
-    src={"api":"🌐 API","espn":"📺 ESPN","td":"🎾 tennis-data"}.get(c.get("src"),"📁 CSV")
-    return ("<div class='mcard "+("value' " if hot else "' ")+"><div class='mhead'>"
-        "<span class='chip'>"+str(c.get("league",""))+"</span><span class='chip when'>📅 "+str(c.get("date",""))+" · "+str(c.get("when",""))+"</span>"
-        "<span class='chip src'>"+src+"</span>"+badge+"</div>"
-        "<div class='teams'>"+str(c.get("h",""))+" <span>—</span> "+str(c.get("a",""))+"</div>"
-        +verdict_html(P,thr)
-        +f"<div class='meta'>форма: {form_html(P.get('fh','—'))} <span style='color:#475569'>vs</span> {form_html(P.get('fa','—'))} · 📚 игр в базе: <b>{P.get('games',0)}</b></div>"
-        +mrows_html(P.get("markets") or [])+
-        "</div>")
+@st.cache_data(ttl=21600)
+def tsdb_events(lid,kind):
+    try:
+        r=requests.get(f"https://www.thesportsdb.com/api/v1/json/3/events{kind}league.php?id={lid}",timeout=20)
+        return (r.json() or {}).get("events") or []
+    except Exception as e:
+        log_err(f"tsdb_{kind}",e); return []
 
-LEAGUES_ALL=ts_all_leagues()
+class BinElo:
+    def __init__(self,k,ha,div):
+        self.r={};self.k=k;self.ha=ha;self.div=div;self.totals=[]
+    def add(self,h,a,s1,s2,total=None):
+        r1=self.r.get(h,1500);r2=self.r.get(a,1500)
+        p=1/(1+10**(-((r1+self.ha)-r2)/self.div))
+        s=1.0 if s1>s2 else (0.0 if s1<s2 else 0.5)
+        self.r[h]=r1+self.k*(s-p);self.r[a]=r2+self.k*((1-s)-(1-p))
+        if total is not None:
+            self.totals.append(total);self.totals=self.totals[-200:]
+    def predict(self,h,a):
+        r1=self.r.get(h,1500);r2=self.r.get(a,1500)
+        p=1/(1+10**(-((r1+self.ha)-r2)/self.div))
+        return p,1-p
+    def mu(self): return sum(self.totals)/len(self.totals) if self.totals else None
 
-# ================= ВКЛАДКА ВИДА =================
-def render_sport(sport):
-    cfg=SPORTS[sport]
-    ALL=osp_load(); S=osp_sport(ALL,sport)
-    today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
-    sub=st.tabs(["🛰 Сканер","💼 Портфель","📈 Статистика","🧪 Бэктест"])
-    with sub[0]:
-        opts=sorted([l for l in LEAGUES_ALL if l.get("strSport")==cfg["tsdb"]],key=lambda x:x.get("strLeague",""))
-        resolved=[o for o in opts if any(p.lower() in (o.get("strLeague") or "").lower() for p in PRESETS.get(sport,[]))]
-        names=[f"{o['strLeague']} (id {o['idLeague']})" for o in opts]
-        res_names=[f"{o['strLeague']} (id {o['idLeague']})" for o in resolved]
-        c1,c2=st.columns([3,1])
-        sel=c1.multiselect("Лиги для обучения",names,default=(res_names or names)[:3],key=f"ms{sport}")
-        days=c2.slider("Горизонт, дней",1,21,10,key=f"d{sport}")
-        thr=st.slider("Порог проходимости, %",50,80,60,key=f"t{sport}")/100
-        up=st.file_uploader("Свой CSV (Date,Home,Away,HS,AS)",type=["csv"],key=f"u{sport}")
-        if st.button("🧹 Сброс вида",key=f"clr{sport}"):
-            st.session_state["cards_"+sport]=[]
-            st.session_state["trained_"+sport]=0
-            st.session_state["diag_"+sport]={}
-            st.session_state["train_"+sport]={}
-            st.cache_data.clear()
-            st.rerun()
-        if st.button(f"⚡ СКАН {cfg['icon']}",type="primary",key=f"scan{sport}"):
-            limit=today+timedelta(days=days)
-            rows=[]; seen=set(); diag={}
-            prog=st.progress(0.0,text="🔎 Расписание будущих матчей...")
-            for off in range(days):
-                dstr=(today+timedelta(days=off)).strftime("%Y-%m-%d")
-                for r in ts_events_day(dstr,cfg["tsdb"])+espn_day(dstr,sport):
-                    if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
-                prog.progress((off+1)/days*0.35)
-            prog.progress(0.4,text="📚 История прошедших матчей (обучение)...")
-            for off in range(1,15):
-                dstr=(today-timedelta(days=off)).strftime("%Y-%m-%d")
-                for r in ts_events_day(dstr,cfg["tsdb"])+espn_day(dstr,sport):
-                    if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
-            if sport=="Tennis":
-                pool=resolved+[o for o in opts if o not in resolved][:20]
-            else:
-                pool=resolved or opts[:6]
-            ids_pool=[o["idLeague"] for o in pool]
-            per={}
-            with ThreadPoolExecutor(max_workers=8) as ex:
-                res=list(ex.map(ts_league_events,ids_pool))
-            for lid,d in zip(ids_pool,res):
-                nxt=0
-                for r in d:
-                    if r["id"] not in seen:
-                        seen.add(r["id"]); rows.append(r)
-                        if r["hs"] is None: nxt+=1
-                if nxt: per[str(lid)]=nxt
-            diag["лиг с будущими матчами"]=per if per else "нет"
-            if sport=="Tennis":
-                td,tdrep=tennis_data_csv()
-                for r in td:
-                    if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
-                st.session_state["tdrep_"+sport]=tdrep
-            if up is not None:
-                for r in parse_upload(up):
-                    r["id"]=f"{sport}-{r['id']}"
-                    if r["id"] not in seen: seen.add(r["id"]); rows.append(r)
-            prog.progress(0.75,text="🧠 Обучение модели и расчёт...")
-            eng=SportEngine(cfg)
-            past=sorted([r for r in rows if r["hs"] is not None and r["as"] is not None and pdate(r["date"])],key=lambda r:pdate(r["date"]))
-            for r in past: eng.add(r["h"],r["a"],r["hs"],r["as"])
-            cards=[]
-            for r in rows:
-                d=pdate(r["date"])
+# ---------- Футбольный движок ----------
+class Engine:
+    def __init__(self):
+        self.elo={};self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],"hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
+        self.hg=[];self.ag=[];self.hsth=[];self.hsta=[];self.h2h=defaultdict(list)
+        self.calib=[];self.platt_a=0.0;self.platt_b=1.0;self.history=[];self.rho=-0.13;self.w_dc=0.72;self.mc=0
+    @staticmethod
+    def _logit(p):
+        p=min(max(p,1e-6),1-1e-6);return math.log(p/(1-p))
+    @staticmethod
+    def _sig(x): return 1.0/(1.0+math.exp(-max(-30,min(30,x))))
+    def _m(self,l,d=1.0): return sum(l)/len(l) if l else d
+    def _p(self,l,k): return math.exp(-l)*l**k/math.factorial(k)
+    def _form(self,t):
+        f=self.st[t]["form"][-5:];return (sum(f)/(len(f)*3)) if f else 0.5
+    def form_str(self,t):
+        return "".join({"3":"В","1":"Н","0":"П"}[str(int(x))] for x in self.st[t]["form"][-5:]) or "—"
+    def calib_p(self,p): return self._sig(self.platt_a+self.platt_b*self._logit(p))
+    def refit_platt(self):
+        if len(self.calib)<60: return
+        data=self.calib[-3000:];a,b=self.platt_a,self.platt_b;n=len(data)
+        for _ in range(50):
+            ga=gb=0.0
+            for x,y in data:
+                p=self._sig(a+b*x);ga+=p-y;gb+=(p-y)*x
+            a-=0.08*ga/n;b-=0.08*gb/n;b=min(max(b,0.3),3.0)
+        self.platt_a,self.platt_b=a,b
+    def _p1px(self,lh,la,rho):
+        N=MATRIX_N
+        M=[[self._p(lh,i)*self._p(la,j) for j in range(N)] for i in range(N)]
+        tau={(0,0):1+lh*la*rho,(1,0):1-la*rho,(0,1):1-lh*rho,(1,1):1+rho}
+        for i in range(N):
+            for j in range(N):
+                if (i,j) in tau: M[i][j]*=tau[(i,j)]
+        tot=sum(map(sum,M)) or 1.0
+        M=[[v/tot for v in r] for r in M]
+        return (sum(M[i][j] for i in range(N) for j in range(N) if i>j), sum(M[i][i] for i in range(N)), M)
+    def refit_struct(self):
+        if len(self.history)<200: return
+        win=self.history[-200:];best=None
+        for rho in (-0.20,-0.13,-0.06,0.0):
+            for w in (0.60,0.72,0.85):
+                ll=0.0
+                for lh,la,e,pde,out in win:
+                    p1,px,_=self._p1px(lh,la,rho)
+                    f1=w*p1+(1-w)*e*(1-pde);fd=w*px+(1-w)*pde;f2=max(1e-6,1-f1-fd)
+                    ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
+                if best is None or ll<best[0]: best=(ll,rho,w)
+        if best: self.rho,self.w_dc=best[1],best[2]
+    def add(self,h,a,hg,ag,row=None,k=32):
+        rh,ra=self.elo.get(h,1500),self.elo.get(a,1500)
+        eh=1/(1+10**((ra-(rh+60))/400));s=1.0 if hg>ag else (0.5 if hg==ag else 0.0)
+        self.elo[h]=rh+k*(s-eh);self.elo[a]=ra+k*((1-s)-(1-eh))
+        t=self.st
+        t[h]["hs"].append(hg);t[h]["hc"].append(ag);t[a]["as"].append(ag);t[a]["ac"].append(hg)
+        t[h]["form"].append(3 if hg>ag else (1 if hg==ag else 0))
+        t[a]["form"].append(3 if ag>hg else (1 if hg==ag else 0))
+        self.hg.append(hg);self.ag.append(ag)
+        self.h2h[(h,a)].append(hg-ag);self.h2h[(h,a)]=self.h2h[(h,a)][-8:]
+        if row:
+            hst,ast=_f(row.get("HST")),_f(row.get("AST"))
+            if hst is not None and ast is not None:
+                t[h]["hst_h"].append(hst);t[h]["hstc_h"].append(ast)
+                t[a]["hst_a"].append(ast);t[a]["hstc_a"].append(hst)
+                self.hsth.append(hst);self.hsta.append(ast)
+        for team in (h,a):
+            for key in t[team]: t[team][key]=t[team][key][-12:]
+    def predict(self,h,a):
+        ws=0.35;N=MATRIX_N
+        lh_g=self._m(self.hg,1.5);la_g=self._m(self.ag,1.2)
+        lh_s=self._m(self.hsth,4.5);la_s=self._m(self.hsta,4.0)
+        sh,sa=self.st[h],self.st[a]
+        ah_=self._m(sh["hs"],lh_g)/lh_g;dh_=self._m(sh["hc"],la_g)/la_g
+        aa_=self._m(sa["as"],la_g)/la_g;da_=self._m(sa["ac"],lh_g)/lh_g
+        fh,fa=self._form(h),self._form(a)
+        lg_h=max(0.3,min(5.0,lh_g*ah_*da_*1.10*(0.85+0.30*fh)))
+        lg_a=max(0.25,min(4.5,la_g*aa_*dh_*0.95*(0.85+0.30*fa)))
+        ch_=lh_g/max(0.5,lh_s);ca_=la_g/max(0.5,la_s)
+        ash=self._m(sh["hst_h"],lh_s)/lh_s;dsa=self._m(sa["hstc_a"],lh_s)/lh_s
+        asa=self._m(sa["hst_a"],la_s)/la_s;dsh=self._m(sh["hstc_h"],la_s)/la_s
+        ls_h=max(0.3,min(5.0,lh_s*ch_*ash*dsa*(0.85+0.30*fh)))
+        ls_a=max(0.25,min(4.5,la_s*ca_*asa*dsh*(0.85+0.30*fa)))
+        lam_h=(1-ws)*lg_h+ws*ls_h;lam_a=(1-ws)*lg_a+ws*ls_a
+        agree=(lg_h-lg_a)*(ls_h-ls_a)>0
+        hist=self.h2h.get((h,a),[])
+        if len(hist)>=3:
+            sh_=(sum(hist)/len(hist))*0.15
+            lam_h=max(0.3,lam_h+sh_/2);lam_a=max(0.25,lam_a-sh_/2)
+        e=1/(1+10**((self.elo.get(a,1500)-self.elo.get(h,1500)-60)/400))
+        pde=0.20+0.12*(1-abs(e-0.5)*2)
+        p1,px,M=self._p1px(lam_h,lam_a,self.rho)
+        f1=self.w_dc*p1+(1-self.w_dc)*e*(1-pde);fd=self.w_dc*px+(1-self.w_dc)*pde;f2=max(0.0,1-f1-fd)
+        c1,cx,c2=self.calib_p(f1),self.calib_p(fd),self.calib_p(f2)
+        ct=c1+cx+c2 or 1.0;f1,fd,f2=c1/ct,cx/ct,c2/ct
+        over=1-sum(self._p(lam_h+lam_a,k) for k in range(3))
+        btts=sum(M[i][j] for i in range(1,N) for j in range(1,N))
+        games=min(len(sh["hs"])+len(sh["as"]),len(sa["hs"])+len(sa["as"]))
+        return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,"agree":agree,
+                "lams":(lam_h,lam_a),"games":games,"h2h":len(hist),
+                "fh":self.form_str(h),"fa":self.form_str(a)}
+    def learn_step(self,h,a,hg,ag,row=None):
+        P=self.predict(h,a)
+        out=0 if hg>ag else (1 if hg==ag else 2)
+        self.calib+=[(self._logit(P["p1"]),1.0 if out==0 else 0.0),
+                     (self._logit(P["x"]),1.0 if out==1 else 0.0),
+                     (self._logit(P["p2"]),1.0 if out==2 else 0.0)]
+        self.history.append((P["lams"][0],P["lams"][1],0,0,out))
+        self.mc+=1
+        if self.mc%150==0: self.refit_platt()
+        if self.mc%300==0: self.refit_struct()
+        self.add(h,a,hg,ag,row)
+        return P
+
+# ---------- football-data ----------
+@st.cache_data(ttl=1800)
+def find_season():
+    for s in ["2627","2526","2425"]:
+        try:
+            r=requests.head(f"https://www.football-data.co.uk/mmz4281/{s}/E0.csv",timeout=8)
+            if r.status_code==200: return s
+        except Exception as e: log_err("season",e)
+    return "2526"
+def prev_season(s):
+    try: return f"{int(s[:2])-1:02d}{int(s[2:])-1:02d}"
+    except Exception: return s
+@st.cache_data(ttl=1800)
+def load_seasonal(div,season):
+    try:
+        r=requests.get(f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv",timeout=20,headers={"User-Agent":"Mozilla/5.0"})
+        if r.status_code!=200: return []
+        return list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
+    except Exception as e:
+        log_err(f"seasonal {div}",e); return []
+def load_many(divs,season):
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return dict(zip(divs,ex.map(lambda d: load_seasonal(d,season),divs)))
+@st.cache_data(ttl=900)
+def load_fixtures():
+    rep=[];rows=[];seen=set()
+    for u in ["https://www.football-data.co.uk/mmz4281/fixtures.csv",
+              "https://www.football-data.co.uk/fixtures.csv"]:
+        try:
+            r=requests.get(u,timeout=25,headers={"User-Agent":"Mozilla/5.0"})
+            if r.status_code!=200: rep.append(f"fixtures: HTTP {r.status_code}");continue
+            rd=list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
+            n=0
+            for x in rd:
+                k=(x.get("Div"),x.get("Date"),x.get("HomeTeam"),x.get("AwayTeam"))
+                if k in seen or not x.get("HomeTeam"): continue
+                seen.add(k);rows.append(x);n+=1
+            rep.append(f"fixtures.csv: OK, {n} матчей")
+            if n: break
+        except Exception as e:
+            log_err("fixtures",e); rep.append(f"fixtures: {type(e).__name__}")
+    return rows,rep
+def odd1(row,keys):
+    for k in keys:
+        v=_f(row.get(k))
+        if v and v>1.01: return v
+    return None
+def best_odd(row,pick):
+    m={"П1":["MaxH","B365H","PSH"],"X":["MaxD","B365D","PSD"],"П2":["MaxA","B365A","PSA"],
+       "ТБ 2.5":["Max>2.5","B365>2.5","P>2.5"],"ТМ 2.5":["Max<2.5","B365<2.5","P<2.5"]}
+    return odd1(row,m.get(pick,[]))
+def market_probs(row):
+    ph,px,pa=_f(row.get("PSH")),_f(row.get("PSD")),_f(row.get("PSA"))
+    if not(ph and px and pa): return None
+    i1,ix,ia=1/ph,1/px,1/pa;s=i1+ix+ia
+    return (i1/s,ix/s,ia/s)
+
+# ---------- состояние ----------
+def new_data():
+    return {"bank":10000.0,"bets":[],"cards":{},"funnel":{},"report":{},"meta":{},
+            "stats":{"won":0,"lost":0,"profit":0,"push":0}}
+def load_data():
+    if os.path.exists(HISTORY_FILE):
+        try: return json.load(open(HISTORY_FILE,encoding="utf-8"))
+        except Exception as e: log_err("load",e)
+    return new_data()
+def save_data(d):
+    try: json.dump(d,open(HISTORY_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
+    except Exception as e: log_err("save",e)
+def clone(D): return json.loads(json.dumps(D))
+def apply_settle(D,idx,outcome):
+    D2=clone(D);b=D2["bets"][idx]
+    if b["status"]!="pending": return D
+    if outcome=="push":
+        b["status"]="push";D2["bank"]+=b["stake"];D2["stats"]["push"]=D2["stats"].get("push",0)+1
+    elif outcome=="won":
+        pr=b["stake"]*(b["odds"]-1);b["status"]="won";D2["bank"]+=b["stake"]+pr
+        D2["stats"]["won"]+=1;D2["stats"]["profit"]+=pr
+    else:
+        b["status"]="lost";D2["stats"]["lost"]+=1;D2["stats"]["profit"]-=b["stake"]
+    return D2
+
+# ---------- сканы ----------
+def scan_football(PR,today,limit,bank):
+    season=find_season();pseason=prev_season(season)
+    fix,rep=load_fixtures()
+    eng=Engine();trained=0
+    divs=sorted({r.get("Div") for r in fix if r.get("Div")}) or ["E0","SP1","I1","D1","F1"]
+    dp=load_many(divs,pseason);dc=load_many(divs,season)
+    for dv in divs:
+        for src in (dp,dc):
+            rr=sorted([r for r in src.get(dv,[]) if parse_date(r.get("Date",""))],key=lambda r:parse_date(r["Date"]))
+            for r in rr:
+                if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,""):
+                    try: eng.learn_step(r["HomeTeam"],r["AwayTeam"],float(r["FTHG"]),float(r["FTAG"]),r); trained+=1
+                    except Exception as e: log_err(f"train {dv}",e)
+    cards=[];bets=[];passed=0;inwin=0
+    for r in fix:
+        try:
+            d=parse_date(r.get("Date",""))
+            if not d or not (today<=d<=limit): continue
+            h=(r.get("HomeTeam") or "").strip();a=(r.get("AwayTeam") or "").strip()
+            if not h or not a: continue
+            inwin+=1
+            P=eng.predict(h,a)
+            mkt=market_probs(r);w=PR["w_market"]
+            if mkt:
+                t=(1-w)*P["p1"]+w*mkt[0];x=(1-w)*P["x"]+w*mkt[1];q=(1-w)*P["p2"]+w*mkt[2]
+                s=t+x+q or 1.0;P["p1"],P["x"],P["p2"]=t/s,x/s,q/s;P["mkt"]=mkt
+            gap=max(abs(P["p1"]-mkt[0]),abs(P["x"]-mkt[1]),abs(P["p2"]-mkt[2])) if mkt else None
+            rows=[];best=None
+            for pick,prob,odd in [("П1",P["p1"],best_odd(r,"П1")),("X",P["x"],best_odd(r,"X")),
+                                  ("П2",P["p2"],best_odd(r,"П2")),("ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),
+                                  ("ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5")),
+                                  ("BTTS да",P["btts"],None),("1X",P["p1"]+P["x"],None),("X2",P["x"]+P["p2"],None)]:
+                it={"pick":pick,"prob":prob,"odd":odd,"ev":None,"ok":False}
+                if odd:
+                    ev=prob*odd-1;edge=prob-1/odd
+                    dis_ok=(not PR["dis"]) or (gap is None) or (gap>=0.03)
+                    agree_ok=(pick not in ("П1","X","П2")) or P["agree"]
+                    it["ev"]=ev
+                    it["ok"]=(1.30<=odd<=4.20 and edge>=PR["edge"] and ev>=PR["ev"] and dis_ok and agree_ok and P["games"]>=PR["min_games"])
+                    if it["ok"]:
+                        passed+=1
+                        if best is None or ev>best[2]: best=(pick,odd,ev,prob)
+                rows.append(it)
+            hot=[r_ for r_ in rows if r_["prob"]>=PR["thr"]]
+            tag="value" if best else ("hot" if hot else "")
+            nd=(d-today).days
+            cards.append({"sport":"⚽ Футбол","league":DIV_NAMES.get(r.get("Div"),r.get("Div","")),
+                "match":f"{h} vs {a}","date":d.strftime("%d.%m"),"date_iso":d.strftime("%Y-%m-%d"),
+                "when":"сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн"),
+                "rows":rows,"best":best,"tag":tag,"lams":P["lams"],"games":P["games"],
+                "fh":P["fh"],"fa":P["fa"],"agree":P["agree"],"h2h":P["h2h"],
+                "verdict":f"xG {P['lams'][0]:.2f}–{P['lams'][1]:.2f} · форма {P['fh']} vs {P['fa']}"
+                          +("" if P["agree"] else " · ⚠️ движки не согласны")
+                          +(f" · расхождение с Pinnacle {gap*100:.0f} п.п." if gap else "")})
+            if best and len(bets)<25:
+                stk=kelly(best[3],best[1],bank,PR["kelly"])
+                if stk>0:
+                    bets.append({"sport":"⚽ Футбол","div":r.get("Div"),"league":DIV_NAMES.get(r.get("Div"),""),
+                        "match":f"{h} vs {a}","pick":best[0],"odds":best[1],"stake":stk,
+                        "prob":best[3],"status":"pending","date_iso":d.strftime("%Y-%m-%d"),"market":"1X2/OU"})
+            elif hot and len(bets)<25:
+                hp=max(hot,key=lambda r_:r_["prob"])
+                bets.append({"sport":"⚽ Футбол","div":r.get("Div"),"league":DIV_NAMES.get(r.get("Div"),""),
+                    "match":f"{h} vs {a}","pick":hp["pick"],"odds":hp["odd"] or round(1/hp["prob"],2),
+                    "stake":round(bank*0.01,2),"prob":hp["prob"],"status":"pending",
+                    "date_iso":d.strftime("%Y-%m-%d"),"market":"HOT"})
+        except Exception as e: log_err("scan fd row",e)
+    cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
+    return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
+
+def scan_sport(sport,cfg,PR,today,limit,bank):
+    cards=[];bets=[];rep=[];passed=0;inwin=0;trained=0
+    leagues=tsdb_leagues_for(cfg)
+    if not leagues: rep.append(f"{sport}: лиги не найдены в TheSportsDB"); return cards,bets,{"trained":0,"inwin":0,"passed":0},rep
+    for lid,lname in leagues:
+        past=tsdb_events(lid,"past");nxt=tsdb_events(lid,"next")
+        rep.append(f"{lname}: расписание {len(nxt)} / история {len(past)}")
+        eng=BinElo(cfg.get("k",24),cfg.get("ha",0),cfg.get("div",150))
+        evs=[]
+        for e in past:
+            d=parse_date(e.get("dateEvent",""))
+            s1,s2=_f(e.get("intHomeScore")),_f(e.get("intAwayScore"))
+            if d and s1 is not None and s2 is not None:
+                evs.append((d,e.get("strHomeTeam",""),e.get("strAwayTeam",""),s1,s2))
+        evs.sort(key=lambda x:x[0])
+        for d,h,a,s1,s2 in evs:
+            eng.add(h,a,s1,s2,total=(s1+s2) if (cfg.get("total") or cfg.get("pois")) else None)
+            trained+=1
+        for e in nxt:
+            try:
+                d=parse_date(e.get("dateEvent",""))
                 if not d or not (today<=d<=limit): continue
-                if r["hs"] is not None or not r["h"] or not r["a"]: continue
+                h=(e.get("strHomeTeam") or "").strip();a=(e.get("strAwayTeam") or "").strip()
+                if not h or not a: continue
+                inwin+=1
+                p1,p2=eng.predict(h,a)
+                rows=[{"pick":"П1","prob":p1,"odd":round(1/max(p1,0.02),2),"ev":None,"ok":p1>=PR["thr"]},
+                      {"pick":"П2","prob":p2,"odd":round(1/max(p2,0.02),2),"ev":None,"ok":p2>=PR["thr"]}]
+                mu=eng.mu()
+                tot_txt=""
+                if cfg.get("pois") and mu:
+                    over=1-pois_cdf(int(cfg["total"]),mu)
+                    rows+=[{"pick":f"ТБ {cfg['total']}","prob":over,"odd":round(1/max(over,0.02),2),"ev":None,"ok":over>=PR["thr"]},
+                           {"pick":f"ТМ {cfg['total']}","prob":1-over,"odd":round(1/max(1-over,0.02),2),"ev":None,"ok":(1-over)>=PR["thr"]}]
+                    tot_txt=f" · тотал-му {mu:.1f}"
+                if cfg.get("total") and not cfg.get("pois") and mu:
+                    over=1-Phi((cfg["total"]-mu)/cfg.get("sigma",12))
+                    rows+=[{"pick":f"ТБ {cfg['total']}","prob":over,"odd":round(1/max(over,0.02),2),"ev":None,"ok":over>=PR["thr"]},
+                           {"pick":f"ТМ {cfg['total']}","prob":1-over,"odd":round(1/max(1-over,0.02),2),"ev":None,"ok":(1-over)>=PR["thr"]}]
+                    tot_txt=f" · тотал-му {mu:.0f}"
+                hot=[r_ for r_ in rows if r_["prob"]>=PR["thr"]]
+                tag="hot" if hot else ""
+                if hot: passed+=1
                 nd=(d-today).days
-                when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
-                cards.append({"eid":r["id"],"league":r["league"] or sport,"src":r["src"],
-                    "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),"when":when,
-                    "P":eng.predict(r["h"],r["a"])})
-            cards.sort(key=lambda c:(any(m["p"]>=thr for m in (c.get("P") or DEF_P).get("markets",[])),c["date"]),reverse=True)
-            dates=[pdate(r["date"]) for r in past]
-            top=sorted(eng.elo.items(),key=lambda kv:-kv[1])[:5]
-            st.session_state["train_"+sport]={
-                "matches":len(past),
-                "period":(min(dates).strftime("%d.%m.%Y")+" — "+max(dates).strftime("%d.%m.%Y")) if dates else "—",
-                "top_elo":top,
-                "sources":("tennis-data (2 сезона) + ESPN + TheSportsDB" if sport=="Tennis" else "TheSportsDB + ESPN (текущий сезон + последние 14 дней)")}
-            prog.empty()
-            st.session_state["cards_"+sport]=cards
-            st.session_state["diag_"+sport]=diag
-            st.rerun()
-        tinfo=st.session_state.get("train_"+sport,{})
-        if tinfo:
-            with st.expander("📚 Как обучается модель (последние сезоны)"):
-                st.text(f"Источники обучения: {tinfo.get('sources','—')}")
-                st.text(f"Сыгранных матчей в обучении: {tinfo.get('matches',0)}")
-                st.text(f"Период данных: {tinfo.get('period','—')}")
-                st.text("Метод: walk-forward — каждый матч обновляет Elo, форму, H2H и средние очки/сеты/голы; прогноз следующего матча строится ТОЛЬКО на данных до него.")
-                st.text("Топ-5 рейтинга Elo сейчас:")
-                for nm,rt in tinfo.get("top_elo",[]): st.text(f"   {nm}: {rt}")
-        diag=st.session_state.get("diag_"+sport,{})
-        if diag:
-            with st.expander("🔌 Диагностика источников"):
-                for k,v in diag.items():
-                    if isinstance(v,dict):
-                        st.text(f"{k}:")
-                        for kk,vv in v.items(): st.text(f"   лига {kk}: {vv} будущих матчей")
-                    else: st.text(f"{k}: {v}")
-                for line in st.session_state.get("tdrep_"+sport,[]): st.text(line)
-        cards=[c for c in st.session_state.get("cards_"+sport,[]) if isinstance(c,dict) and isinstance(c.get("P"),dict)]
-        if cards:
-            hot_cards=[c for c in cards if any(m["p"]>=thr for m in c["P"].get("markets",[]))]
-            if hot_cards:
-                st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
-                bank=S["bank"]
-                for i,c in enumerate(hot_cards[:8],1):
-                    P=c["P"]; mk=max(P["markets"],key=lambda m:m["p"])
-                    stars="⭐⭐⭐⭐⭐" if mk["p"]>=0.70 else ("⭐⭐⭐⭐" if mk["p"]>=0.65 else "⭐⭐⭐")
-                    stake=round(bank*0.01,2)
-                    st.markdown(f"<div class='mcard value'><div class='mhead'><span class='chip'>{c['league']}</span>"
-                        f"<span class='chip when'>📅 {c['date']} · {c['when']}</span><span class='badge hot'>{stars}</span></div>"
-                        f"<div class='teams' style='font-size:1.1rem'>{i}. {c['h']} — {c['a']}</div>"
-                        f"<div class='verdict'>➤ Ставь <b class='y'>{mk['name']}</b> при кэфе <b class='y'>≥ {mk['min_ok']:.2f}</b> · "
-                        f"P <b class='g'>{mk['p']*100:.0f}%</b> · сумма <b class='y'>{stake:.2f} у.е.</b> (флэт 1%)<br>"
-                        f"<span style='color:#cbd5e1'>Elo {P['elo'][0]} vs {P['elo'][1]} · форма {P['fh']} / {P['fa']} · H2H: {P['h2h']} · {P['extra']}</span></div></div>",
-                        unsafe_allow_html=True)
-            for c in cards:
-                P=c.get("P") or DEF_P
-                try: html=card_html(c,thr)
-                except Exception as e:
-                    log_err("card_html",e); continue
-                st.markdown(html,unsafe_allow_html=True)
-                if not P.get("markets"): continue
-                kk=f"{sport}_{c['eid']}"
-                cc=st.columns([2,1,1])
-                mkt=cc[0].selectbox("Рынок",[m["name"] for m in P["markets"]],key=f"m{kk}")
-                odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{kk}")
-                prob=next((m["p"] for m in P["markets"] if m["name"]==mkt),0.5)
-                ev=prob*odd-1
-                ev_cls="pos" if ev>0 else "neg"
-                cc[2].markdown(f"<div style='padding-top:26px' class='{ev_cls}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
-                if st.button("➕ В портфель",key=f"b{kk}"):
-                    if ev<=0: st.warning("⛔ EV отрицательный — не добавлено.")
-                    else:
-                        A2=osp_load(); S2=osp_sport(A2,sport)
-                        S2["bets"].append({"match":f"{c['h']} vs {c['a']}","league":c["league"],"sport":sport,
-                            "market":mkt,"pick":mkt,"odds":odd,"prob":prob,
-                            "stake":kelly(prob,odd,S2["bank"]),"status":"pending"})
-                        osp_save(A2); st.success("✅ Добавлено"); st.rerun()
-        else:
-            st.info("В окне дат матчей нет. Увеличь горизонт или загрузи CSV; подробности — в диагностике и блоке обучения выше.")
-    with sub[1]:
-        st.header(f"💼 Портфель {cfg['icon']}")
-        ALLcur=osp_load(); Sc=osp_sport(ALLcur,sport)
-        if not Sc["bets"]: st.info("Пусто.")
-        for i,b in enumerate(Sc["bets"]):
-            icon={"pending":"⏳","won":"🟢","lost":"🔴"}.get(b["status"],"⏳")
-            st.markdown(f"{icon} **{b['match']}** · {b['market']} @ **{b['odds']:.2f}** · {b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%")
-            if b["status"]=="pending":
-                cc=st.columns(2)
-                if cc[0].button("✅ Зашло",key=f"w{sport}{i}"):
-                    A=osp_load(); SS=osp_sport(A,sport); bb=SS["bets"][i]
-                    pr=bb["stake"]*(bb["odds"]-1); bb["status"]="won"
-                    SS["bank"]+=bb["stake"]+pr; SS["stats"]["won"]+=1; SS["stats"]["profit"]+=pr
-                    osp_save(A); st.rerun()
-                if cc[1].button("❌ Мимо",key=f"l{sport}{i}"):
-                    A=osp_load(); SS=osp_sport(A,sport); bb=SS["bets"][i]
-                    bb["status"]="lost"; SS["stats"]["lost"]+=1; SS["stats"]["profit"]-=bb["stake"]
-                    osp_save(A); st.rerun()
-    with sub[2]:
-        st.header(f"📈 Статистика {cfg['icon']}")
-        s=S["stats"]; tot=s["won"]+s["lost"]
-        m1,m2,m3,m4=st.columns(4)
-        m1.metric("Банк вида",f"{S['bank']:.2f}"); m2.metric("Ставок",tot)
-        m3.metric("WinRate",f"{(s['won']/tot*100) if tot else 0:.1f}%")
-        m4.metric("Profit",f"{s['profit']:+.2f}")
-        with st.expander(f"🐞 Лог ошибок ({len(ERR)})"):
-            if ERR:
-                for line in ERR[-30:]: st.text(line)
-            else: st.text("Ошибок нет.")
-    with sub[3]:
-        st.header(f"🧪 Бэктест {cfg['icon']} (walk-forward)")
-        st.caption("Модель учится матч за матчем по хронологии; ставка флэт 1 у.е. на ML при P≥порога."
-                   +(" По теннису кэфы реальные (B365/Pinnacle из tennis-data, 2 сезона)." if sport=="Tennis" else " Кэф = фэйр модели (оценка калибровки)."))
-        b1,b2=st.columns(2)
-        bt_thr=b1.slider("Порог P, %",50,80,60,key=f"bt{sport}")/100
-        bt_max=b2.slider("Макс. матчей",100,2000,400,key=f"bm{sport}")
-        if st.button("▶️ Прогнать",type="primary",key=f"btrun{sport}"):
-            rows=[]
-            if sport=="Tennis":
-                td,_=tennis_data_csv(); rows=td
-            else:
-                ids=[o["idLeague"] for o in (resolved or opts[:4])]
-                for lid in ids[:3]:
-                    rows+=[r for r in ts_league_events(lid) if r["hs"] is not None]
-            rows=[r for r in rows if r["hs"] is not None and r["as"] is not None and pdate(r["date"])]
-            rows.sort(key=lambda r:pdate(r["date"]))[-bt_max:]
-            eng=SportEngine(cfg); log=[]
-            for r in rows:
-                P=eng.predict(r["h"],r["a"])
-                pm=P["markets"][0]
-                if pm["p"]>=bt_thr:
-                    odd=r.get("odds_h") or pm["fair"]
-                    won=r["hs"]>r["as"]
-                    log.append({"p":pm["p"],"odd":odd,"won":won,"pnl":odd-1 if won else -1})
-                pa=P["markets"][1]
-                if pa["p"]>=bt_thr:
-                    odd=r.get("odds_a") or pa["fair"]
-                    won=r["as"]>r["hs"]
-                    log.append({"p":pa["p"],"odd":odd,"won":won,"pnl":odd-1 if won else -1})
-                eng.add(r["h"],r["a"],r["hs"],r["as"])
-            if not log: st.warning("Нет сигналов — снизь порог.")
-            else:
-                n=len(log); w=sum(1 for x in log if x["won"]); pr=sum(x["pnl"] for x in log)
-                c1,c2,c3,c4=st.columns(4)
-                c1.metric("Ставок",n); c2.metric("WinRate",f"{w/n*100:.1f}%")
-                c3.metric("PnL флэт",f"{pr:+.1f}"); c4.metric("Средний кэф",f"{sum(x['odd'] for x in log)/n:.2f}")
-                bins=defaultdict(lambda:[0,0])
-                for x in log:
-                    b0=min(4,int(x["p"]*5)); bins[b0][0]+=1; bins[b0][1]+=1 if x["won"] else 0
-                rr=[{"Прогноз P":f"{b0*20}–{b0*20+20}%","Ставок":c,"Факт":f"{ww/c*100:.0f}%"} for b0,(c,ww) in sorted(bins.items()) if c>=5]
-                if rr: st.dataframe(rr,use_container_width=True,hide_index=True)
-                if pr>0: st.success("✅ Модель в плюсе на истории.")
-                else: st.error("❌ Минус — повысь порог или не ставь этот вид.")
+                cards.append({"sport":sport,"league":lname,"match":f"{h} vs {a}",
+                    "date":d.strftime("%d.%m"),"date_iso":d.strftime("%Y-%m-%d"),
+                    "when":"сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн"),
+                    "rows":rows,"best":None,"tag":tag,"lams":(0,0),"games":len(evs),
+                    "fh":"","fa":"","agree":True,"h2h":0,
+                    "verdict":f"Elo-вероятности: П1 {p1*100:.0f}% / П2 {p2*100:.0f}%{tot_txt} · обучено на {len(evs)} матчах"})
+                if hot and len(bets)<25:
+                    hp=max(hot,key=lambda r_:r_["prob"])
+                    bets.append({"sport":sport,"div":None,"league":lname,"match":f"{h} vs {a}",
+                        "pick":hp["pick"],"odds":hp["odd"],"stake":round(bank*0.01,2),
+                        "prob":hp["prob"],"status":"pending","date_iso":d.strftime("%Y-%m-%d"),"market":"FAIR"})
+            except Exception as ex: log_err(f"scan {sport} row",ex)
+    cards.sort(key=lambda c:(c["tag"]=="hot",c["date"]),reverse=True)
+    return cards,bets,{"trained":trained,"inwin":inwin,"passed":passed},rep
 
-# ================= ГЛАВНЫЕ ВКЛАДКИ =================
-ALL0=osp_load()
-tot_profit=sum(v.get("stats",{}).get("profit",0) for v in ALL0.values() if isinstance(v,dict))
-tot_pending=sum(1 for v in ALL0.values() if isinstance(v,dict) for b in v.get("bets",[]) if b.get("status")=="pending")
+# ---------- синхронизация результатов (ТОЛЬКО сыгранные матчи) ----------
+def auto_settle(D):
+    D2=clone(D);upd=0;today=date.today()
+    season=find_season()
+    cache={}
+    for idx,b in enumerate(D["bets"]):
+        if b["status"]!="pending": continue
+        bd=parse_date(b.get("date_iso",""))
+        if not bd or bd.date()>=today: continue   # матч ещё не начался/идёт — НЕ трогаем
+        if b["sport"]=="⚽ Футбол":
+            div=b.get("div")
+            if not div: continue
+            if div not in cache: cache[div]=load_seasonal(div,season)
+            for r in cache[div]:
+                rd=parse_date(r.get("Date",""))
+                if not rd or abs((rd-bd).days)>1: continue
+                if r.get("HomeTeam")==b["match"].split(" vs ")[0] and r.get("AwayTeam")==b["match"].split(" vs ")[1] and r.get("FTHG") not in (None,""):
+                    hg,ag=float(r["FTHG"]),float(r["FTAG"])
+                    if b["pick"]=="П1": out="won" if hg>ag else "lost"
+                    elif b["pick"]=="X": out="won" if hg==ag else "lost"
+                    elif b["pick"]=="П2": out="won" if hg<ag else "lost"
+                    elif b["pick"]=="ТБ 2.5": out="won" if hg+ag>=3 else "lost"
+                    elif b["pick"]=="ТМ 2.5": out="won" if hg+ag<=2 else "lost"
+                    else: out=None
+                    if out: D2=apply_settle(D2,idx,out); upd+=1
+                    break
+        else:
+            cfg=SPORTS.get(b["sport"])
+            if not cfg: continue
+            for lid,lname in tsdb_leagues_for(cfg):
+                done=False
+                for e in tsdb_events(lid,"past"):
+                    ed=parse_date(e.get("dateEvent",""))
+                    if not ed or abs((ed-bd).days)>1: continue
+                    if e.get("strHomeTeam")==b["match"].split(" vs ")[0] and e.get("strAwayTeam")==b["match"].split(" vs ")[1]:
+                        s1,s2=_f(e.get("intHomeScore")),_f(e.get("intAwayScore"))
+                        if s1 is None or s2 is None: continue
+                        tot=s1+s2
+                        if b["pick"]=="П1": out="won" if s1>s2 else ("push" if s1==s2 else "lost")
+                        elif b["pick"]=="П2": out="won" if s2>s1 else ("push" if s1==s2 else "lost")
+                        elif b["pick"].startswith("ТБ"): out="won" if tot>float(b["pick"].split()[1]) else "lost"
+                        elif b["pick"].startswith("ТМ"): out="won" if tot<float(b["pick"].split()[1]) else "lost"
+                        else: out=None
+                        if out: D2=apply_settle(D2,idx,out); upd+=1
+                        done=True; break
+                if done: break
+    return D2,upd
+
+# ---------- рендер ----------
+def render_card(c,PR):
+    val=c["best"] is not None; hot=c["tag"]=="hot" and not val
+    badge=f"<span class='badge {'val' if val else ('hot' if hot else 'no')}'>{'🟢 ВАЛУЙ' if val else ('🔥 P≥'+str(int(PR['thr']*100))+'%' if hot else 'фон')}</span>"
+    rows=""
+    for rw in c["rows"]:
+        ev_s=f"<span class='{'evpos' if rw['ev']>0 else 'evneg'}'>{rw['ev']*100:+.1f}%</span>" if rw["ev"] is not None else "<span style='color:#64748b'>—</span>"
+        mk="<span class='ok'>✅</span>" if rw["ok"] else "<span class='nok'>·</span>"
+        rows+=(f"<div class='mrow'><span style='color:#94a3b8'>{rw['pick']}</span>"
+               f"<div style='height:6px;background:rgba(148,163,184,.2);border-radius:99px;overflow:hidden;margin-top:6px'>"
+               f"<i style='display:block;height:100%;width:{min(100,rw['prob']*100):.0f}%;background:linear-gradient(90deg,#38bdf8,#4ade80)'></i></div>"
+               f"<span style='color:#4ade80;font-weight:700'>{rw['prob']*100:.1f}%</span>"
+               f"<span style='color:#fff;font-weight:700'>{rw['odd'] if rw['odd'] else '—'}</span>{ev_s}{mk}</div>")
+    best_html=""
+    if val:
+        stk=kelly(c["best"][3],c["best"][1],0,0)  # placeholder
+        best_html=f"💰 Ставка: <b>{c['best'][0]}</b> @ <b>{c['best'][1]:.2f}</b> (EV {c['best'][2]*100:+.1f}%)"
+    return f"""
+<div class="mcard {'value' if val else ('hot' if hot else '')}">
+ {badge}<span class="chip">{c['sport']} · {c['league']}</span><span class="chip when">📅 {c['date']} · {c['when']}</span>
+ <div class="teams">{c['match'].split(' vs ')[0]} <span>—</span> {c['match'].split(' vs ')[1]}</div>
+ <div class="verdict">🤖 {c['verdict']}</div>
+ {rows}
+ <div class="mfoot">📚 игр в базе: <b>{c['games']}</b>{' · '+best_html if best_html else ''}</div>
+</div>"""
+
+# ================= UI =================
+if "data" not in st.session_state: st.session_state.data=load_data()
+D=st.session_state.data
+pend=sum(1 for b in D["bets"] if b["status"]=="pending")
 st.markdown(f"""
-<div style="padding:14px 22px;border-radius:18px;margin-bottom:12px;border:1px solid rgba(56,189,248,.35);
- background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(30,58,138,.6) 60%,rgba(6,78,59,.6));">
- <h1 style="margin:0;font-size:2rem;font-weight:900;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.9)">🏟 ALL-SPORTS BET PRO</h1>
- <p style="margin:4px 0 0;color:#dbeafe;font-size:.9rem">Футбол · Теннис · Баскетбол · Волейбол · Хоккей — у каждого вида своё обучение, банк, статистика и бэктест</p>
- <p style="margin:6px 0 0;color:#94a3b8;font-size:.85rem">Другие виды: ставок в работе {tot_pending} · суммарная прибыль {tot_profit:+.0f} у.е.</p>
+<div class="hero">
+ <h1>🏟 NEURO BET PRO Multi</h1>
+ <p>Футбол · Теннис · Баскетбол · Волейбол · Хоккей — у каждого вида своё обучение, банк общий, портфель общий</p>
+ <div class="kpis">
+  <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
+  <div class="kpi"><div class="t">В работе</div><div class="v">{pend}</div></div>
+  <div class="kpi"><div class="t">Прибыль</div><div class="v {'g' if D['stats']['profit']>=0 else 'r'}">{D['stats']['profit']:+.0f}</div></div>
+  <div class="kpi"><div class="t">Ошибок</div><div class="v {'r' if ERR else 'g'}">{len(ERR)}</div></div>
+ </div>
 </div>""",unsafe_allow_html=True)
 
-top=st.tabs(["⚽ Футбол","🎾 Теннис","🏀 Баскетбол","🏐 Волейбол","🏒 Хоккей"])
-with top[0]:
-    try:
-        exec(compile(open("football_v7.py",encoding="utf-8").read(),"football_v7.py","exec"),globals())
-    except FileNotFoundError:
-        st.error("Положи файл football_v7.py (твой прежний App.py без изменений) рядом с этим App.py")
-with top[1]: render_sport("Tennis")
-with top[2]: render_sport("Basketball")
-with top[3]: render_sport("Volleyball")
-with top[4]: render_sport("Ice Hockey")
+with st.sidebar:
+    st.header("⚙️ Настройки")
+    kelly_frac=st.slider("Келли (дробь)",0.10,0.40,0.25,0.05)
+    thr=st.slider("Порог проходимости, %",50,85,60)/100
+    min_edge=st.slider("Edge (футбол), п.п.",0,8,2)/100
+    min_ev=st.slider("Мин. EV (футбол), %",0,10,2)/100
+    use_dis=st.checkbox("Футбол: только расхождения с рынком",value=True)
+    PR=dict(thr=thr,edge=min_edge,ev=min_ev/100,dis=use_dis,w_market=0.40,min_games=8,kelly=kelly_frac)
+    with st.expander("🐞 Лог ошибок"):
+        if ERR:
+            for line in ERR[-40:]: st.text(line)
+        else: st.text("Ошибок нет.")
+    if st.button("🔄 Полный сброс"):
+        st.session_state.data=new_data();save_data(st.session_state.data);st.cache_data.clear();st.rerun()
+
+tab1,tab2,tab3,tab4=st.tabs(["🛰 Сканер","💼 Портфель","📈 Статистика","🧪 Бэктест"])
+
+with tab1:
+    sport=st.selectbox("Вид спорта",list(SPORTS.keys()),index=0)
+    cfg=SPORTS[sport]
+    c1,c2=st.columns([4,1])
+    days=c1.slider("Горизонт, дней",1,21,10)
+    scan_btn=c2.button(f"⚡ СКАН {sport.split()[0]}",type="primary")
+    if scan_btn:
+        today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+        limit=today+timedelta(days=days)
+        with st.spinner(f"Обучение и скан: {sport}..."):
+            if cfg["src"]=="fd":
+                cards,new_bets,funnel,rep=scan_football(PR,today,limit,D["bank"])
+            else:
+                cards,new_bets,funnel,rep=scan_sport(sport,cfg,PR,today,limit,D["bank"])
+        D2=clone(D)
+        D2["cards"][sport]=cards
+        D2["funnel"][sport]=funnel
+        D2["report"][sport]=rep
+        exist={b["match"]+"|"+b["pick"] for b in D2["bets"]}
+        add=[b for b in new_bets if b["match"]+"|"+b["pick"] not in exist]
+        D2["bets"]=D2["bets"]+add
+        st.session_state.data=D2;save_data(D2)
+        st.success(f"Матчей в окне: {funnel['inwin']} · сигналов: {funnel['passed']} · в портфель добавлено: {len(add)}")
+        st.rerun()
+    fn=D.get("funnel",{}).get(sport)
+    if fn: st.caption(f"Обучено матчей: {fn['trained']} · в окне дат: {fn['inwin']} · сигналов: {fn['passed']}")
+    with st.expander("🔌 Диагностика источников"):
+        for line in D.get("report",{}).get(sport,[]): st.text(line)
+    cards=D.get("cards",{}).get(sport,[])
+    if cards:
+        for c in cards:
+            st.markdown(render_card(c,PR),unsafe_allow_html=True)
+    else:
+        st.info("Нажми ⚡ СКАН. Если матчей нет — смотри диагностику выше.")
+
+with tab2:
+    st.header("💼 Портфель (все виды)")
+    if st.button("🔄 Автосинхронизация результатов"):
+        D2,upd=auto_settle(D)
+        st.session_state.data=D2;save_data(D2)
+        st.success(f"Закрыто только СЫГРАННЫХ матчей: {upd}");st.rerun()
+    st.caption("⚠️ Авто-закрытие срабатывает только если дата матча < сегодня и найден реальный счёт. Идущие и будущие матчи не трогаются.")
+    fs=st.selectbox("Фильтр по виду",["Все"]+list(SPORTS.keys()))
+    bets=[(i,b) for i,b in enumerate(D["bets"]) if fs=="Все" or b["sport"]==fs]
+    if not bets: st.info("Пусто.")
+    for i,b in bets:
+        icon={"pending":"⏳","won":"🟢","lost":"🔴","push":"⚪"}.get(b["status"],"⏳")
+        st.markdown(f"{icon} **{b['sport']} · {b['match']}** · **{b['pick']}** @ **{b['odds']:.2f}** · {b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}% · {b.get('date_iso','')}")
+        if b["status"]=="pending":
+            cc=st.columns(2)
+            if cc[0].button("✅ Зашло",key=f"w{i}"):
+                st.session_state.data=apply_settle(D,i,"won");save_data(st.session_state.data);st.rerun()
+            if cc[1].button("❌ Мимо",key=f"l{i}"):
+                st.session_state.data=apply_settle(D,i,"lost");save_data(st.session_state.data);st.rerun()
+
+with tab3:
+    st.header("📈 Статистика")
+    s=D["stats"];tot=s["won"]+s["lost"]
+    m1,m2,m3,m4=st.columns(4)
+    m1.metric("Банк",f"{D['bank']:.2f}");m2.metric("Ставок",tot)
+    m3.metric("WinRate",f"{(s['won']/tot*100) if tot else 0:.1f}%");m4.metric("Profit",f"{s['profit']:+.2f}")
+    by=defaultdict(lambda:[0,0,0.0])
+    for b in D["bets"]:
+        if b["status"] in ("won","lost"):
+            by[b["sport"]][0]+=1
+            by[b["sport"]][1]+=1 if b["status"]=="won" else 0
+            by[b["sport"]][2]+= b["stake"]*(b["odds"]-1) if b["status"]=="won" else -b["stake"]
+    if by:
+        rows=[{"Вид":k,"Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"} for k,v in by.items()]
+        st.dataframe(rows,use_container_width=True,hide_index=True)
+
+with tab4:
+    st.header("🧪 Бэктест")
+    bs=st.selectbox("Вид",list(SPORTS.keys()),key="bt")
+    if st.button("▶️ Прогнать",type="primary"):
+        cfg=SPORTS[bs]
+        log=[]
+        if cfg["src"]=="fd":
+            season=find_season();rows_=load_seasonal("E0",season)
+            rows_=[r for r in rows_ if r.get("FTHG") not in (None,"") and parse_date(r.get("Date",""))]
+            rows_.sort(key=lambda r: parse_date(r["Date"]))
+            eng=Engine()
+            for r in rows_:
+                h,a=r["HomeTeam"],r["AwayTeam"];hg,ag=float(r["FTHG"]),float(r["FTAG"])
+                P=eng.predict(h,a)
+                o=best_odd(r,"П1")
+                if o: log.append({"prob":P["p1"],"odd":o,"won":hg>ag})
+                eng.learn_step(h,a,hg,ag,r)
+        else:
+            eng=None
+            for lid,lname in tsdb_leagues_for(cfg):
+                e2=BinElo(cfg.get("k",24),cfg.get("ha",0),cfg.get("div",150))
+                evs=[]
+                for e in tsdb_events(lid,"past"):
+                    d=parse_date(e.get("dateEvent",""));s1,s2=_f(e.get("intHomeScore")),_f(e.get("intAwayScore"))
+                    if d and s1 is not None and s2 is not None: evs.append((d,e.get("strHomeTeam",""),e.get("strAwayTeam",""),s1,s2))
+                evs.sort(key=lambda x:x[0])
+                for d,h,a,s1,s2 in evs:
+                    p1,p2=e2.predict(h,a)
+                    pp=p1 if s1>s2 else p2
+                    log.append({"prob":max(p1,p2),"odd":round(1/max(p1,p2),2),"won":(s1>s2 and p1>=p2) or (s2>s1 and p2>p1)})
+                    e2.add(h,a,s1,s2)
+        if not log: st.warning("Нет данных для бэктеста.")
+        else:
+            n=len(log);w=sum(1 for x in log if x["won"])
+            avg_p=sum(x["prob"] for x in log)/n
+            profit=sum((x["odd"]-1) if x["won"] else -1 for x in log)
+            st.metric("Ставок",n)
+            st.markdown(f"**WinRate:** {w/n*100:.1f}% · **Средняя предсказанная P:** {avg_p*100:.1f}% · **PnL флэт по фейр-кэфам:** {profit:+.1f} у.е.")
+            if abs(w/n-avg_p)<0.05: st.success("✅ Модель калибрована: предсказанная вероятность совпадает с фактической.")
+            else: st.warning("⚠️ Калибровка смещена — модель переоценивает или недооценивает фаворитов.")
