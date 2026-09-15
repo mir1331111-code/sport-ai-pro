@@ -77,6 +77,12 @@ LEAGUES = [
     'soccer_turkey_super_lig'
 ]
 
+# Список турниров, считающихся кубковыми / еврокубками (для желтой подсветки)
+CUP_LEAGUES = [
+    'soccer_uefa_champions_league',
+    'soccer_uefa_europa_conference_league'
+]
+
 # --- АЛГОРИТМИЧЕСКИЙ ГЕНЕРАТОР ОБОСНОВАНИЙ ---
 def get_smart_reason(m, best_edge):
     pick, prob, odd, edge = best_edge
@@ -164,12 +170,10 @@ def update_pending_results(odds_key):
                                 if b["status"] == "pending" and b.get("home") == ev_home and b.get("away") == ev_away:
                                     if b["pick"] == winner:
                                         st.session_state.app_data["bets"][idx]["status"] = "won"
-                                        # Возвращаем полную выплату, так как ставка уже была списана при оформлении
                                         payout = b['stake'] * b['odd']
                                         st.session_state.app_data["bank"] += payout
                                     else:
                                         st.session_state.app_data["bets"][idx]["status"] = "lost"
-                                        # При проигрыше деньги не возвращаются (уже списаны)
                                     updated_count += 1
         except:
             pass
@@ -291,12 +295,23 @@ with tab1:
         st.markdown(f"### 🏆 Рекомендации матчей (Обученный ИИ)")
         for idx, m in enumerate(st.session_state.current_board):
             status = m['status']
-            border_color = "#28a745" if status == "green" else ("#17a2b8" if status == "blue" else "#dc3545")
-            box_color = "rgba(40, 167, 69, 0.15)" if status == "green" else ("rgba(23, 162, 184, 0.15)" if status == "blue" else "rgba(220, 53, 69, 0.15)")
+            league_name = m['league']
+            is_cup = league_name in CUP_LEAGUES
+            
+            # Если это кубковый матч, подкрашиваем в желтый цвет предупреждения
+            if is_cup:
+                border_color = "#ffc107"
+                box_color = "rgba(255, 193, 7, 0.15)"
+                cup_badge = "🏆 **[КУБКОВЫЙ / ЕВРОКУБКОВЫЙ МАТЧ]** — ⚠️ *Повышенный риск ротации состава!*"
+            else:
+                border_color = "#28a745" if status == "green" else ("#17a2b8" if status == "blue" else "#dc3545")
+                box_color = "rgba(40, 167, 69, 0.15)" if status == "green" else ("rgba(23, 162, 184, 0.15)" if status == "blue" else "rgba(220, 53, 69, 0.15)")
+                cup_badge = ""
 
             st.markdown(f"""
             <div style="background-color: {box_color}; border-left: 6px solid {border_color}; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
-                <h4>{idx+1}. {m['home']} vs {m['away']} <span style="font-size: 12px; color: gray;">({m['league']})</span></h4>
+                {f"<p style='color: #856404; font-weight: bold; margin-bottom: 5px;'>{cup_badge}</p>" if is_cup else ""}
+                <h4>{idx+1}. {m['home']} vs {m['away']} <span style="font-size: 12px; color: gray;">({league_name})</span></h4>
                 <p><b>Время (UTC):</b> {m['time']} | <b>Котировки:</b> П1: {m['bh']} | Х: {m['bd']} | П2: {m['ba']}</p>
                 <p><b>Вероятности (ИИ):</b> Хозяева: {m['p_h']*100:.1f}% | Ничья: {m['p_d']*100:.1f}% | Гости: {m['p_a']*100:.1f}%</p>
                 <p><i>{m['ai_text']}</i></p>
@@ -306,7 +321,6 @@ with tab1:
             if m['status'] != "red":
                 if st.button(f"Поставить 100 у.е. на мат. №{idx+1}", key=f"bet_{idx}"):
                     if st.session_state.app_data["bank"] >= STAKE_SIZE:
-                        # Списываем сумму ставки с банка сразу
                         st.session_state.app_data["bank"] -= STAKE_SIZE
                         
                         bet_record = {
