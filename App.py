@@ -4,23 +4,29 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Bagvaizer foot v5", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v6", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 MATRIX_N=9
 REFIT_PLATT_EVERY=150
 REFIT_STRUCT_EVERY=300
 W_SHOTS=0.35
-W_MARKET=0.40
 DISAGREE_MIN=0.03
 
-DIV_NAMES={"E0":"🏴󠁧󠁢󠁥󠁮󠁧 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
- "D1":"🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
-TSDB_LEAGUES={"432":"🏴󠁢󠁮󠁿 АПЛ","434":"🇪🇸 Ла Лига","435":"🇮🇹 Серия A","436":"🇩🇪 Бундеслига",
+DIV_NAMES={"E0":"🏴󠁢󠁥󠁧 АПЛ","E1":"󠁧󠁥󠁧 Чемпионшип","SC0":"🏴󠁧󠁢󠁣󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷 РПЛ","BR1":"🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+TSDB_LEAGUES={"432":"🏴󠁧󠁥󠁧 АПЛ","434":"🇪🇸 Ла Лига","435":"🇮🇹 Серия A","436":"🇩🇪 Бундеслига",
  "437":"🇫🇷 Лига 1","448":"🏆 ЛЧ","442":"🇺🇸 MLS","439":"🇵🇹 Примейра"}
-CORRIDORS={"1X2":(1.40,4.20),"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
+
+# ПРЕСЕТЫ ЦЕЛИ: проходимость / баланс / value
+GOALS={
+ "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
+ "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
+ "💰 Value":dict(w_market=0.20,thr=0.45,dis=True,edge=0.03,ev=0.02,corr=(1.40,4.20),min_games=6),
+}
+CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
 
 st.markdown("""
 <style>
@@ -32,6 +38,18 @@ div[data-testid="stMetricValue"]{color:#f8fafc !important;}
 div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
 .stTabs button p{color:#cbd5e1 !important;}
 header,#MainMenu,footer{visibility:hidden}
+/* САЙДБАР: чёрный и читаемый */
+section[data-testid="stSidebar"]{background:#0b0f1a !important;border-right:1px solid rgba(148,163,184,.2)}
+section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label,
+section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label{color:#e2e8f0 !important;}
+section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,section[data-testid="stSidebar"] h3{color:#f8fafc !important;}
+section[data-testid="stSidebar"] div[data-testid="stMetricValue"]{color:#facc15 !important;}
+section[data-testid="stSidebar"] div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
+section[data-testid="stSidebar"] .stCaption,section[data-testid="stSidebar"] .stCaption *{color:#94a3b8 !important;}
+section[data-testid="stSidebar"] div[data-baseweb="select"]>div{background:#111827 !important;color:#e2e8f0 !important;border:1px solid rgba(148,163,184,.35)}
+section[data-testid="stSidebar"] div[data-baseweb="select"] span{color:#e2e8f0 !important;}
 .hero{padding:20px 26px;border-radius:22px;margin-bottom:16px;border:1px solid rgba(56,189,248,.35);
  background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(6,78,59,.80) 55%,rgba(120,53,15,.75)),
  url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1600&auto=format&fit=crop') center/cover;}
@@ -166,22 +184,21 @@ class Engine:
     def predict(self,h,a):
         N=MATRIX_N
         lh_g=self._m(self.hg,1.5);la_g=self._m(self.ag,1.2)
-        lh_s_base=self._m(self.hsth,4.5);la_s_base=self._m(self.hsta,4.0)
+        lh_s=self._m(self.hsth,4.5);la_s=self._m(self.hsta,4.0)
         sh,sa=self.st[h],self.st[a]
         ah_=self._m(sh["hs"],lh_g)/lh_g;dh_=self._m(sh["hc"],la_g)/la_g
         aa_=self._m(sa["as"],la_g)/la_g;da_=self._m(sa["ac"],lh_g)/lh_g
         fh,fa=self._form(h),self._form(a)
         lam_g_h=max(0.3,min(5.0,lh_g*ah_*da_*1.10*(0.85+0.30*fh)))
         lam_g_a=max(0.25,min(4.5,la_g*aa_*dh_*0.95*(0.85+0.30*fa)))
-        conv_h=lh_g/max(0.5,lh_s_base);conv_a=la_g/max(0.5,la_s_base)
-        att_sh_h=self._m(sh["hst_h"],lh_s_base)/lh_s_base
-        def_sh_a=self._m(sa["hstc_a"],lh_s_base)/lh_s_base
-        att_sh_a=self._m(sa["hst_a"],la_s_base)/la_s_base
-        def_sh_h=self._m(sh["hstc_h"],la_s_base)/la_s_base
-        lam_s_h=max(0.3,min(5.0,lh_s_base*conv_h*att_sh_h*def_sh_a*(0.85+0.30*fh)))
-        lam_s_a=max(0.25,min(4.5,la_s_base*conv_a*att_sh_a*def_sh_h*(0.85+0.30*fa)))
+        conv_h=lh_g/max(0.5,lh_s);conv_a=la_g/max(0.5,la_s)
+        att_sh_h=self._m(sh["hst_h"],lh_s)/lh_s;def_sh_a=self._m(sa["hstc_a"],lh_s)/lh_s
+        att_sh_a=self._m(sa["hst_a"],la_s)/la_s;def_sh_h=self._m(sh["hstc_h"],la_s)/la_s
+        lam_s_h=max(0.3,min(5.0,lh_s*conv_h*att_sh_h*def_sh_a*(0.85+0.30*fh)))
+        lam_s_a=max(0.25,min(4.5,la_s*conv_a*att_sh_a*def_sh_h*(0.85+0.30*fa)))
         lam_h=(1-W_SHOTS)*lam_g_h+W_SHOTS*lam_s_h
         lam_a=(1-W_SHOTS)*lam_g_a+W_SHOTS*lam_s_a
+        agree=(lam_g_h-lam_g_a)*(lam_s_h-lam_s_a)>0   # движки согласны о фаворите
         lam_h,lam_a,h2h_n=self.h2h_adjust(h,a,lam_h,lam_a)
         e=1/(1+10**((self.elo.get(a,1500)-self.elo.get(h,1500)-60)/400))
         pde=0.20+0.12*(1-abs(e-0.5)*2)
@@ -204,7 +221,7 @@ class Engine:
         games=min(len(sh["hs"])+len(sh["as"]),len(sa["hs"])+len(sa["as"]))
         corners=((self._m(sh["cfh"],5)+self._m(sa["caa"],5))/2,(self._m(sa["cfa"],5)+self._m(sh["cah"],5))/2)
         yellows=((self._m(sh["yfh"],2)+self._m(sa["yaa"],2))/2,(self._m(sa["yfa"],2)+self._m(sh["yah"],2))/2)
-        return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,
+        return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,"agree":agree,
                 "lams":(lam_h,lam_a),"lams_g":(lam_g_h,lam_g_a),"lams_s":(lam_s_h,lam_s_a),
                 "games":games,"corners":corners,"yellows":yellows,"h2h_n":h2h_n,"e":e,"pde":pde}
     def learn_step(self,h,a,hg,ag,row=None,match_num=None,total=None):
@@ -306,7 +323,7 @@ def market_probs(row):
     if not(ph and px and pa): return None
     i1,ix,ia=1/ph,1/px,1/pa;s=i1+ix+ia
     return (i1/s,ix/s,ia/s)
-def blend_market(P,mkt,w=W_MARKET):
+def blend_market(P,mkt,w):
     if not mkt: return P
     P=dict(P)
     P["p1"]=(1-w)*P["p1"]+w*mkt[0];P["x"]=(1-w)*P["x"]+w*mkt[1];P["p2"]=(1-w)*P["p2"]+w*mkt[2]
@@ -326,7 +343,6 @@ def settle_ah(pick,hg,ag):
     if abs(res)<=0.001: return "push"
     return False
 
-# ================= ИИ-ВЕРДИКТ (БЕЗОПАСНЫЙ) =================
 def _odd_s(rw):
     o=rw.get("odd")
     if o: return f"{o:.2f}"
@@ -345,31 +361,16 @@ def ai_verdict(c):
     avoid=prep(min(x12,key=lambda r:r["prob"])) if x12 else None
     lh,la=c["lams"];lg=c["lams_g"];ls=c["lams_s"]
     parts=[f"Движок голов {lg[0]:.1f}–{lg[1]:.1f}, движок ударов {ls[0]:.1f}–{ls[1]:.1f} → итог xG {lh:.1f}–{la:.1f}."]
+    if not c.get("agree",True): parts.append("⚠️ Движки не согласны о фаворите — 1X2 пропущен, смотри тоталы.")
     if c.get("fh","—")!="—": parts.append(f"Форма {c['fh']} против {c['fa']}.")
     m=c.get("mkt");gap=None
     if m:
         gap=max(abs(c["p1"]-m[0]),abs(c["x"]-m[1]),abs(c["p2"]-m[2]))
         parts.append(f"Pinnacle: П1 {m[0]*100:.0f}/X {m[1]*100:.0f}/П2 {m[2]*100:.0f}%; расхождение {gap*100:.0f} п.п. — "
-                     +("модель видит alpha" if gap>=DISAGREE_MIN else "консенсус с рынком, alpha мала")+".")
+                     +("модель видит alpha" if gap>=DISAGREE_MIN else "консенсус с рынком")+".")
     if c.get("h2h_n",0)>=3: parts.append(f"H2H: {c['h2h_n']} встреч учтены.")
-    if c.get("cup"): parts.append("Кубковый матч: темп ниже, тоталы осторожнее.")
+    if c.get("cup"): parts.append("Кубковый матч: темп ниже.")
     return main,alt,avoid," ".join(parts),gap
-
-def make_reason(c,rw):
-    parts=[];lh,la=c["lams"];pick=rw["pick"];prob=rw["prob"]
-    if rw["mkt"]=="1X2":
-        if pick=="П1": parts.append(f"xG {lh:.1f} vs {la:.1f} в пользу хозяев")
-        elif pick=="П2": parts.append(f"xG {la:.1f} vs {lh:.1f} в пользу гостей")
-        else: parts.append(f"ничья в {prob*100:.0f}% симуляций")
-    elif rw["mkt"]=="OU":
-        parts.append(f"ожидаемый тотал {lh+la:.1f} — "+("выше 2.5" if pick=="ТБ 2.5" else "ниже 2.5"))
-    elif rw["mkt"]=="STAT":
-        parts.append("обе забьют / двойной шанс по матрице голов")
-    elif rw["mkt"]=="AH":
-        parts.append("фора покрывается матрицей счёта")
-    if rw["odd"]: parts.append(f"кэф {rw['odd']:.2f} vs фейр {1/prob:.2f} (EV {rw['ev']*100:+.0f}%)")
-    else: parts.append(f"фейр {1/prob:.2f} — ищи кэф выше")
-    return " · ".join(parts[:2])
 
 def stars_for(rw,thr):
     if rw["ok"]:
@@ -393,9 +394,8 @@ def build_picks(cards,thr,bank,kelly_frac):
         stake=kelly(row["prob"],row["odd"],bank,kelly_frac) if row["odd"] else round(bank*0.01,2)
         picks.append({"league":c["league"],"match":c["match"],"date":c["date"],"when":c["when"],
                       "pick":row["pick"],"prob":row["prob"],"odd":row["odd"],
-                      "odd_s":row["odd_s"] if row.get("odd_s") else _odd_s(row),
-                      "stake":stake,"stars":stars_for(row,thr),"type":ptype,"verdict":text,
-                      "main":main,"alt":alt,"avoid":avoid,
+                      "odd_s":_odd_s(row),"stake":stake,"stars":stars_for(row,thr),
+                      "type":ptype,"verdict":text,"main":main,"alt":alt,"avoid":avoid,
                       "score":(row["ev"] if ptype=="value" else 0)+row["prob"]})
     picks.sort(key=lambda p:(p["type"]=="value",p["score"]),reverse=True)
     return picks[:10]
@@ -408,7 +408,7 @@ def load_data():
             "stats":{"won":0,"lost":0,"profit":0,"push":0}}
 def save_data(d): json.dump(d,open(HISTORY_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
 
-def backtest(div,season,min_edge,stake_mode,use_dis=True):
+def backtest(div,season,PR,min_edge,stake_mode):
     rows=[r for r in load_seasonal(div,season)
           if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,"") and parse_date(r.get("Date",""))]
     rows.sort(key=lambda r: parse_date(r["Date"]))
@@ -420,14 +420,15 @@ def backtest(div,season,min_edge,stake_mode,use_dis=True):
         try:
             P=eng.predict(h,a)
             mkt=market_probs(r)
-            P=blend_market(P,mkt)
+            P=blend_market(P,mkt,PR["w_market"])
             gap=max(abs(P["p1"]-mkt[0]),abs(P["x"]-mkt[1]),abs(P["p2"]-mkt[2])) if mkt else None
             cands=[("1X2","П1",P["p1"],best_odd(r,"П1")),("1X2","X",P["x"],best_odd(r,"X")),
                    ("1X2","П2",P["p2"],best_odd(r,"П2")),
                    ("OU","ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),("OU","ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5"))]
             for mktk,pick,prob,o in cands:
-                if not o or not (1.4<=o<=4.2): continue
-                if use_dis and mkt and gap is not None and gap<DISAGREE_MIN: continue
+                if not o or not (PR["corr"][0]<=o<=PR["corr"][1] if mktk=="1X2" else 1.4<=o<=4.2): continue
+                if mktk=="1X2" and not P["agree"]: continue
+                if PR["dis"] and mkt and gap is not None and gap<DISAGREE_MIN: continue
                 if prob-1/o<min_edge: continue
                 won=False
                 if pick=="П1": won=hg>ag
@@ -445,13 +446,28 @@ def backtest(div,season,min_edge,stake_mode,use_dis=True):
         except Exception: pass
     return log,eng
 
+LEGEND="""
+**🟢 ВАЛУЙ** — EV>0 против кэфа, ставка авто-ушла в портфель ·
+**🔥 P≥N%** — вероятность выше порога проходимости ·
+**✅ в строке рынка** — прошёл все фильтры (коридор кэфа, edge, EV, согласие движков) ·
+**🔥 в строке рынка** — ставка по проходимости (кэф может быть невыгоден) ·
+**· / ⛔** — не прошёл фильтры ·
+**⭐** — рейтинг уверенности (5⭐ = EV≥10% или P≥70%) ·
+**🤖** — ИИ-вердикт: ✅ основная / 🔁 альтернатива / ⛔ избегать ·
+**⚠️ мало данных** — игр в базе меньше порога режима ·
+**🏆 Кубок** — λ снижены · **⚔ H2H** — учтены личные встречи ·
+**P / Безуб. / EV** — вероятность модели / безубыточность кэфа / перевес ·
+**💰 Келли** — сумма ставки · **⏳🟢🔴⚪** — ожидает/выиграла/проиграла/возврат ·
+**📚 игр** — матчей команды в базе · **🚩 угл / 🟨 жёл** — ожидания для ручных ставок
+"""
+
 # ================= UI =================
 if "data" not in st.session_state: st.session_state.data=load_data()
 D=st.session_state.data
 st.markdown(f"""
 <div class="hero">
- <h1>🏟 NEURO BET PRO v5</h1>
- <p>2 движка (голы+удары) · Pinnacle-якорь · disagreement-фильтр alpha · Platt · retraining · bandit · ИИ-вердикт в каждом матче</p>
+ <h1>🏟 NEURO BET PRO v6</h1>
+ <p>Режимы цели (проходимость/баланс/value) · 2 движка · Pinnacle-якорь · согласие движков · блэклист рынков из бэктеста · ИИ-вердикт</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -462,16 +478,24 @@ st.markdown(f"""
 
 with st.sidebar:
     st.header("⚙️ Настройки")
+    goal=st.selectbox("🎯 Цель стратегии",list(GOALS.keys()),index=0)
+    PR=GOALS[goal]
     kelly_frac=st.slider("Келли (дробь)",0.10,0.40,0.25,0.05)
     mode=st.radio("Режим ленты",["🎯 Высокая проходимость","💰 Валуи (EV)"])
-    thr=st.slider("Порог проходимости, %",50,80,60)/100
-    min_edge=st.slider("Edge для валуев, п.п.",0,8,2)/100
-    min_ev=st.slider("Мин. EV, %",0,10,2)/100
-    use_dis=st.checkbox("Только расхождения с рынком (alpha)",value=True)
+    thr=st.slider("Порог проходимости, %",50,80,int(PR["thr"]*100))/100
+    min_edge=st.slider("Edge, п.п.",0,8,int(PR["edge"]*100))/100
+    min_ev=st.slider("Мин. EV, %",0,10,int(PR["ev"]*100))/100
+    use_dis=st.checkbox("Только расхождения с рынком (alpha)",value=PR["dis"])
+    use_bl=st.checkbox("Блэклист рынков из бэктеста",value=True)
+    st.caption(f"Пресет «{goal}»: якорь рынка {PR['w_market']*100:.0f}%, коридор 1X2 {PR['corr'][0]}–{PR['corr'][1]}, мин. игр {PR['min_games']}")
+    bl=D.get("meta",{}).get("blacklist",[])
+    if bl: st.caption("🚫 В блэклисте: "+", ".join(bl))
     meta=D.get("meta",{})
     if meta:
         st.markdown("**🧠 Самообучение**")
         st.caption(f"Platt a={meta.get('platt_a',0):.2f} b={meta.get('platt_b',1):.2f} · rho={meta.get('rho',-0.13):.2f} · DC={meta.get('w_dc',0.72):.2f}")
+    with st.expander("📖 Легенда значков"):
+        st.markdown(LEGEND)
     if st.button("🔄 Сброс"):
         st.session_state.data={"bank":10000.0,"bets":[],"cards":[],"picks":[],"funnel":None,"report":[],"meta":{},
                                "stats":{"won":0,"lost":0,"profit":0,"push":0}}
@@ -481,6 +505,7 @@ tab1,tab2,tab3,tab4,tab5=st.tabs(["🏟 Сканер","💼 Портфель","�
 
 with tab1:
     c1,c2=st.columns([4,1]);days=c1.slider("Горизонт, дней",1,21,10);scan=c2.button("⚡ СКАН",type="primary")
+    blacklist=set(D.get("meta",{}).get("blacklist",[])) if use_bl else set()
     if scan:
         season=find_season();pseason=prev_season(season)
         today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
@@ -503,7 +528,8 @@ with tab1:
             prog.progress((i+1)/n)
         prog.empty()
         D["meta"]={"platt_a":round(engine.platt_a,3),"platt_b":round(engine.platt_b,3),
-                   "rho":round(engine.rho,3),"w_dc":round(engine.w_dc,3)}
+                   "rho":round(engine.rho,3),"w_dc":round(engine.w_dc,3),
+                   "blacklist":D.get("meta",{}).get("blacklist",[])}
         cards=[];passed=0;inwin=0;withodds=0;added=0
         existing={b["match"]+"|"+b["pick"] for b in D["bets"]}
         for r in fix+tsd:
@@ -515,7 +541,7 @@ with tab1:
                 inwin+=1
                 P=engine.predict(h,a)
                 mkt=market_probs(r)
-                P=blend_market(P,mkt)
+                P=blend_market(P,mkt,PR["w_market"])
                 league=r.get("League") or DIV_NAMES.get(r.get("Div"),"Лига "+str(r.get("Div")))
                 if any(best_odd(r,p) for p in ("П1","ТБ 2.5")): withodds+=1
                 if is_cup(r): P["lams"]=(max(0.3,P["lams"][0]-0.15),max(0.25,P["lams"][1]-0.15))
@@ -531,13 +557,16 @@ with tab1:
                     pc=sum(P["M"][i][j] for i in range(MATRIX_N) for j in range(MATRIX_N) if (i-j+ahh)>0.001)
                     cands+=[("AH",f"Ф1({ahh:+.1f})",pc,ohh),("AH",f"Ф2({-ahh:+.1f})",1-pc,oha)]
                 for mktk,pick,prob,odd in cands:
+                    if mktk in blacklist: continue
                     item={"mkt":mktk,"pick":pick,"prob":prob,"odd":odd,"ev":None,"be":None,"ok":False}
                     if odd:
-                        lo,hi=CORRIDORS.get(mktk,(1.4,4.2))
+                        lo,hi=PR["corr"] if mktk=="1X2" else CORRIDORS.get(mktk,(1.4,4.2))
                         ev=prob*odd-1;be=1/odd;edge=prob-be
                         req=max(0.0,min_ev+max(0.0,odd-2.5)*0.02+engine.market_adjust(mktk))
                         dis_ok=(not use_dis) or (gap is None) or (gap>=DISAGREE_MIN)
-                        item.update(ev=ev,be=be,ok=(lo<=odd<=hi and edge>=min_edge and ev>=req and dis_ok))
+                        agree_ok=(mktk!="1X2") or P["agree"]
+                        games_ok=P["games"]>=PR["min_games"]
+                        item.update(ev=ev,be=be,ok=(lo<=odd<=hi and edge>=min_edge and ev>=req and dis_ok and agree_ok and games_ok))
                         if item["ok"]:
                             passed+=1;stk=kelly(prob,odd,D["bank"],kelly_frac)
                             if best is None or ev>best[3]: best=(mktk,pick,odd,ev,prob,stk)
@@ -550,7 +579,7 @@ with tab1:
                 cards.append({"div":r.get("Div"),"league":league,"match":f"{h} vs {a}",
                     "date":d.strftime("%d.%m")+(f" {r.get('Time')}" if r.get("Time") else ""),"when":when,
                     "rows":rows,"best":best,"hot":hot[:3],"tag":tag,"lams":P["lams"],
-                    "lams_g":P["lams_g"],"lams_s":P["lams_s"],"mkt":mkt,"gap":gap,
+                    "lams_g":P["lams_g"],"lams_s":P["lams_s"],"mkt":mkt,"gap":gap,"agree":P["agree"],
                     "p1":P["p1"],"px":P["x"],"p2":P["p2"],
                     "corners":P["corners"],"yellows":P["yellows"],"games":P["games"],"h2h_n":P["h2h_n"],
                     "fh":engine.form_str(h),"fa":engine.form_str(a),"cup":is_cup(r)})
@@ -575,7 +604,7 @@ with tab1:
     picks=D.get("picks",[])
     if picks:
         st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
-        txt=["NEURO BET PRO v5 — "+datetime.now().strftime("%d.%m.%Y %H:%M"),""]
+        txt=["NEURO BET PRO v6 — "+datetime.now().strftime("%d.%m.%Y %H:%M"),""]
         for i,p in enumerate(picks,1):
             cls="value" if p["type"]=="value" else "hot"
             btype="🟢 ВАЛУЙ" if p["type"]=="value" else "🔥 Проходимость"
@@ -602,9 +631,10 @@ with tab1:
         val=c["best"] is not None
         hot=any(r["prob"]>=thr for r in c["rows"]) and not val
         badge="<span class='badge val'>🟢 ВАЛУЙ</span>" if val else ("<span class='badge hot'>🔥 P≥{:.0f}%</span>".format(thr*100) if hot else "<span class='badge no'>фон</span>")
-        low="<span class='chip warn'>⚠️ мало данных</span>" if c["games"]<8 else ""
+        low="<span class='chip warn'>⚠️ мало данных</span>" if c["games"]<PR["min_games"] else ""
         cup="<span class='chip warn'>🏆 Кубок</span>" if c.get("cup") else ""
-        h2h=f"<span class='chip'>⚔ H2H:{c['h2h_n']}</span>" if c.get("h2h_n",0)>=3 else ""
+        h2h=f"<span class='chip'> H2H:{c['h2h_n']}</span>" if c.get("h2h_n",0)>=3 else ""
+        dis="<span class='chip warn'>⚠️ движки не согласны</span>" if not c.get("agree",True) else ""
         main,alt,avoid,vtext,gap=ai_verdict(c)
         m_s=f"✅ <b class='y'>{main['pick']}</b> @ {main['odd_s']} (P {main['prob']*100:.0f}%)" if main else ""
         a_s=f"🔁 <b class='g'>{alt['pick']}</b> (P {alt['prob']*100:.0f}%)" if alt else ""
@@ -625,7 +655,7 @@ with tab1:
         best_html=f"<span>💰 Келли: <b>{c['best'][5]:.2f}</b> на <b>{c['best'][1]}</b> @ <b>{c['best'][2]:.2f}</b></span>" if val else ""
         st.markdown(f"""
 <div class="mcard {'value' if val else ('hot' if hot else '')}">
- <div class="mhead"><span class="chip">{c['league']}</span><span class="chip when">📅 {c['date']} · {c['when']}</span>{low}{cup}{h2h}{badge}</div>
+ <div class="mhead"><span class="chip">{c['league']}</span><span class="chip when">📅 {c['date']} · {c['when']}</span>{low}{cup}{h2h}{dis}{badge}</div>
  <div class="teams">{c['match'].split(' vs ')[0]} <span>—</span> {c['match'].split(' vs ')[1]}</div>
  <div class="verdict">🤖 <b>ИИ-вердикт:</b> {m_s} · {a_s} · {v_s}<br><span style="color:#cbd5e1">{vtext}</span></div>
  <div class="form5">форма: {fr(c['fh'])} <span style='color:#64748b'>vs</span> {fr(c['fa'])}</div>
@@ -684,19 +714,22 @@ with tab4:
     else: st.warning("⛔ EV мал")
 
 with tab5:
-    st.header("🧪 Бэктест (флэт vs Kelly, alpha-сигналы)")
+    st.header("🧪 Бэктест = обучение + проверка методики")
+    st.caption("Модель стартует пустой и учится матч за матчем (walk-forward). Проверяются фиксированные фильтры. Убыточные рынки уходят в блэклист сканера.")
     b1,b2,b3,b4=st.columns(4)
     bt_div=b1.selectbox("Лига",list(DIV_NAMES.keys()),format_func=lambda k:DIV_NAMES[k])
     bt_season=b2.selectbox("Сезон",["2526","2425","2324"],index=1)
-    bt_edge=b3.slider("Edge, п.п.",0,8,2)/100
+    bt_edge=b3.slider("Edge, п.п.",0,8,int(PR["edge"]*100),key="bte")/100
     bt_mode=b4.selectbox("Стейк",["Flat","Kelly"])
     if st.button("▶️ Прогнать",type="primary"):
-        log,eng=backtest(bt_div,bt_season,bt_edge,bt_mode,use_dis)
-        if not log: st.warning("Нет сигналов: снизь edge или выключи disagreement-фильтр в сайдбаре.")
+        log,eng=backtest(bt_div,bt_season,PR,bt_edge,bt_mode)
+        bl=[k for k,v in eng.market_roi.items() if v["n"]>=30 and v["profit"]/v["n"]<-0.02]
+        D["meta"]["blacklist"]=bl
+        save_data(D)
+        if not log: st.warning("Нет сигналов: снизь edge или смени цель на «Проходимость».")
         else:
             n=len(log);wins=sum(1 for x in log if x["won"])
-            profit=sum(x["pnl"] for x in log)
-            staked=sum(x["stake"] for x in log)
+            profit=sum(x["pnl"] for x in log);staked=sum(x["stake"] for x in log)
             roi=profit/staked*100 if staked else 0
             curve=0;peak=0;mdd=0
             for x in log:
@@ -707,7 +740,9 @@ with tab5:
             k1,k2,k3,k4,k5=st.columns(5)
             k1.metric("Ставок",n);k2.metric("WinRate",f"{wins/n*100:.1f}%")
             k3.metric("ROI (turnover)",f"{roi:+.2f}%");k4.metric("MaxDD",f"{mdd:.1f}");k5.metric("Sharpe",f"{sharpe:.2f}")
-            st.markdown(f"**Чистыми:** {profit:+.1f} у.е. · оборот {staked:.0f} · Platt a={eng.platt_a:.2f} b={eng.platt_b:.2f} · rho={eng.rho:.2f}")
+            avg_odd=sum(x["odd"] for x in log)/n
+            st.markdown(f"**Средний кэф {avg_odd:.2f} → безубыточность {100/avg_odd:.1f}%** · Чистыми {profit:+.1f} у.е. · Platt a={eng.platt_a:.2f} b={eng.platt_b:.2f} · rho={eng.rho:.2f}")
+            if bl: st.info(f"🚫 В блэклист сканера добавлены рынки: {', '.join(bl)}")
             by=defaultdict(lambda:[0,0,0.0])
             for x in log:
                 by[x["mkt"]][0]+=1;by[x["mkt"]][1]+=1 if x["won"] else 0;by[x["mkt"]][2]+=x["pnl"]
@@ -715,4 +750,4 @@ with tab5:
             if mrows: st.dataframe(mrows,use_container_width=True,hide_index=True)
             if roi>0 and sharpe>0.1: st.success("✅ Плюс и стабильно.")
             elif roi>0: st.warning("⚠️ Плюс, но волатильно.")
-            else: st.error("❌ Минус. Выключи disagreement-фильтр или снизь edge, либо не ставь эту лигу.")
+            else: st.error("❌ Минус. Смени цель на «Проходимость» или убери disagreement.")
