@@ -10,21 +10,53 @@ import io
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
-# Стильный дизайн и темная тема стадиона
+# Стильный дизайн, темная тема стадиона и яркие цветовые карточки
 st.markdown("""
     <style>
     .stApp {
-        background: linear-gradient(rgba(10, 15, 25, 0.85), rgba(10, 15, 25, 0.95)), 
+        background: linear-gradient(rgba(10, 15, 25, 0.90), rgba(10, 15, 25, 0.98)), 
                     url('https://images.unsplash.com/photo-1518091043644-c1d4457512c6?q=80&w=1920&auto=format&fit=crop');
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
     }
     .metric-card {
-        background-color: rgba(25, 35, 50, 0.7);
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+        padding: 20px;
+        border-radius: 14px;
+        border: 1px solid rgba(56, 189, 248, 0.2);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        text-align: center;
+    }
+    .bet-card-pending {
+        background: rgba(30, 41, 59, 0.7);
+        padding: 16px;
+        border-radius: 12px;
+        border-left: 6px solid #f59e0b;
+        border-top: 1px solid rgba(245, 158, 11, 0.2);
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 12px;
+    }
+    .bet-card-won {
+        background: rgba(16, 185, 129, 0.12);
+        padding: 16px;
+        border-radius: 12px;
+        border-left: 6px solid #10b981;
+        border-top: 1px solid rgba(16, 185, 129, 0.3);
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 12px;
+    }
+    .bet-card-lost {
+        background: rgba(239, 68, 68, 0.12);
+        padding: 16px;
+        border-radius: 12px;
+        border-left: 6px solid #ef4444;
+        border-top: 1px solid rgba(239, 68, 68, 0.3);
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 12px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -52,6 +84,12 @@ def load_history():
                     data["weights"] = {"xg_w": 1.0, "form_w": 0.5, "odds_limit": 2.2}
                 if "archive_matches" not in data:
                     data["archive_matches"] = []
+                if "bets" in data:
+                    for b in data["bets"]:
+                        if "stake" not in b or not b["stake"] or b["stake"] <= 0:
+                            b["stake"] = STAKE_SIZE
+                        if "reason" not in b or not b["reason"]:
+                            b["reason"] = "Автоматический валуйный сигнал модели"
                 return data
         except:
             pass
@@ -99,11 +137,10 @@ LEAGUES = [
     'soccer_turkey_super_lig'
 ]
 
-# --- ЗАГРУЗКА АРХИВА С ИСПРАВЛЕННЫМ ПУТЕМ MMZ4281 ---
+# --- ЗАГРУЗКА АРХИВА С ПУТЕМ MMZ4281 ---
 def load_public_football_archive():
     seasons = ["2425", "2324", "2223", "2122"]
     archive_items = []
-    
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
     for season in seasons:
@@ -353,40 +390,63 @@ with tab1:
         st.info("Пока нет ни одной ставки. Запустите сканирование выше.")
     else:
         for idx, b in enumerate(bets):
-            with st.container():
-                cols = st.columns([3, 1.5, 1, 1, 1.5])
-                cols[0].write(f"**{b['match']}**\n\n*{b.get('reason', '')}*")
-                cols[1].write(f"Выбор: **{b['pick']}** (Кф: `{b['odd']:.2f}`)")
-                cols[2].write(f"Сумма: `{b['stake']} у.е.`")
-                
-                status = b["status"]
+            match_name = b.get("match", "Матч")
+            reason_text = b.get("reason", "Автоматический сигнал модели")
+            pick_name = b.get("pick", "-")
+            odd_val = b.get("odd", 1.9)
+            stake_val = b.get("stake", STAKE_SIZE)
+            status = b["status"]
+            
+            # Выбор цвета карточки в зависимости от статуса
+            card_class = "bet-card-pending"
+            if status == "won":
+                card_class = "bet-card-won"
+            elif status == "lost":
+                card_class = "bet-card-lost"
+            
+            st.markdown(f"""
+                <div class="{card_class}">
+                    <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 4px;">⚽ {match_name}</div>
+                    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 10px; font-style: italic;">💡 {reason_text}</div>
+                    <div style="display: flex; gap: 15px; font-size: 0.95rem; font-weight: 500;">
+                        <span style="color: #38bdf8;">Выбор: <b>{pick_name}</b></span>
+                        <span style="color: #cbd5e1;">Кф: <b style="color: #facc15;">{odd_val:.2f}</b></span>
+                        <span style="color: #cbd5e1;">Сумма: <b style="color: #4ade80;">{stake_val} у.е.</b></span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            cols = st.columns([2, 2])
+            with cols[0]:
                 if status == "pending":
-                    cols[3].warning("В ожидании")
-                    c_win, c_loss = cols[4].columns(2)
+                    st.markdown("⏳ <span style='color: #f59e0b; font-weight: bold;'>Статус: В ожидании</span>", unsafe_allow_html=True)
+                elif status == "won":
+                    st.markdown("🎉 <span style='color: #10b981; font-weight: bold;'>Статус: Выиграна</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("😢 <span style='color: #ef4444; font-weight: bold;'>Статус: Проиграна</span>", unsafe_allow_html=True)
+                    
+            with cols[1]:
+                if status == "pending":
+                    c_win, c_loss = st.columns(2)
                     if c_win.button("✅ Зашло", key=f"w_{idx}"):
                         b["status"] = "won"
-                        st.session_state.app_data["bank"] += b["stake"] * b["odd"]
+                        st.session_state.app_data["bank"] += stake_val * odd_val
                         save_history(st.session_state.app_data)
                         st.rerun()
                     if c_loss.button("❌ Мимо", key=f"l_{idx}"):
                         b["status"] = "lost"
                         save_history(st.session_state.app_data)
                         st.rerun()
-                elif status == "won":
-                    cols[3].success("Выиграна 🎉")
-                    if cols[4].button("↩️ Сбросить", key=f"reset_{idx}"):
-                        b["status"] = "pending"
-                        st.session_state.app_data["bank"] -= (b["stake"] * b["odd"] - b["stake"])
-                        save_history(st.session_state.app_data)
-                        st.rerun()
                 else:
-                    cols[3].error("Проиграна 😢")
-                    if cols[4].button("↩️ Сбросить", key=f"reset_{idx}"):
+                    if st.button("↩️ Сбросить статус", key=f"reset_{idx}"):
+                        if status == "won":
+                            st.session_state.app_data["bank"] -= (stake_val * odd_val - stake_val)
+                        else:
+                            st.session_state.app_data["bank"] += stake_val
                         b["status"] = "pending"
-                        st.session_state.app_data["bank"] += b["stake"]
                         save_history(st.session_state.app_data)
                         st.rerun()
-                st.markdown("---")
+            st.markdown("---")
 
 with tab2:
     st.markdown("### 📊 Статистика и Процент проходов (Win Rate)")
@@ -400,10 +460,14 @@ with tab2:
     win_rate = (won_bets / settled_count * 100) if settled_count > 0 else 0.0
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("Всего ставок", total_bets)
-    col_m2.metric("Выиграно / Проиграно", f"{won_bets} / {lost_bets}")
-    col_m3.metric("Процент проходов (Win Rate)", f"{win_rate:.1f}%")
-    col_m4.metric("В ожидании", pending_bets)
+    with col_m1:
+        st.markdown(f'<div class="metric-card"><h4>Всего ставок</h4><h2>{total_bets}</h2></div>', unsafe_allow_html=True)
+    with col_m2:
+        st.markdown(f'<div class="metric-card"><h4>Выиграно / Проиграно</h4><h2>{won_bets} / {lost_bets}</h2></div>', unsafe_allow_html=True)
+    with col_m3:
+        st.markdown(f'<div class="metric-card"><h4>Win Rate</h4><h2 style="color: #4ade80;">{win_rate:.1f}%</h2></div>', unsafe_allow_html=True)
+    with col_m4:
+        st.markdown(f'<div class="metric-card"><h4>В ожидании</h4><h2 style="color: #f59e0b;">{pending_bets}</h2></div>', unsafe_allow_html=True)
 
 with tab3:
     st.markdown("### 🧠 Многокруговое обучение ИИ (Архив + Эпохи)")
