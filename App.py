@@ -60,7 +60,6 @@ def ts_all_leagues():
         log_err("all_leagues",e); return []
 @st.cache_data(ttl=3600)
 def ts_events_day(dstr,sport):
-    """ВСЕ матчи вида спорта за дату — по всем лигам (как fixtures в футболе)"""
     out=[]
     try:
         r=requests.get(f"{API}/eventsday.php?d={dstr}&s={sport}",timeout=20)
@@ -188,6 +187,22 @@ def osp_sport(allst,sport):
         allst[sport]={"bank":5000.0,"bets":[],"stats":{"won":0,"lost":0,"profit":0}}
     return allst[sport]
 
+# ================= HTML-КОМПОНЕНТЫ (без вложенных f-string) =================
+def mrows_html(markets):
+    out="<div class='mrow hdr'><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>"
+    for m in markets:
+        w=m["p"]*100
+        out+=f"<div class='mrow'><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{w:.0f}%'></i></div><span style='color:#4ade80'>{w:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>&ge; {m['min_ok']:.2f}</span></div>"
+    return out
+def card_html(c):
+    src="🌐 API" if c["src"]=="api" else "📁 CSV"
+    return ("<div class='mcard'><div class='mhead'><span class='chip'>"+c["league"]+"</span>"
+        "<span class='chip when'>📅 "+c["date"]+" · "+c["when"]+"</span>"
+        "<span class='chip src'>"+src+"</span></div>"
+        "<div class='teams'>"+c["h"]+" <span>—</span> "+c["a"]+"</div>"
+        +mrows_html(c["markets"])+
+        "</div>")
+
 LEAGUES_ALL=ts_all_leagues()
 
 # ================= ВКЛАДКА ВИДА =================
@@ -200,7 +215,7 @@ def render_sport(sport):
         resolved=[o for o in opts if any(p.lower() in (o.get("strLeague") or "").lower() for p in PRESETS.get(sport,[]))]
         names=[f"{o['strLeague']} (id {o['idLeague']})" for o in opts]
         res_names=[f"{o['strLeague']} (id {o['idLeague']})" for o in resolved]
-        st.caption("🔎 Матчи ищутся по ВСЕМ лигам вида на каждый день горизонта (как fixtures в футболе). Лиги ниже нужны только для обучения модели на истории.")
+        st.caption("🔎 Матчи ищутся по ВСЕМ лигам вида на каждый день горизонта. Лиги ниже нужны только для обучения модели на истории.")
         c1,c2=st.columns([3,1])
         sel=c1.multiselect("Лиги для обучения (история)",names,default=res_names[:3],key=f"ms{sport}")
         days=c2.slider("Горизонт, дней",1,21,10,key=f"d{sport}")
@@ -243,12 +258,12 @@ def render_sport(sport):
                 if r["hs"] is not None or not r["h"] or not r["a"]: continue
                 if not search_all and r["league"] not in sel_set: continue
                 nd=(d-today).days
+                when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
                 cards.append({"eid":r["id"],"league":r["league"] or sport,"src":r["src"],
-                    "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),
-                    "when":"сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн"),
+                    "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),"when":when,
                     "markets":eng.predict(r["h"],r["a"])})
             cards.sort(key=lambda c:c["date"])
-            prog.progress(1.0); prog.empty()
+            prog.empty()
             st.session_state["cards_"+sport]=cards
             st.session_state["trained_"+sport]=len(past)
             st.rerun()
@@ -256,21 +271,15 @@ def render_sport(sport):
         tr=st.session_state.get("trained_"+sport,0)
         if cards: st.caption(f"Обучено матчей: {tr} · событий в окне: {len(cards)}")
         for c in cards:
-            st.markdown(f"""
-<div class="mcard">
- <div class="mhead"><span class="chip">{c['league']}</span><span class="chip when">📅 {c['date']} · {c['when']}</span>
-  <span class="chip src">{'🌐 API' if c['src']=='api' else '📁 CSV'}</span></div>
- <div class="teams">{c['h']} <span>—</span> {c['a']}</div>
- <div class="mrow hdr"><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>
- {''.join(f"<div class='mrow"><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{m['p']*100:.0f}%'></i></div><span style='color:#4ade80'>{m['p']*100:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>≥ {m['min_ok']:.2f}</span></div>" for m in c['markets'])}
-</div>""",unsafe_allow_html=True)
+            st.markdown(card_html(c),unsafe_allow_html=True)
             kk=f"{sport}_{c['eid']}"
             cc=st.columns([2,1,1])
             mkt=cc[0].selectbox("Рынок",[m["name"] for m in c["markets"]],key=f"m{kk}")
             odd=cc[1].number_input("Кэф букмекера",1.01,30.0,1.85,key=f"o{kk}")
             prob=next(m["p"] for m in c["markets"] if m["name"]==mkt)
             ev=prob*odd-1
-            cc[2].markdown(f"<div style='padding-top:26px' class='{'pos' if ev>0 else 'neg'}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
+            ev_cls="pos" if ev>0 else "neg"
+            cc[2].markdown(f"<div style='padding-top:26px' class='{ev_cls}'>EV {ev*100:+.1f}%</div>",unsafe_allow_html=True)
             if st.button("➕ В портфель",key=f"b{kk}"):
                 if ev<=0:
                     st.warning("⛔ EV отрицательный — не добавлено.")
