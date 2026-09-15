@@ -9,26 +9,34 @@ import datetime
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
-# Фоновые обои стадиона + стильные карточки
+# Стильный дизайн и темная тема стадиона
 st.markdown("""
     <style>
     .stApp {
-        background: linear-gradient(rgba(10, 15, 25, 0.82), rgba(10, 15, 25, 0.92)), 
+        background: linear-gradient(rgba(10, 15, 25, 0.85), rgba(10, 15, 25, 0.95)), 
                     url('https://images.unsplash.com/photo-1518091043644-c1d4457512c6?q=80&w=1920&auto=format&fit=crop');
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
     }
+    .metric-card {
+        background-color: rgba(25, 35, 50, 0.7);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
     </style>
 """, unsafe_allow_html=True)
 
 HISTORY_FILE = "bet_history.json"
+STAKE_SIZE = 100.0
 
 def reset_history_file():
     clean_data = {
         "bank": 10000.0, 
         "weights": {"xg_w": 1.0, "odds_limit": 2.2},
-        "bets": []
+        "bets": [],
+        "archive_matches": []
     }
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(clean_data, f, ensure_ascii=False, indent=4)
@@ -41,6 +49,8 @@ def load_history():
                 data = json.load(f)
                 if "weights" not in data:
                     data["weights"] = {"xg_w": 1.0, "odds_limit": 2.2}
+                if "archive_matches" not in data:
+                    data["archive_matches"] = []
                 return data
         except:
             pass
@@ -70,7 +80,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("💰 Банкролл-менеджмент")
 current_bank = st.session_state.app_data["bank"]
 st.sidebar.metric(label="Виртуальный банк", value=f"{current_bank:.2f} у.е.")
-STAKE_SIZE = 100.0
 
 if st.sidebar.button("🔄 Сбросить всё (банк и веса)"):
     st.session_state.app_data = reset_history_file()
@@ -86,20 +95,40 @@ LEAGUES = [
     'soccer_france_ligue_one', 
     'soccer_russia_premier_league',
     'soccer_uefa_champions_league',
-    'soccer_uefa_europa_conference_league',
     'soccer_turkey_super_lig'
 ]
 
-CUP_LEAGUES = [
-    'soccer_uefa_champions_league',
-    'soccer_uefa_europa_conference_league'
-]
+# --- ЗАГРУЗКА АРХИВА С FOOTBALL-DATA.CO.UK ---
+def load_public_football_archive():
+    url = "https://www.football-data.co.uk/mmzz/2425/E0.csv"
+    try:
+        df = pd.read_csv(url)
+        archive_items = []
+        for _, row in df.iterrows():
+            home = row.get('HomeTeam')
+            away = row.get('AwayTeam')
+            fthg = row.get('FTHG')
+            ftag = row.get('FTAG')
+            
+            if pd.notna(home) and pd.notna(away) and pd.notna(fthg) and pd.notna(ftag):
+                winner = "П1" if fthg > ftag else ("Ничья (X)" if fthg == ftag else "П2")
+                archive_items.append({
+                    "match": f"{home} vs {away}",
+                    "winner": winner,
+                    "source": "Football-Data CSV (EPL)"
+                })
+        
+        if archive_items:
+            st.session_state.app_data["archive_matches"] = archive_items
+            save_history(st.session_state.app_data)
+            return len(archive_items), f"Успешно загружено {len(archive_items)} реальных матчей из архива!"
+    except Exception as e:
+        return 0, f"Ошибка загрузки архива: {e}"
+    return 0, "Не удалось найти данные."
 
 # --- ГЕНЕРАТОР ОБОСНОВАНИЙ ---
-def get_smart_reason(m, best_edge):
-    pick, prob, odd, edge = best_edge
+def get_smart_reason(pick, odd, edge):
     reasons = []
-    
     if edge > 0.08:
         reasons.append(f"Высокий статистический перевес (+{edge*100:.1f}%)")
     elif edge > 0.04:
@@ -107,8 +136,6 @@ def get_smart_reason(m, best_edge):
     else:
         reasons.append(f"Умеренный сигнал (+{edge*100:.1f}%)")
         
-    reasons.append(f"Вероятность исхода '{pick}' по модели: {prob*100:.1f}%")
-    
     if odd < 1.75:
         reasons.append("коэффициент надежного фаворита")
     elif odd <= 2.1:
@@ -118,50 +145,154 @@ def get_smart_reason(m, best_edge):
         
     return " • ".join(reasons)
 
-# --- МНОГОКРУГОВОЕ ОБУЧЕНИЕ ИИ НА АРХИВЕ (ЭПОХИ) ---
-def train_on_archive_epochs(odds_key, epochs=3):
+# --- АНАЛИЗАТОР МАТЧЕЙ И РАЗМЕЩЕНИЕ СТАВОК ---
+def analyze_upcoming_matches(api_key):
+    weights = st.session_state.app_data["weights"]
+    xg_w = weights.get("xg_w", 1.0)
+    odds_limit = weights.get("odds_limit", 2.2)
+    
+    new_bets_placed = 0
+    checked_count = 0
+    
+    for league in LEAGUES:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={api_key}&regions=eu&markets=h2h&oddsFormat=decimal"
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code != 200:
+                continue
+            events = response.json()
+            
+            for event in events:
+                commence_time = event.get("commence_time")
+                # Фильтрация по времени (на сколько часов вперед)
+                if commence_time:
+                    match_dt = datetime.datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                    now_dt = datetime.datetime.now(datetime.timezone.utc)
+                    diff_hours = (match_dt - now_dt).total_seconds() / 3600
+                    if diff_hours < 0 or diff_hours > hours_ahead:
+                        continue
+                
+                home_team = event.get("home_team")
+                away_team = event.get("away_team")
+                bookmakers = event.get("bookmakers", [])
+                
+                if not bookmakers:
+                    continue
+                
+                # Берем коэффициенты из первой доступной букмекерской конторы
+                markets = bookmakers[0].get("markets", [])
+                outcomes = []
+                for m in markets:
+                    if m.get("key") == "h2h":
+                        outcomes = m.get("outcomes", [])
+                        break
+                
+                if len(outcomes) < 2:
+                    continue
+                
+                odds_dict = {o["name"]: o["price"] for o in outcomes}
+                home_odd = odds_dict.get(home_team, 1.9)
+                away_odd = odds_dict.get(away_team, 1.9)
+                draw_odd = odds_dict.get("Draw", 3.2)
+                
+                checked_count += 1
+                
+                # Расчет по Пуассону с учетом весов ИИ
+                h_lam = max(0.6, min(3.5, 1.4 * xg_w))
+                a_lam = max(0.5, min(3.2, 1.1))
+                
+                matrix = np.zeros((6, 6))
+                for h in range(6):
+                    for a in range(6):
+                        matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
+                
+                p_home = np.sum(np.tril(matrix, -1))
+                p_draw = np.sum(np.diagonal(matrix))
+                p_away = np.sum(np.triu(matrix, 1))
+                total = p_home + p_draw + p_away
+                if total > 0:
+                    p_home /= total
+                    p_draw /= total
+                    p_away /= total
+                
+                # Определяем лучший валуйный выбор
+                options = [
+                    ("П1", p_home, home_odd),
+                    ("Ничья (X)", p_draw, draw_odd),
+                    ("П2", p_away, away_odd)
+                ]
+                
+                best_pick = None
+                max_edge = -999
+                for name, prob, odd in options:
+                    if odd <= odds_limit:
+                        edge = (prob * odd) - 1.0
+                        if edge > max_edge:
+                            max_edge = edge
+                            best_pick = (name, prob, odd, edge)
+                
+                # Если найден валуйный сигнал и банк позволяет сделать ставку
+                if best_pick and best_pick[3] > 0.02:
+                    pick_name, prob, odd, edge = best_pick
+                    match_str = f"{home_team} vs {away_team}"
+                    
+                    # Проверяем, нет ли уже такой ставки в истории
+                    existing_matches = [b["match"] for b in st.session_state.app_data["bets"]]
+                    if match_str not in existing_matches:
+                        if st.session_state.app_data["bank"] >= STAKE_SIZE:
+                            st.session_state.app_data["bank"] -= STAKE_SIZE
+                            new_bet = {
+                                "id": len(st.session_state.app_data["bets"]) + 1,
+                                "match": match_str,
+                                "pick": pick_name,
+                                "odd": odd,
+                                "stake": STAKE_SIZE,
+                                "status": "pending",
+                                "reason": get_smart_reason(pick_name, odd, edge)
+                            }
+                            st.session_state.app_data["bets"].append(new_bet)
+                            new_bets_placed += 1
+        except Exception as e:
+            continue
+            
+    save_history(st.session_state.app_data)
+    return checked_count, new_bets_placed
+
+# --- МНОГОКРУГОВОЕ ОБУЧЕНИЕ ИИ ---
+def train_on_epochs_multisource(epochs=3):
     weights = st.session_state.app_data["weights"]
     logs = []
+    training_items = []
     
-    # Сначала собираем все матчи из API в память
-    raw_matches = []
-    for league in LEAGUES:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
-        params = {'apiKey': odds_key, 'daysFrom': 3}
-        try:
-            res = requests.get(url, params=params, timeout=10)
-            if res.status_code == 200:
-                events = res.json()
-                for ev in events:
-                    if ev.get('completed'):
-                        ev_home, ev_away = ev.get('home_team'), ev.get('away_team')
-                        scores = ev.get('scores', [])
-                        if len(scores) == 2:
-                            home_score = int(scores[0]['score']) if scores[0]['name'] == ev_home else int(scores[1]['score'])
-                            away_score = int(scores[1]['score']) if scores[1]['name'] == ev_away else int(scores[0]['score'])
-                            winner = "П1" if home_score > away_score else ("Ничья (X)" if home_score == away_score else "П2")
-                            raw_matches.append({
-                                "match": f"{ev_home} vs {ev_away}",
-                                "home": ev_home, "away": ev_away, "league": league,
-                                "home_score": home_score, "away_score": away_score, "winner": winner
-                            })
-        except Exception as e:
-            logs.append(f"⚠️ Ошибка загрузки лиги {league}: {e}")
+    # 1. Завершенные ставки пользователя
+    settled_bets = [b for b in st.session_state.app_data["bets"] if b["status"] in ["won", "lost"]]
+    for b in settled_bets:
+        training_items.append({
+            "match": b["match"],
+            "is_win": (b["status"] == "won")
+        })
 
-    if not raw_matches:
-        return 0, ["Не удалось найти завершенные матчи в архиве API за последние дни."]
+    # 2. Скачанный архив матчей
+    arch = st.session_state.app_data.get("archive_matches", [])
+    for item in arch:
+        training_items.append({
+            "match": item["match"],
+            "winner": item["winner"]
+        })
 
-    total_trained_events = 0
+    if not training_items:
+        return 0, ["⚠️ База для обучения пуста! Нажмите кнопку '📥 Загрузить архив реальных матчей' во вкладке обучения или сделайте ставки."]
+
+    total_events_processed = 0
     
-    # Запускаем несколько кругов (эпох) обучения по собранной базе матчей
     for epoch in range(1, epochs + 1):
-        logs.append(f"--- 🔄 КРУГ ОБУЧЕНИЯ (ЭПОХА) №{epoch} ---")
         epoch_correct = 0
+        logs.append(f"--- 🔄 КРУГ ОБУЧЕНИЯ (ЭПОХА) №{epoch} ---")
         
-        for m in raw_matches:
+        for item in training_items:
             xg_w = weights.get("xg_w", 1.0)
-            h_lam = max(0.6, min(3.5, 2.2 * 0.5 * 2 * xg_w))
-            a_lam = max(0.5, min(3.2, 2.2 * 0.5 * 2))
+            h_lam = max(0.6, min(3.5, 1.4 * xg_w))
+            a_lam = max(0.5, min(3.2, 1.1))
             
             matrix = np.zeros((6, 6))
             for h in range(6):
@@ -176,234 +307,86 @@ def train_on_archive_epochs(odds_key, epochs=3):
                 p_draw /= total
                 p_away /= total
             
-            ai_pick = "П1" if p_home > p_away and p_home > p_draw else ("Ничья (X)" if p_draw > p_home and p_draw > p_away else "П2")
+            if "is_win" in item:
+                success = item["is_win"]
+            else:
+                ai_pick = "П1" if p_home > p_away and p_home > p_draw else ("Ничья (X)" if p_draw > p_home and p_draw > p_away else "П2")
+                success = (ai_pick == item["winner"])
             
-            if ai_pick == m["winner"]:
-                weights["xg_w"] = min(2.5, weights["xg_w"] * 1.008) # плавное усиление веса
+            if success:
+                weights["xg_w"] = min(2.5, weights["xg_w"] * 1.008)
                 epoch_correct += 1
             else:
-                weights["odds_limit"] = max(1.6, weights["odds_limit"] * 0.992) # коррекция рисков при ошибке
+                weights["odds_limit"] = max(1.6, weights["odds_limit"] * 0.992)
                 weights["xg_w"] = max(0.5, weights["xg_w"] * 0.995)
             
-            total_trained_events += 1
+            total_events_processed += 1
 
-        acc = (epoch_correct / len(raw_matches)) * 100
-        logs.append(f"📊 Эпоха {epoch} завершена. Точность на этом круге: {acc:.1f}% | Вес xG: {weights['xg_w']:.3f} | Лимит кэф: {weights['odds_limit']:.2f}")
-
-    # Сохраняем итоговые веса в историю
-    save_history(st.session_state.app_data)
-    return total_trained_events, logs
-
-# --- ПРОВЕРКА РЕЗУЛЬТАТОВ И ОБУЧЕНИЕ ИИ НА СТАВКАХ ---
-def update_pending_results_and_learn(odds_key):
-    pending_bets = [b for b in st.session_state.app_data["bets"] if b["status"] == "pending"]
-    if not pending_bets:
-        return 0, ["Нет активных ставок для проверки."]
-    
-    leagues_to_check = set(b.get("league") for b in pending_bets if "league" in b)
-    updated_count = 0
-    weights = st.session_state.app_data["weights"]
-    logs = []
-
-    for league in leagues_to_check:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/scores/"
-        params = {'apiKey': odds_key, 'daysFrom': 3}
-        try:
-            res = requests.get(url, params=params, timeout=10)
-            if res.status_code == 200:
-                events = res.json()
-                for ev in events:
-                    if ev.get('completed'):
-                        ev_home, ev_away = ev.get('home_team'), ev.get('away_team')
-                        scores = ev.get('scores', [])
-                        if len(scores) == 2:
-                            home_score = int(scores[0]['score']) if scores[0]['name'] == ev_home else int(scores[1]['score'])
-                            away_score = int(scores[1]['score']) if scores[1]['name'] == ev_away else int(scores[0]['score'])
-                            winner = "П1" if home_score > away_score else ("Ничья (X)" if home_score == away_score else "П2")
-                            
-                            for idx, b in enumerate(st.session_state.app_data["bets"]):
-                                if b["status"] == "pending" and b.get("home") == ev_home and b.get("away") == ev_away:
-                                    if b["pick"] == winner:
-                                        st.session_state.app_data["bets"][idx]["status"] = "won"
-                                        st.session_state.app_data["bank"] += b['stake'] * b['odd']
-                                        weights["xg_w"] = min(2.5, weights["xg_w"] * 1.02)
-                                        logs.append(f"✅ ВЫИГРЫШ: {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | Выплата: +{b['stake'] * b['odd']:.2f} | 🧠 Веса укреплены.")
-                                    else:
-                                        st.session_state.app_data["bets"][idx]["status"] = "lost"
-                                        weights["odds_limit"] = max(1.6, weights["odds_limit"] * 0.97)
-                                        weights["xg_w"] = max(0.5, weights["xg_w"] * 0.98)
-                                        logs.append(f"❌ ПРОИГРЫШ (ОШИБКА ИИ): {b['match']} | Счёт: {home_score}:{away_score} | Выбор ИИ: {b['pick']} | 🧠 Учтена ошибка.")
-                                    updated_count += 1
-        except Exception as e:
-            logs.append(f"⚠️ Ошибка проверки лиги {league}: {e}")
+        acc = (epoch_correct / len(training_items)) * 100
+        logs.append(f"📊 Эпоха {epoch} завершена. Точность на базе: {acc:.1f}% | Вес xG: {weights['xg_w']:.3f}")
 
     save_history(st.session_state.app_data)
-    return updated_count, logs
+    return len(training_items), logs
 
-# --- АНАЛИЗАТОР ---
-class UltimateBot:
-    def __init__(self, odds_key, hours_limit, weights):
-        self.odds_key = odds_key
-        self.hours_limit = hours_limit
-        self.weights = weights
-
-    def fetch_fixtures(self):
-        board = []
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        max_time = now_utc + datetime.timedelta(hours=self.hours_limit)
-
-        for league in LEAGUES:
-            url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
-            params = {'apiKey': self.odds_key, 'regions': 'eu', 'markets': 'h2h', 'oddsFormat': 'decimal'}
-            try:
-                res = requests.get(url, params=params, timeout=8)
-                if res.status_code == 200:
-                    for ev in res.json():
-                        commence_time_str = ev.get('commence_time')
-                        if commence_time_str:
-                            match_time = datetime.datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
-                            if not (now_utc <= match_time <= max_time):
-                                continue
-                        home, away = ev['home_team'], ev['away_team']
-                        books = ev.get('bookmakers', [])
-                        if books:
-                            markets = books[0].get('markets', [])
-                            if markets:
-                                odds = {out['name']: out['price'] for out in markets[0].get('outcomes', [])}
-                                board.append({
-                                    'league': league, 'home': home, 'away': away, 'time': commence_time_str,
-                                    'h_odd': odds.get(home, 2.0), 'd_odd': odds.get('Draw', 3.3), 'a_odd': odds.get(away, 2.0)
-                                })
-            except:
-                pass
-        return board
-
-    def predict_poisson(self, h_odd, a_odd):
-        impl_h = 1 / h_odd
-        impl_a = 1 / a_odd
-        xg_w = self.weights.get("xg_w", 1.0)
-        h_lam = max(0.6, min(3.5, 2.2 * (impl_h / (impl_h + impl_a + 0.1)) * 2 * xg_w))
-        a_lam = max(0.5, min(3.2, 2.2 * (impl_a / (impl_h + impl_a + 0.1)) * 2))
-
-        matrix = np.zeros((6, 6))
-        for h in range(6):
-            for a in range(6):
-                matrix[h, a] = poisson.pmf(h, h_lam) * poisson.pmf(a, a_lam)
-                
-        p_home = np.sum(np.tril(matrix, -1))
-        p_draw = np.sum(np.diagonal(matrix))
-        p_away = np.sum(np.triu(matrix, 1))
-        
-        total = p_home + p_draw + p_away
-        if total > 0:
-            return p_home/total, p_draw/total, p_away/total
-        return 0.45, 0.25, 0.30
-
-# --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
+# --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Анализ и Авто-ставки", "📊 Статистика и История", "🧠 Обучение ИИ по ставкам", "⚙️ О системе"])
 
 with tab1:
-    if st.button("🚀 Загрузить матчи и запустить автоматические ставки"):
+    st.markdown("### 🚀 Автоматический поиск матчей и валуйных ставок")
+    st.write("Нажмите кнопку ниже, чтобы бот опросил The Odds API, проанализировал расписание матчей на ближайшие часы через пуассоновскую модель и автоматически разместил виртуальные ставки.")
+    
+    if st.button("🔎 Запустить сканирование и сделать ставки"):
         if not odds_api_key:
-            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели!")
+            st.warning("⚠️ Введите API ключ для The Odds API в боковой панели слева!")
         else:
-            with st.spinner("ИИ анализирует матчи и автоматически размещает ставки..."):
-                bot = UltimateBot(odds_api_key, hours_ahead, current_weights)
-                matches = bot.fetch_fixtures()
+            with st.spinner("ИИ сканирует линии букмекеров и рассчитывает перевес..."):
+                checked, placed = analyze_upcoming_matches(odds_api_key)
+                st.success(f"Анализ завершен! Проверено матчей: {checked}. Успешно размещено новых ставок: {placed}.")
+                st.rerun()
+
+    st.markdown("### 📋 Активные и текущие ставки в работе:")
+    bets = st.session_state.app_data.get("bets", [])
+    if not bets:
+        st.info("Пока нет ни одной ставки. Запустите сканирование выше.")
+    else:
+        for idx, b in enumerate(bets):
+            with st.container():
+                cols = st.columns([3, 1.5, 1, 1, 1.5])
+                cols[0].write(f"**{b['match']}**\n\n*{b.get('reason', '')}*")
+                cols[1].write(f"Выбор: **{b['pick']}** (Кф: `{b['odd']:.2f}`)")
+                cols[2].write(f"Сумма: `{b['stake']} у.е.`")
                 
-                if matches:
-                    analyzed_matches = []
-                    existing_match_keys = {b["match"] for b in st.session_state.app_data["bets"]}
-                    auto_placed_count = 0
-
-                    for m in matches:
-                        home, away = m['home'], m['away']
-                        bh, bd, ba = m['h_odd'], m['d_odd'], m['a_odd']
-                        p_h, p_d, p_a = bot.predict_poisson(bh, ba)
-                        
-                        edges = [("П1", p_h, bh, (p_h * bh) - 1), 
-                                 ("Ничья (X)", p_d, bd, (p_d * bd) - 1), 
-                                 ("П2", p_a, ba, (p_a * ba) - 1)]
-                        
-                        best_edge = max(edges, key=lambda x: x[3])
-                        max_allowed_odd = current_weights.get("odds_limit", 2.2)
-                        reason_text = get_smart_reason(m, best_edge)
-                        match_key = f"{home} vs {away}"
-                        
-                        if best_edge[3] > 0.05 and best_edge[2] <= max_allowed_odd:
-                            status = "green"
-                            ai_text = f"✅ Валуйный сигнал на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес).<br>💡 *Обоснование:* {reason_text}"
-                        elif best_edge[3] > 0:
-                            status = "blue"
-                            ai_text = f"⚖️ Умеренный сигнал на **{best_edge[0]}**.<br>💡 *Обоснование:* {reason_text}"
-                        else:
-                            status = "red"
-                            ai_text = f"❌ Матч отклонен (нет перевеса или лимиты нарушены).<br>💡 *Причина:* {reason_text}"
-
-                        if status != "red" and match_key not in existing_match_keys:
-                            if st.session_state.app_data["bank"] >= STAKE_SIZE:
-                                st.session_state.app_data["bank"] -= STAKE_SIZE
-                                bet_record = {
-                                    "match": match_key,
-                                    "home": home, "away": away, "league": m.get('league', ''),
-                                    "pick": best_edge[0], "odd": best_edge[2],
-                                    "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
-                                }
-                                st.session_state.app_data["bets"].append(bet_record)
-                                existing_match_keys.add(match_key)
-                                auto_placed_count += 1
-
-                        analyzed_matches.append({
-                            'home': home, 'away': away, 'league': m.get('league', ''), 'time': m.get('time', ''),
-                            'bh': bh, 'bd': bd, 'ba': ba,
-                            'p_h': p_h, 'p_d': p_d, 'p_a': p_a, 'best_edge': best_edge,
-                            'status': status, 'ai_text': ai_text
-                        })
-                    
-                    save_history(st.session_state.app_data)
-                    st.success(f"Проанализировано матчей: {len(analyzed_matches)}. Автоматически сделано новых ставок: {auto_placed_count}")
-                    st.session_state.current_board = analyzed_matches
+                status = b["status"]
+                if status == "pending":
+                    cols[3].warning("В ожидании")
+                    c_win, c_loss = cols[4].columns(2)
+                    if c_win.button("✅ Зашло", key=f"w_{idx}"):
+                        b["status"] = "won"
+                        st.session_state.app_data["bank"] += b["stake"] * b["odd"]
+                        save_history(st.session_state.app_data)
+                        st.rerun()
+                    if c_loss.button("❌ Мимо", key=f"l_{idx}"):
+                        b["status"] = "lost"
+                        save_history(st.session_state.app_data)
+                        st.rerun()
+                elif status == "won":
+                    cols[3].success("Выиграна 🎉")
+                    if cols[4].button("↩️ Сбросить", key=f"reset_{idx}"):
+                        b["status"] = "pending"
+                        st.session_state.app_data["bank"] -= (b["stake"] * b["odd"] - b["stake"])
+                        save_history(st.session_state.app_data)
+                        st.rerun()
                 else:
-                    st.info("В выбранном диапазоне матчей не найдено.")
-
-    if "current_board" in st.session_state:
-        st.markdown("### 🏆 Результаты анализа и Авто-ставки")
-        for idx, m in enumerate(st.session_state.current_board):
-            league_name = m['league']
-            is_cup = league_name in CUP_LEAGUES
-            status = m['status']
-            
-            if is_cup:
-                border_color = "#ffc107"
-                bg_color = "rgba(255, 193, 7, 0.12)"
-                badge_text = "🏆 **[КУБКОВЫЙ / ЕВРОКУБКОВЫЙ ТУРНИР]** — ⚠️ *Повышенный риск ротации состава!*"
-            elif status == "green":
-                border_color = "#28a745"
-                bg_color = "rgba(40, 167, 69, 0.12)"
-                badge_text = "🟢 **[ВЫСОКИЙ ВАЛУЙ]** — Ставка оформлена автоматически"
-            elif status == "blue":
-                border_color = "#17a2b8"
-                bg_color = "rgba(23, 162, 184, 0.12)"
-                badge_text = "🔵 **[УМЕРЕННЫЙ СИГНАЛ]** — Ставка оформлена автоматически"
-            else:
-                border_color = "#dc3545"
-                bg_color = "rgba(220, 53, 69, 0.12)"
-                badge_text = "🔴 **[ПРОПУСК МАТЧА]** — Риски высоки, ставка не делается"
-
-            st.markdown(f"""
-            <div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.4);">
-                <p style="color: {border_color}; font-weight: bold; margin-bottom: 6px; font-size: 13px;">{badge_text}</p>
-                <h4 style="margin-top: 0; color: #ffffff;">🛡️ {idx+1}. {m['home']} <span style="color: #ff4b4b;">VS</span> ⚔️ {m['away']}</h4>
-                <p style="color: #cbd5e1; font-size: 14px; margin-bottom: 8px;">🌍 <b>Лига:</b> {league_name} &nbsp;|&nbsp; ⏰ <b>Время (UTC):</b> {m['time']}</p>
-                <p style="color: #e2e8f0; font-size: 14px;">📊 <b>Котировки:</b> П1: <code>{m['bh']}</code> | Х: <code>{m['bd']}</code> | П2: <code>{m['ba']}</code></p>
-                <p style="color: #e2e8f0; font-size: 14px;">🤖 <b>Вероятности ИИ:</b> Хозяева: <code>{m['p_h']*100:.1f}%</code> | Ничья: <code>{m['p_d']*100:.1f}%</code> | Гости: <code>{m['p_a']*100:.1f}%</code></p>
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
-                <p style="font-style: italic; color: #f8fafc; margin-bottom: 0;">{m['ai_text']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+                    cols[3].error("Проиграна 😢")
+                    if cols[4].button("↩️ Сбросить", key=f"reset_{idx}"):
+                        b["status"] = "pending"
+                        st.session_state.app_data["bank"] += b["stake"]
+                        save_history(st.session_state.app_data)
+                        st.rerun()
+                st.markdown("---")
 
 with tab2:
-    st.markdown("### 📊 Статистика и Процент проходов")
+    st.markdown("### 📊 Статистика и Процент проходов (Win Rate)")
     bets = st.session_state.app_data.get("bets", [])
     real_bets = [b for b in bets if b["status"] in ["won", "lost", "pending"]]
     total_bets = len(real_bets)
@@ -414,72 +397,34 @@ with tab2:
     win_rate = (won_bets / settled_count * 100) if settled_count > 0 else 0.0
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("Всего реальных ставок", total_bets)
+    col_m1.metric("Всего ставок", total_bets)
     col_m2.metric("Выиграно / Проиграно", f"{won_bets} / {lost_bets}")
     col_m3.metric("Процент проходов (Win Rate)", f"{win_rate:.1f}%")
     col_m4.metric("В ожидании", pending_bets)
 
-    st.markdown("---")
-    st.markdown("### 📝 История ставок")
-    if real_bets:
-        for idx, b in enumerate(reversed(real_bets)):
-            status = b["status"]
-            if status == "won":
-                b_color = "#28a745"
-                b_text = "✅ Выиграла"
-            elif status == "lost":
-                b_color = "#dc3545"
-                b_text = "❌ Проиграла"
-            else:
-                b_color = "#17a2b8"
-                b_text = "⏳ Ожидается"
-
-            st.markdown(f"""
-            <div style="background-color: rgba(255,255,255,0.05); border-left: 4px solid {b_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
-                <p style="margin: 0; color: #ffffff; font-weight: bold;">{len(real_bets) - idx}. Матч: {b['match']} <span style="font-size: 12px; color: #94a3b8;">({b.get('league', 'Лига')})</span></p>
-                <p style="margin: 6px 0 0 0; color: #cbd5e1; font-size: 14px;">
-                    🎯 Выбор ИИ: <b style="color: #38bdf8;">{b['pick']}</b> &nbsp;|&nbsp; 📊 Кэф: <code>{b['odd']}</code> &nbsp;|&nbsp; Статус: <span style="color: {b_color}; font-weight: bold;">{b_text}</span>
-                </p>
-                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">📅 Дата: {b.get('date', '—')}</p>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("История ставок пока пуста.")
-
 with tab3:
     st.markdown("### 🧠 Многокруговое обучение ИИ (Архив + Эпохи)")
-    st.write("""
-    Здесь вы можете запустить обучение модели на архивных матчах сразу в несколько кругов (эпох). 
-    Каждый новый круг позволяет ИИ заново пересчитать матчи с учетом уже обновленных весов и продолжить улучшать свою стратегию.
-    """)
+    st.write("Загрузите официальную открытую базу реальных матчей из европейских лиг и запустите многокруговое обучение (эпохи) для точной калибровки весов модели.")
     
-    epochs_count = st.slider("Количество кругов обучения (эпох за один клик)", min_value=1, max_value=10, value=3, step=1)
-    
-    col_btn1, col_btn2 = st.columns(2)
-    
-    with col_btn1:
-        if st.button("⚡ Запустить обучение на архиве (несколько кругов)"):
-            if not odds_api_key:
-                st.warning("Введите API ключ!")
+    if st.button("📥 Загрузить архив реальных матчей (Европа)"):
+        with st.spinner("Скачиваем базу матчей..."):
+            count, msg = load_public_football_archive()
+            if count > 0:
+                st.success(msg)
             else:
-                with st.spinner(f"ИИ проводит {epochs_count} кругов обучения по архиву матчей..."):
-                    trained_n, arch_logs = train_on_archive_epochs(odds_api_key, epochs=epochs_count)
-                    st.success(f"Успешно проведено кругов: {epochs_count} (обработано записей: {trained_n})")
-                    with st.expander("📋 Подробный лог всех кругов обучения"):
-                        for line in arch_logs:
-                            st.write(line)
+                st.error(msg)
 
-    with col_btn2:
-        if st.button("🔄 Проверить свежие ставки и обучить на них"):
-            if not odds_api_key:
-                st.warning("Введите API ключ!")
-            else:
-                with st.spinner("Сверяем исходы свежих матчей и обучаем модель..."):
-                    updated, logs = update_pending_results_and_learn(odds_api_key)
-                    st.success(f"Проверено и обновлено ставок: {updated}")
-                    with st.expander("📋 Лог проверки свежих ставок"):
-                        for line in logs:
-                            st.write(line)
+    st.markdown(f"📦 Загружено матчей в базе архива: **{len(st.session_state.app_data.get('archive_matches', []))}**")
+    
+    epochs_count = st.slider("Количество кругов обучения (эпох за один клик)", min_value=1, max_value=20, value=5, step=1)
+    
+    if st.button("⚡ Запустить обучение в несколько кругов"):
+        with st.spinner(f"ИИ проводит {epochs_count} кругов обучения..."):
+            trained_n, arch_logs = train_on_epochs_multisource(epochs=epochs_count)
+            st.success(f"Успешно проведено кругов: {epochs_count} (обработано записей в базе: {trained_n})")
+            with st.expander("📋 Подробный лог всех кругов обучения"):
+                for line in arch_logs:
+                    st.write(line)
 
     history_data = st.session_state.app_data
     st.metric("Текущий баланс банка", f"{history_data['bank']:.2f} у.е.")
@@ -490,5 +435,5 @@ with tab3:
 with tab4:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Бот поддерживает многокруговое (эпохальное) обучение на архиве матчей и автоматическую корректировку весов по итогам реальных ставок.
+    Профессиональный бот для анализа футбольных матчей, интеграции с The Odds API, автоматического поиска валуйных сигналов и самообучения нейро-модели методом эпох на исторических датасетах.
     """)
