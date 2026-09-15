@@ -50,7 +50,7 @@ section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,sectio
 .pos{color:#4ade80;font-weight:700}.neg{color:#f87171;font-weight:700}
 </style>""", unsafe_allow_html=True)
 
-# ================= ДАННЫЕ (другие виды) =================
+# ================= ДАННЫЕ =================
 @st.cache_data(ttl=86400)
 def ts_all_leagues():
     try:
@@ -58,6 +58,22 @@ def ts_all_leagues():
         return (r.json() or {}).get("leagues",[]) or []
     except Exception as e:
         log_err("all_leagues",e); return []
+@st.cache_data(ttl=3600)
+def ts_events_day(dstr,sport):
+    """ВСЕ матчи вида спорта за дату — по всем лигам (как fixtures в футболе)"""
+    out=[]
+    try:
+        r=requests.get(f"{API}/eventsday.php?d={dstr}&s={sport}",timeout=20)
+        for e in (r.json() or {}).get("events",[]) or []:
+            hs,as_=e.get("intHomeScore"),e.get("intAwayScore")
+            out.append({"id":e.get("idEvent"),"h":e.get("strHomeTeam") or "",
+                "a":e.get("strAwayTeam") or "","date":e.get("dateEvent") or "",
+                "hs":int(hs) if hs not in (None,"") else None,
+                "as":int(as_) if as_ not in (None,"") else None,
+                "league":e.get("strLeague") or sport,"src":"api"})
+    except Exception as e:
+        log_err(f"eventsday {dstr} {sport}",e)
+    return out
 @st.cache_data(ttl=1800)
 def ts_events(lid):
     out=[]
@@ -158,7 +174,7 @@ def kelly(prob,odds,bank,frac=0.25):
     b=odds-1; k=(b*prob-(1-prob))/b
     return round(min(max(0,k*frac),0.05)*bank,2)
 
-# ================= СОСТОЯНИЕ ПО ВИДАМ =================
+# ================= СОСТОЯНИЕ =================
 def osp_load():
     if os.path.exists(OSP_FILE):
         try: return json.load(open(OSP_FILE,encoding="utf-8"))
@@ -174,7 +190,7 @@ def osp_sport(allst,sport):
 
 LEAGUES_ALL=ts_all_leagues()
 
-# ================= РЕНДЕР ВКЛАДКИ ВИДА =================
+# ================= ВКЛАДКА ВИДА =================
 def render_sport(sport):
     cfg=SPORTS[sport]
     ALL=osp_load(); S=osp_sport(ALL,sport)
@@ -184,39 +200,55 @@ def render_sport(sport):
         resolved=[o for o in opts if any(p.lower() in (o.get("strLeague") or "").lower() for p in PRESETS.get(sport,[]))]
         names=[f"{o['strLeague']} (id {o['idLeague']})" for o in opts]
         res_names=[f"{o['strLeague']} (id {o['idLeague']})" for o in resolved]
-        c1,c2,c3=st.columns([2,1,1])
-        sel=c1.multiselect("Лиги (авто-поиск TheSportsDB)",names,default=res_names[:3],key=f"ms{sport}")
-        man=c2.text_input("ID лиги вручную","",key=f"ti{sport}")
-        days=c3.slider("Горизонт, дней",1,14,7,key=f"d{sport}")
+        st.caption("🔎 Матчи ищутся по ВСЕМ лигам вида на каждый день горизонта (как fixtures в футболе). Лиги ниже нужны только для обучения модели на истории.")
+        c1,c2=st.columns([3,1])
+        sel=c1.multiselect("Лиги для обучения (история)",names,default=res_names[:3],key=f"ms{sport}")
+        days=c2.slider("Горизонт, дней",1,21,10,key=f"d{sport}")
+        search_all=st.checkbox("Искать матчи по всем лигам вида",value=True,key=f"sa{sport}")
+        man=st.text_input("ID лиги вручную (добавить к обучению)","",key=f"ti{sport}")
         up=st.file_uploader("Свой CSV (Date,Home,Away,HS,AS) — для лиг вне API",type=["csv"],key=f"u{sport}")
         if st.button(f"⚡ СКАН {cfg['icon']}",type="primary",key=f"scan{sport}"):
+            today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+            limit=today+timedelta(days=days)
+            rows=[]; seen=set()
+            prog=st.progress(0.0,text="🔎 Поиск матчей по всем лигам вида...")
+            for off in range(days):
+                dstr=(today+timedelta(days=off)).strftime("%Y-%m-%d")
+                for r in ts_events_day(dstr,cfg["tsdb"]):
+                    if r["id"] not in seen:
+                        seen.add(r["id"]); rows.append(r)
+                prog.progress((off+1)/days*0.6)
+            prog.progress(0.7,text="📚 Обучение на истории выбранных лиг...")
             ids=[o["idLeague"] for o in opts if f"{o['strLeague']} (id {o['idLeague']})" in sel]
             if man.strip().isdigit(): ids.append(man.strip())
-            ids=list(dict.fromkeys(ids))[:6]
-            rows=[]
-            if ids:
-                with ThreadPoolExecutor(max_workers=4) as ex:
-                    for d in ex.map(ts_events,ids): rows+=d
+            for lid in list(dict.fromkeys(ids))[:4]:
+                for r in ts_events(lid):
+                    if r["id"] not in seen:
+                        seen.add(r["id"]); rows.append(r)
             if up is not None:
                 uprows=parse_upload(up)
-                for r in uprows: r["id"]=f"{sport}-{r['id']}"
-                rows+=uprows
+                for r in uprows:
+                    r["id"]=f"{sport}-{r['id']}"
+                    if r["id"] not in seen:
+                        seen.add(r["id"]); rows.append(r)
+            prog.progress(0.85,text="🧠 Расчёт вероятностей...")
             eng=SportEngine(cfg)
             past=sorted([r for r in rows if r["hs"] is not None and r["as"] is not None and pdate(r["date"])],key=lambda r:pdate(r["date"]))
             for r in past: eng.add(r["h"],r["a"],r["hs"],r["as"])
-            today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
-            limit=today+timedelta(days=days)
+            sel_set={n.split(" (id")[0] for n in sel}
             cards=[]
             for r in rows:
                 d=pdate(r["date"])
                 if not d or not (today<=d<=limit): continue
                 if r["hs"] is not None or not r["h"] or not r["a"]: continue
+                if not search_all and r["league"] not in sel_set: continue
                 nd=(d-today).days
                 cards.append({"eid":r["id"],"league":r["league"] or sport,"src":r["src"],
                     "h":r["h"],"a":r["a"],"date":d.strftime("%d.%m"),
                     "when":"сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн"),
                     "markets":eng.predict(r["h"],r["a"])})
             cards.sort(key=lambda c:c["date"])
+            prog.progress(1.0); prog.empty()
             st.session_state["cards_"+sport]=cards
             st.session_state["trained_"+sport]=len(past)
             st.rerun()
@@ -230,7 +262,7 @@ def render_sport(sport):
   <span class="chip src">{'🌐 API' if c['src']=='api' else '📁 CSV'}</span></div>
  <div class="teams">{c['h']} <span>—</span> {c['a']}</div>
  <div class="mrow hdr"><span>Рынок</span><span>Вероятность модели</span><span>Фэйр-кэф</span><span>Мин. кэф ставки</span></div>
- {''.join(f"<div class='mrow'><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{m['p']*100:.0f}%'></i></div><span style='color:#4ade80'>{m['p']*100:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>≥ {m['min_ok']:.2f}</span></div>" for m in c['markets'])}
+ {''.join(f"<div class='mrow"><b style='color:#facc15'>{m['name']}</b><div><div class='bar'><i style='width:{m['p']*100:.0f}%'></i></div><span style='color:#4ade80'>{m['p']*100:.1f}%</span></div><span style='color:#fff;font-weight:700'>{m['fair']:.2f}</span><span class='pos'>≥ {m['min_ok']:.2f}</span></div>" for m in c['markets'])}
 </div>""",unsafe_allow_html=True)
             kk=f"{sport}_{c['eid']}"
             cc=st.columns([2,1,1])
@@ -248,7 +280,8 @@ def render_sport(sport):
                         "market":mkt,"pick":mkt,"odds":odd,"prob":prob,
                         "stake":kelly(prob,odd,S2["bank"]),"status":"pending"})
                     osp_save(A2); st.success("✅ Добавлено"); st.rerun()
-        if not cards: st.info("Выбери лиги (или загрузи CSV) и нажми СКАН.")
+        if not cards:
+            st.info("В этом окне дат матчей не найдено. Увеличь горизонт (сезоны стартуют в октябре) или загрузи свой CSV.")
     with sub[1]:
         st.header(f"💼 Портфель {cfg['icon']}")
         ALLcur=osp_load(); Sc=osp_sport(ALLcur,sport)
