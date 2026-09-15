@@ -1,12 +1,12 @@
 import streamlit as st
+import requests
 import json
 import os
 from datetime import datetime, timedelta
-import numpy as np
 
-st.set_page_config(page_title="Football Betting AI", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Football Betting AI (API)", page_icon="🎯", layout="wide")
 
-HISTORY_FILE = "betting_ai_data.json"
+HISTORY_FILE = "betting_api_data.json"
 
 def load_data():
     if os.path.exists(HISTORY_FILE):
@@ -20,43 +20,49 @@ def save_data(data):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-# Встроенная база данных актуальных матчей и коэффициентов сезона 2026/2027
-def get_mock_database():
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return {
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": [
-            {"home": "Arsenal", "away": "Manchester United", "date": today + timedelta(days=1), "h_odds": 1.75, "d_odds": 3.80, "a_odds": 4.50, "h_elo_past": [1, 1, 3], "a_elo_past": [1, 0, 1]},
-            {"home": "Manchester City", "away": "Liverpool", "date": today + timedelta(days=1), "h_odds": 2.05, "d_odds": 3.60, "a_odds": 3.40, "h_elo_past": [3, 3, 1], "a_elo_past": [3, 1, 3]},
-            {"home": "Chelsea", "away": "Tottenham", "date": today + timedelta(days=2), "h_odds": 2.20, "d_odds": 3.40, "a_odds": 3.20, "h_elo_past": [1, 3, 0], "a_elo_past": [3, 1, 1]},
-            {"home": "Newcastle", "away": "Aston Villa", "date": today + timedelta(days=3), "h_odds": 1.90, "d_odds": 3.50, "a_odds": 3.90, "h_elo_past": [3, 1, 3], "a_elo_past": [1, 1, 0]},
-        ],
-        "🇪🇸 Испания (Ла Лига)": [
-            {"home": "Real Madrid", "away": "Barcelona", "date": today + timedelta(days=1), "h_odds": 2.10, "d_odds": 3.50, "a_odds": 3.30, "h_elo_past": [3, 3, 3], "a_elo_past": [3, 3, 1]},
-            {"home": "Atletico Madrid", "away": "Villarreal", "date": today + timedelta(days=2), "h_odds": 1.80, "d_odds": 3.60, "a_odds": 4.40, "h_elo_past": [3, 1, 3], "a_elo_past": [1, 0, 3]},
-            {"home": "Real Sociedad", "away": "Sevilla", "date": today + timedelta(days=3), "h_odds": 1.95, "d_odds": 3.30, "a_odds": 4.10, "h_elo_past": [1, 1, 3], "a_elo_past": [0, 1, 1]},
-        ],
-        "🇮🇹 Италия (Серия А)": [
-            {"home": "Inter", "away": "Juventus", "date": today + timedelta(days=1), "h_odds": 1.95, "d_odds": 3.40, "a_odds": 4.00, "h_elo_past": [3, 3, 1], "a_elo_past": [3, 1, 3]},
-            {"home": "AC Milan", "away": "Napoli", "date": today + timedelta(days=2), "h_odds": 2.25, "d_odds": 3.30, "a_odds": 3.20, "h_elo_past": [1, 3, 3], "a_elo_past": [3, 3, 0]},
-        ],
-        "🇩🇪 Германия (Бундеслига)": [
-            {"home": "Bayern Munich", "away": "Borussia Dortmund", "date": today + timedelta(days=1), "h_odds": 1.55, "d_odds": 4.50, "a_odds": 5.20, "h_elo_past": [3, 3, 3], "a_elo_past": [3, 1, 3]},
-            {"home": "RB Leipzig", "away": "Bayer Leverkusen", "date": today + timedelta(days=2), "h_odds": 2.40, "d_odds": 3.50, "a_odds": 2.80, "h_elo_past": [1, 3, 1], "a_elo_past": [3, 3, 1]},
-        ]
-    }
+def fetch_api_matches(competition_code, api_key):
+    url = f"https://api.football-data.org/v4/competitions/{competition_code}/matches"
+    headers = {'X-Auth-Token': api_key.strip()}
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code == 200:
+            return r.json().get("matches", [])
+        elif r.status_code == 400:
+            st.error("Ошибка 400: Неверный код лиги или параметры запроса.")
+        elif r.status_code == 403:
+            st.error("Ошибка 403: Неверный API-ключ или истек лимит запросов.")
+        elif r.status_code == 429:
+            st.error("Ошибка 429: Слишком много запросов. Подожди минуту.")
+        else:
+            st.error(f"Ошибка сервера API: {r.status_code} — {r.text}")
+        return []
+    except Exception as e:
+        st.error(f"Ошибка подключения к API: {e}")
+        return []
 
-def calculate_dynamic_elo(league_data):
+def calculate_elo(matches):
     elo = {}
-    for match in league_data:
-        h, a = match["home"], match["away"]
+    for match in matches:
+        if match.get("status") != "FINISHED":
+            continue
+        h = match.get("homeTeam", {}).get("name")
+        a = match.get("awayTeam", {}).get("name")
+        score = match.get("score", {}).get("fullTime", {})
+        s1 = score.get("home")
+        s2 = score.get("away")
+        
+        if not h or not a or s1 is None or s2 is None:
+            continue
+            
         if h not in elo: elo[h] = 1500
         if a not in elo: elo[a] = 1500
         
-        # Симуляция изменения рейтинга по прошлым матчам
-        for res in match["h_elo_past"]:
-            r1, r2 = elo[h], elo[a]
-            e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
-            elo[h] = r1 + 16 * (res/3 - e1)
+        r1, r2 = elo[h], elo[a]
+        e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
+        result = 1 if s1 > s2 else (0.5 if s1 == s2 else 0)
+        
+        elo[h] = r1 + 32 * (result - e1)
+        elo[a] = r2 + 32 * ((1 - result) - (1 - e1))
     return elo
 
 def predict_match(elo, home, away):
@@ -65,7 +71,7 @@ def predict_match(elo, home, away):
     
     p_home = 1 / (1 + 10 ** ((r2 - r1) / 400))
     p_away = 1 / (1 + 10 ** ((r1 - r2) / 400))
-    p_draw = 0.26 * (1 - abs(p_home - p_away)) # Статистическая поправка на ничью
+    p_draw = 0.25 * (1 - abs(p_home - p_away))
     
     total = p_home + p_draw + p_away
     return [
@@ -85,12 +91,14 @@ def kelly_stake(prob, odds, bank, fraction=0.25):
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 
-st.title("🎯 Football Betting AI Assistant")
+st.title("🎯 Football Betting AI (Live API)")
 
 with st.sidebar:
-    st.header("⚙️ Управление банком")
+    st.header("⚙️ Настройки")
+    api_key = st.text_input("API Ключ (football-data.org)", type="password", value="")
+    
     bank = st.session_state.data["bank"]
-    st.metric("💰 Текущий банк", f"{bank:.2f} у.е.")
+    st.metric("💰 Банк", f"{bank:.2f} у.е.")
     
     kelly_frac = st.slider("Дробь Келли", 0.1, 0.5, 0.25, 0.05)
     min_ev = st.slider("Мин. перевес (EV %)", 0, 15, 3) / 100
@@ -100,72 +108,125 @@ with st.sidebar:
         save_data(st.session_state.data)
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(["🎯 Прогнозы и вердикт ИИ", "📋 Мои ставки", "📊 Статистика"])
+tab1, tab2, tab3 = st.tabs(["🎯 Прогнозы и анализ", "📋 Мои ставки", "📊 Статистика"])
 
 with tab1:
-    st.header("Анализ предстоящих матчей")
+    st.header("Загрузка расписания из API")
     
-    db = get_mock_database()
-    selected_league = st.selectbox("Выберите лигу", list(db.keys()))
+    leagues = {
+        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "PL",
+        "🇪🇸 Испания (Ла Лига)": "PD",
+        "🇮🇹 Италия (Серия А)": "SA",
+        "🇩🇪 Германия (Бундеслига)": "BL1",
+        "🇫🇷 Франция (Лига 1)": "FL1",
+        "🇪🇺 Лига Чемпионов": "CL"
+    }
     
-    if st.button("🚀 Запустить анализ матчей", type="primary"):
-        matches = db[selected_league]
-        elo = calculate_dynamic_elo(matches)
+    selected_league = st.selectbox("Лига / Турнир", list(leagues.keys()))
+    days_ahead = st.slider("Горизонт анализа (дней вперед)", 1, 60, 30)
+    
+    if st.button("🚀 Запросить матчи и запустить анализ", type="primary"):
+        if not api_key:
+            st.error("❌ Сначала введи свой API-ключ в боковой панели слева!")
+            st.stop()
+            
+        league_code = leagues[selected_league]
         
-        forecasts = []
-        for match in matches:
-            home = match["home"]
-            away = match["away"]
+        with st.spinner("Запрос данных с сервера..."):
+            matches = fetch_api_matches(league_code, api_key)
             
-            predictions = predict_match(elo, home, away)
-            odds_map = {"П1": match["h_odds"], "X": match["d_odds"], "П2": match["a_odds"]}
-            
-            best_pick = None
-            best_ev = -1
-            best_prob = 0
-            best_odd = 0
-            
-            for pick, prob in predictions:
-                odd = odds_map[pick]
-                ev = (prob * odd) - 1.0
-                if ev > best_ev:
-                    best_ev = ev
-                    best_pick = pick
-                    best_prob = prob
-                    best_odd = odd
-            
-            # Вердикт ИИ: стоит ставить или пропустить
-            recommendation = "🟢 СТОИТ СТАВИТЬ" if best_ev >= min_ev else "🔴 ПРОПУСТИТЬ"
-            stake = kelly_stake(best_prob, best_odd, bank, kelly_frac) if best_ev >= min_ev else 0
-            
-            forecasts.append({
-                "league": selected_league,
-                "match": f"{home} vs {away}",
-                "date": match["date"].strftime('%d.%m.%Y %H:%M'),
-                "pick": best_pick,
-                "prob": best_prob,
-                "odds": best_odd,
-                "ev": best_ev,
-                "recommendation": recommendation,
-                "stake": stake
-            })
+            if not matches:
+                st.warning("⚠️ Сервер вернул пустой список матчей. Возможно, в этой лиге сейчас пауза.")
+                st.stop()
+                
+            st.success(f"✅ Получено записей матчей: {len(matches)}")
         
-        st.session_state.data["forecasts"] = forecasts
-        save_data(st.session_state.data)
-        st.success(f"✅ Анализ завершен! Обработано матчей: {len(forecasts)}")
-        st.rerun()
+        with st.spinner("Считаем рейтинг сил и ищем валуй..."):
+            elo = calculate_elo(matches)
+            
+            now = datetime.utcnow()
+            limit_date = now + timedelta(days=days_ahead)
+            
+            forecasts = []
+            for match in matches:
+                status = match.get("status")
+                # Берем запланированные матчи
+                if status not in ["SCHEDULED", "TIMED"]:
+                    continue
+                
+                utc_date_str = match.get("utcDate")
+                if not utc_date_str:
+                    continue
+                
+                try:
+                    match_date = datetime.strptime(utc_date_str[:19], "%Y-%m-%dT%H:%M:%S")
+                except:
+                    continue
+                
+                # Фильтр по дате (вперед)
+                if match_date > limit_date:
+                    continue
+                
+                home = match.get("homeTeam", {}).get("name")
+                away = match.get("awayTeam", {}).get("name")
+                
+                if not home or not away:
+                    continue
+                
+                predictions = predict_match(elo, home, away)
+                
+                best_pick = None
+                best_ev = -1
+                best_prob = 0
+                best_odd = 0
+                
+                for pick, prob in predictions:
+                    if prob > 0:
+                        # Условный рыночный кэф на базе модели
+                        odd = round(1 / prob * 0.98, 2)
+                        ev = (prob * odd) - 1.0
+                        
+                        if ev > best_ev:
+                            best_ev = ev
+                            best_pick = pick
+                            best_prob = prob
+                            best_odd = odd
+                
+                recommendation = "🟢 СТОИТ СТАВИТЬ" if best_ev >= min_ev else "🔴 ПРОПУСТИТЬ"
+                stake = kelly_stake(best_prob, best_odd, bank, kelly_frac) if best_ev >= min_ev else 0
+                
+                forecasts.append({
+                    "league": selected_league,
+                    "match": f"{home} vs {away}",
+                    "date": match_date.strftime('%d.%m.%Y %H:%M (UTC)'),
+                    "pick": best_pick,
+                    "prob": best_prob,
+                    "odds": best_odd,
+                    "ev": best_ev,
+                    "recommendation": recommendation,
+                    "stake": stake
+                })
+            
+            st.session_state.data["forecasts"] = forecasts
+            save_data(st.session_state.data)
+            
+            if forecasts:
+            	st.success(f"✅ Найдено матчей в диапазоне: {len(forecasts)}")
+            else:
+                st.warning("⚠️ На выбранный период нет активных матчей со статусом SCHEDULED. Попробуй увеличить горизонт дней.")
+            
+            st.rerun()
 
     forecasts = st.session_state.data.get("forecasts", [])
     if forecasts:
-        st.subheader("📊 Результаты прогнозирования")
+        st.subheader(f"📊 Доступные матчи и вердикты: {len(forecasts)}")
         for idx, f in enumerate(forecasts):
             with st.container():
-                st.markdown(f"### ⚽ {f['match']} ({f['date']})")
-                
+                st.markdown(f"### ⚽ {f['match']}")
                 c1, c2, c3 = st.columns([2, 1, 1])
                 with c1:
-                    st.markdown(f"**Вердикт ИИ:** {f['recommendation']}")
-                    st.caption(f"Лига: {f['league']} | Выбор модели: **{f['pick']}**")
+                    st.markdown(f"**Вердикт:** {f['recommendation']}")
+                    st.caption(f"Лига: {f['league']} | Дата: 📅 {f['date']} | Выбор: **{f['pick']}**")
                 with c2:
                     st.metric("Вероятность", f"{f['prob']*100:.1f}%")
                 with c3:
@@ -176,7 +237,7 @@ with tab1:
                 m2.metric("Рекомендация Келли", f"{f['stake']:.2f} у.е.")
                 
                 if f['recommendation'] == "🟢 СТОИТ СТАВИТЬ" and f['stake'] > 0:
-                    if st.button(f"📥 Добавить в мои ставки #{idx+1}", key=f"add_rec_{idx}"):
+                    if st.button(f"📥 Добавить в мои ставки #{idx+1}", key=f"add_api_bet_{idx}"):
                         new_bet = {
                             "match": f['match'],
                             "league": f['league'],
@@ -187,16 +248,16 @@ with tab1:
                         }
                         st.session_state.data["bets"].append(new_bet)
                         save_data(st.session_state.data)
-                        st.success("Ставка успешно добавлена!")
+                        st.success("Ставка добавлена в управление!")
                 st.markdown("---")
     else:
-        st.info("👆 Нажмите кнопку «Запустить анализ матчей», чтобы увидеть прогнозы и вердикты модели.")
+        st.info("👆 Вставь ключ в сайдбар, выбери лигу, поставь горизонт дней побольше (например, 30-60) и нажми кнопку запуска.")
 
 with tab2:
     st.header("📋 Управление активными ставками")
     bets = st.session_state.data.get("bets", [])
     if not bets:
-        st.info("Нет активных ставок. Добавьте их из вкладки прогнозов.")
+        st.info("Нет активных ставок.")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
         completed = [b for b in bets if b.get("status") in ["won", "lost"]]
@@ -230,7 +291,7 @@ with tab2:
                     st.markdown("---")
         
         if completed:
-            st.subheader(f"📁 Архив завершенных ставок ({len(completed)})")
+            st.subheader(f"📁 Архив ({len(completed)})")
             for bet in completed[-10:]:
                 status_icon = "🟢" if bet.get("status") == "won" else "🔴"
                 st.text(f"{status_icon} {bet.get('match')} | {bet.get('pick')} @ {bet.get('odds')} — Ставка: {bet.get('stake')} у.е.")
