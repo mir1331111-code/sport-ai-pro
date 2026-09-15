@@ -4,8 +4,9 @@ import numpy as np
 from scipy.stats import poisson
 import json
 import os
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="AI Sport Bot Pro (Авто-Мультилига)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="AI Sport Bot Pro (Будущие матчи)", page_icon="⚽", layout="wide")
 
 # Дизайн и стили
 st.markdown("""
@@ -58,20 +59,22 @@ STAKE_SIZE = 100.0
 def get_league_urls():
     """Алгоритм автоопределения актуального сезона и правильных URL"""
     base = "https://www.football-data.co.uk/mmz4281/"
-    seasons = ["2627", "2526", "2425"]
+    seasons = ["2627", "2526", "2425"] 
+    
     leagues = {
         "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)": "E0.csv",
         "🇪🇸 Испания (Ла Лига)": "SP1.csv",
         "🇮🇹 Италия (Серия А)": "I1.csv",
         "🇩🇪 Германия (Бундеслига)": "D1.csv",
         "🇫🇷 Франция (Лига 1)": "F1.csv",
-        "🇳🇱 Нидерланды (Эредивизи)": "N1.csv",
-        "🇵🇹 Португалия (Примейра)": "P1.csv",
+        "🇷🇺 Россия (РПЛ)": "R1.csv",
         "🇹🇷 Турция (Суперлига)": "T1.csv",
-        "🇧🇪 Бельгия (Про-лига)": "B1.csv"
+        "🇧🇪 Бельгия (Про-лига)": "B1.csv",
+        "🏆 Лига Чемпионов (УЕФА)": "C1.csv",
+        "🏆 Лига Европы (УЕФА)": "EU1.csv"
     }
     
-    active_season = "2627"
+    active_season = "2526"
     for season in seasons:
         try:
             test_url = f"{base}{season}/E0.csv"
@@ -120,7 +123,7 @@ def save_history(data):
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_history()
 
-st.title("⚽ AI Sport Bot Pro (Массовая автозагрузка лиг)")
+st.title("⚽ AI Sport Bot Pro (Прогноз будущих матчей)")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("⚙️ Настройки и Банк")
@@ -139,35 +142,47 @@ if st.sidebar.button("🔄 Полный сброс системы"):
 
 # --- ИНТЕРФЕЙС ВКЛАДОК ---
 tab1, tab2, tab3 = st.tabs([
-    "🌐 Автозагрузка всех лиг", 
+    "🌐 Прогноз будущих матчей", 
     "📜 История и Активные ставки", 
     "⚙️ О системе"
 ])
 
 with tab1:
-    st.markdown("### 📥 Массовое скачивание и алгоритмический анализ чемпионатов")
-    st.write("Приложение автоматически определяет актуальный сезон, скачивает свежие данные и применяет модель Пуассона для расчета силы атаки и обороны каждой команды.")
+    st.markdown("### 📅 Алгоритмический прогноз на будущие матчи")
+    st.write("Модель обучается на *сыгранных* матчах текущего сезона, чтобы рассчитать силу команд, а затем применяет эти данные для поиска валуйных ставок в *будущих* матчах.")
 
     selected_leagues = st.multiselect(
-        "Отметьте лиги для автоматической загрузки:",
+        "Отметьте лиги и турниры для анализа:",
         options=list(leagues_dict.keys()),
         default=[
             "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Англия (АПЛ)", 
             "🇪🇸 Испания (Ла Лига)", 
-            "🇮🇹 Италия (Серия А)", 
-            "🇩🇪 Германия (Бундеслига)", 
-            "🇹🇷 Турция (Суперлига)"
+            "🇷🇺 Россия (РПЛ)",
+            "🏆 Лига Чемпионов (УЕФА)"
         ]
     )
 
-    if st.button("🚀 Запустить массовую загрузку и ИИ-анализ", type="primary"):
+    # ПОЛЗУНОК ПО ДНЯМ
+    days_ahead = st.slider(
+        "Показывать матчи на ближайшие дни:", 
+        min_value=1, 
+        max_value=14, 
+        value=3,
+        help="Бот проанализирует и покажет прогнозы только на те матчи, которые состоятся в выбранный период."
+    )
+    
+    today = pd.Timestamp.now().normalize()
+    future_limit = today + pd.Timedelta(days=days_ahead)
+    st.info(f"📆 Диапазон анализа: с **{today.strftime('%d.%m.%Y')}** по **{future_limit.strftime('%d.%m.%Y')}**")
+
+    if st.button("🚀 Запустить анализ будущих матчей", type="primary"):
         if not selected_leagues:
-            st.warning("Выберите хотя бы одну лигу!")
+            st.warning("Выберите хотя бы один турнир!")
         else:
             all_dfs = []
             success_count = 0
             
-            with st.spinner("Загрузка и объединение данных..."):
+            with st.spinner("Загрузка актуальных расписаний и результатов..."):
                 for league_name in selected_leagues:
                     url = leagues_dict[league_name]
                     try:
@@ -176,61 +191,71 @@ with tab1:
                         all_dfs.append(df_temp)
                         success_count += 1
                     except Exception as e:
-                        st.warning(f"Не удалось подтянуть данные для {league_name}. Пропускаем.")
+                        st.warning(f"Не удалось загрузить {league_name}. Возможно, расписание еще не опубликовано.")
 
             if not all_dfs:
-                st.error("Не удалось загрузить ни один файл. Проверьте соединение.")
+                st.error("Не удалось загрузить данные.")
             else:
                 combined_df = pd.concat(all_dfs, ignore_index=True)
-                st.success(f"Успешно загружено лиг: {success_count}. Всего матчей в базе: {len(combined_df)}")
+                
+                # Приводим даты к формату datetime
+                combined_df['MatchDate'] = pd.to_datetime(combined_df['Date'], format='%d/%m/%y', errors='coerce')
+                
+                st.success(f"Загружено лиг: {success_count}. Всего строк в базе: {len(combined_df)}")
 
-                with st.spinner("Алгоритмический расчет сил команд и генерация прогнозов..."):
+                with st.spinner("1. Обучение модели на сыгранных матчах..."):
+                    # 1. ОБУЧЕНИЕ: берем только матчи, где уже есть результат (FTHG - Full Time Home Goals)
+                    past_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG'])]
+                    
+                    team_stats = {}
+                    for _, row in past_matches.iterrows():
+                        home = row['HomeTeam']
+                        away = row['AwayTeam']
+                        fthg = float(row['FTHG'])
+                        ftag = float(row['FTAG'])
+                        
+                        if home not in team_stats:
+                            team_stats[home] = {'home_goals': [], 'away_conceded': []}
+                        if away not in team_stats:
+                            team_stats[away] = {'away_goals': [], 'home_conceded': []}
+                            
+                        team_stats[home]['home_goals'].append(fthg)
+                        team_stats[away]['home_conceded'].append(fthg)
+                        team_stats[away]['away_goals'].append(ftag)
+                        team_stats[home]['away_conceded'].append(ftag)
+
+                    all_home_goals = [g for t in team_stats.values() for g in t['home_goals']]
+                    all_away_goals = [g for t in team_stats.values() for g in t['away_goals']]
+                    
+                    league_avg_home = np.mean(all_home_goals) if all_home_goals else 1.4
+                    league_avg_away = np.mean(all_away_goals) if all_away_goals else 1.1
+
+                with st.spinner(f"2. Прогнозирование матчей до {future_limit.strftime('%d.%m.%Y')}..."):
+                    # 2. ПРОГНОЗ: берем только будущие матчи в пределах слайдера
+                    future_matches = combined_df[
+                        (combined_df['MatchDate'] >= today) & 
+                        (combined_df['MatchDate'] <= future_limit)
+                    ]
+                    
+                    # Исключаем те, что уже сыграны (на всякий случай)
+                    future_matches = future_matches[pd.isna(future_matches['FTHG']) | (future_matches['FTHG'] == '')]
+
                     xg_w = current_weights.get("xg_w", 1.0)
                     app_data = st.session_state.app_data
                     bets = app_data["bets"]
                     existing_match_names = {b["match"] for b in bets}
                     bank = app_data["bank"]
 
-                    # 1. Собираем статистику с полной безопасной инициализацией ключей
-                    team_stats = {}
-                    valid_matches = combined_df[pd.notna(combined_df['FTHG']) & pd.notna(combined_df['FTAG'])]
-                    
-                    for _, row in valid_matches.iterrows():
-                        home = row['HomeTeam']
-                        away = row['AwayTeam']
-                        try:
-                            fthg = float(row['FTHG'])
-                            ftag = float(row['FTAG'])
-                        except ValueError:
-                            continue
-                        
-                        if home not in team_stats:
-                            team_stats[home] = {'home_goals': [], 'home_conceded': [], 'away_goals': [], 'away_conceded': []}
-                        if away not in team_stats:
-                            team_stats[away] = {'home_goals': [], 'home_conceded': [], 'away_goals': [], 'away_conceded': []}
-                            
-                        team_stats[home]['home_goals'].append(fthg)
-                        team_stats[home]['away_conceded'].append(ftag)
-                        
-                        team_stats[away]['away_goals'].append(ftag)
-                        team_stats[away]['home_conceded'].append(fthg)
-
-                    all_home_goals = [g for t in team_stats.values() for g in t['home_goals']]
-                    all_away_goals = [g for t in team_stats.values() for g in t['away_goals']]
-                    
-                    league_avg_home = np.mean(all_home_goals) if all_home_goals else 1.5
-                    league_avg_away = np.mean(all_away_goals) if all_away_goals else 1.2
-
                     found_forecasts = []
                     processed_count = 0
                     
-                    # 2. Прогнозирование матчей
-                    for _, row in combined_df.iterrows():
+                    for _, row in future_matches.iterrows():
                         home_team = row.get('HomeTeam')
                         away_team = row.get('AwayTeam')
-                        league_src = row.get('League_Source', 'Футбол')
+                        league_src = row.get('League_Source', 'Турнир')
+                        match_date = row.get('MatchDate')
 
-                        if pd.isna(home_team) or pd.isna(away_team):
+                        if pd.isna(home_team) or pd.isna(away_team) or pd.isna(match_date):
                             continue
 
                         home_odd = float(row['B365H']) if pd.notna(row.get('B365H')) else (float(row['PSH']) if pd.notna(row.get('PSH')) else 1.95)
@@ -239,15 +264,22 @@ with tab1:
 
                         processed_count += 1
 
-                        h_attack = np.mean(team_stats[home_team]['home_goals']) / max(0.1, league_avg_home) if home_team in team_stats and len(team_stats[home_team]['home_goals']) > 0 else 1.0
-                        a_defense = np.mean(team_stats[away_team]['home_conceded']) / max(0.1, league_avg_home) if away_team in team_stats and len(team_stats[away_team]['home_conceded']) > 0 else 1.0
-                        
-                        a_attack = np.mean(team_stats[away_team]['away_goals']) / max(0.1, league_avg_away) if away_team in team_stats and len(team_stats[away_team]['away_goals']) > 0 else 1.0
-                        h_defense = np.mean(team_stats[home_team]['away_conceded']) / max(0.1, league_avg_away) if home_team in team_stats and len(team_stats[home_team]['away_conceded']) > 0 else 1.0
+                        # Безопасное получение статистики (если команда новая, берем среднее = сила 1.0)
+                        h_goals = team_stats.get(home_team, {}).get('home_goals', [league_avg_home])
+                        a_conceded = team_stats.get(away_team, {}).get('home_conceded', [league_avg_home])
+                        a_goals = team_stats.get(away_team, {}).get('away_goals', [league_avg_away])
+                        h_conceded = team_stats.get(home_team, {}).get('away_conceded', [league_avg_away])
 
+                        h_attack = np.mean(h_goals) / max(0.1, league_avg_home)
+                        a_defense = np.mean(a_conceded) / max(0.1, league_avg_home)
+                        a_attack = np.mean(a_goals) / max(0.1, league_avg_away)
+                        h_defense = np.mean(h_conceded) / max(0.1, league_avg_away)
+
+                        # Ожидаемые голы (λ)
                         h_lam = max(0.3, h_attack * a_defense * league_avg_home * xg_w)
                         a_lam = max(0.3, a_attack * h_defense * league_avg_away * xg_w)
 
+                        # Матрица Пуассона (до 5 голов)
                         matrix = np.zeros((6, 6))
                         for h in range(6):
                             for a in range(6):
@@ -274,7 +306,9 @@ with tab1:
 
                         edge = (prob * odd) - 1.0
                         decision = "🟢 СТАВИМ" if edge > 0.03 and odd < 3.5 else "🔴 НЕ СТАВИМ"
-                        reason = f"Модель: λ={h_lam:.2f}/{a_lam:.2f}. Шанс: {prob*100:.1f}%, Edge: {edge*100:.1f}%."
+                        
+                        date_str = match_date.strftime('%d.%m')
+                        reason = f"Дата: {date_str}. λ={h_lam:.2f}/{a_lam:.2f}. Шанс: {prob*100:.1f}%, Edge: {edge*100:.1f}%."
 
                         forecast_item = {
                             "league_name": league_src,
@@ -308,14 +342,14 @@ with tab1:
                     app_data["bank"] = bank
                     app_data["scanned_forecasts"] = found_forecasts
                     save_history(app_data)
-                    st.success(f"✅ Обработано матчей: {processed_count}. Найдено выгодных ставок: {sum(1 for f in found_forecasts if 'СТАВИМ' in f['decision'])}")
+                    st.success(f"✅ Проанализировано будущих матчей: {processed_count}. Найдено выгодных ставок: {sum(1 for f in found_forecasts if 'СТАВИМ' in f['decision'])}")
                     st.rerun()
 
-    st.markdown("### 📋 Результаты автоматического анализа по всем лигам:", unsafe_allow_html=True)
+    st.markdown("### 📋 Прогнозы на выбранный период:", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
-        st.info("Список прогнозов пуст. Выберите лиги выше и нажмите кнопку запуска.")
+        st.info("Прогнозов на выбранный период пока нет. Увеличьте диапазон дней или выберите другие лиги.")
     else:
         for idx, f in enumerate(forecasts):
             l_name = f.get("league_name", "Спорт")
@@ -385,4 +419,12 @@ with tab2:
 
 with tab3:
     st.markdown("### ℹ️ О системе")
-    st.write("Режим массовой автозагрузки использует **алгоритм динамического поиска сезона**, скачивая данные напрямую с серверов football-data.co.uk. Встроенная модель Пуассона рассчитывает силу атаки и обороны каждой команды на основе реальных результатов текущего сезона.")
+    st.write("""
+    **Как работает алгоритм:**
+    1. **Разделение данных:** Скрипт загружает полный CSV-файл лиги, но жестко разделяет его на 'прошлое' (матчи с результатом) и 'будущее' (матчи без результата в пределах выбранного диапазона дней).
+    2. **Обучение:** На основе сыгранных матчей рассчитывается средняя результативность лиги и индивидуальные коэффициенты атаки/обороны каждой команды.
+    3. **Прогноз:** Для будущих матчей модель подставляет эти коэффициенты в распределение Пуассона, вычисляет честные вероятности и сравнивает их с коэффициентами букмекеров.
+    4. **Валуй (Edge):** Ставка рекомендуется только если математическое ожидание превышает 3% (`prob * odd > 1.03`).
+    
+    **Добавленные турниры:** Россия (РПЛ), Лига Чемпионов, Лига Европы, Турция, Бельгия и топ-5 лиг Европы.
+    """)
