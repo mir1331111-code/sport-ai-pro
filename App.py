@@ -129,7 +129,7 @@ if "app_data" not in st.session_state:
 
 st.title("⚽ AI Football Bot Pro")
 
-# --- БОКОВАЯ ПАНЕЛЬ С ПОЛЗУНКОМ ВРЕМЕНИ ---
+# --- БОКОВАЯ ПАНЕЛЬ ---
 st.sidebar.header("⚙️ Настройки и Банк")
 days_ahead = st.sidebar.slider("Искать матчи на сколько дней вперед?", min_value=1, max_value=30, value=7, step=1)
 
@@ -144,7 +144,7 @@ if st.sidebar.button("🔄 Полный сброс системы"):
     st.sidebar.success("Система сброшена!")
     st.rerun()
 
-# --- СКАНЕР МАТЧЕЙ ---
+# --- СКАНЕР МАТЧЕЙ С АВТОМАТИЧЕСКИМИ СТАВКАМИ И СОРТИРОВКОЙ ---
 def scan_free_forecasts():
     weights = st.session_state.app_data["weights"]
     xg_w = weights.get("xg_w", 1.0)
@@ -179,7 +179,6 @@ def scan_free_forecasts():
         if 'HomeTeam' not in df_league.columns or 'AwayTeam' not in df_league.columns:
             continue
             
-        # Берем последние доступные матчи (или те, у которых нет счета / свежие строки)
         for _, row in df_league.tail(15).iterrows():
             home_team = row.get('HomeTeam')
             away_team = row.get('AwayTeam')
@@ -247,7 +246,35 @@ def scan_free_forecasts():
                 "reason": reason,
                 "decision": decision
             })
-                    
+            
+    # Сортируем прогнозы от больших шансов на победу к меньшим
+    found_forecasts.sort(key=lambda x: x['prob'], reverse=True)
+    
+    # Автоматически добавляем в ставки те, где вердикт "СТАВИМ"
+    bets = st.session_state.app_data["bets"]
+    existing_match_names = {b["match"] for b in bets}
+    bank = st.session_state.app_data["bank"]
+    
+    for f in found_forecasts:
+        if "СТАВИМ" in f["decision"] and "НЕ" not in f["decision"]:
+            if f["match"] not in existing_match_names and bank >= STAKE_SIZE:
+                bank -= STAKE_SIZE
+                new_bet = {
+                    "id": len(bets) + 1,
+                    "match": f["match"],
+                    "league_name": f["league_name"],
+                    "league_color": f["league_color"],
+                    "pick": f["pick"],
+                    "odd": f["odd"],
+                    "stake": STAKE_SIZE,
+                    "status": "pending",
+                    "reason": f"{f['reason']} | {f['decision']}",
+                    "prob": f["prob"]
+                }
+                bets.append(new_bet)
+                existing_match_names.add(f["match"])
+                
+    st.session_state.app_data["bank"] = bank
     st.session_state.app_data["scanned_forecasts"] = found_forecasts
     save_history(st.session_state.app_data)
     return checked_count, len(found_forecasts), debug_logs
@@ -315,14 +342,14 @@ with tab1:
     st.markdown("### 🚀 Автоматический анализ матчей")
     
     if st.button("🔎 Найти матчи и запустить ИИ", type="primary"):
-        with st.spinner("Сканирование лиг и анализ составов..."):
+        with st.spinner("Сканирование лиг, анализ составов и авторазмещение ставок..."):
             checked, found, logs = scan_free_forecasts()
-            st.success(f"Проверено матчей: {checked}. Найдено прогнозов: {found}.")
+            st.success(f"Проверено матчей: {checked}. Найдено прогнозов: {found}. Авто-ставки размещены в истории!")
             with st.expander("🔍 Логи сканирования"):
                 for l in logs:
                     st.write(l)
 
-    st.markdown("### 📋 Результаты анализа:", unsafe_allow_html=True)
+    st.markdown("### 📋 Результаты анализа (отсортированы по шансам):", unsafe_allow_html=True)
     forecasts = st.session_state.app_data.get("scanned_forecasts", [])
     
     if not forecasts:
@@ -334,6 +361,7 @@ with tab1:
             match_str = f.get("match", "Матч")
             pick = f.get("pick", "-")
             odd = f.get("odd", 1.9)
+            prob = f.get("prob", 0.5)
             reason = f.get("reason", "")
             decision = f.get("decision", "🔴 НЕ СТАВИМ")
             
@@ -344,41 +372,17 @@ with tab1:
                     <span class="league-badge" style="background-color: {l_color};">{l_name}</span>
                     <div style="font-size: 1.1rem; font-weight: 700; color: #f8fafc; margin-bottom: 4px;">⚽ {match_str}</div>
                     <div style="font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px;"><b>Анализ:</b> {reason}</div>
-                    <div style="font-size: 0.9rem; color: #38bdf8; margin-bottom: 8px;">Выбор ИИ: <b style="color: #facc15;">{pick}</b> | Кф: <b style="color: #facc15;">{odd:.2f}</b></div>
+                    <div style="font-size: 0.9rem; color: #38bdf8; margin-bottom: 8px;">Выбор ИИ: <b style="color: #facc15;">{pick}</b> | Вероятность: <b style="color: #4ade80;">{prob*100:.1f}%</b> | Кф: <b style="color: #facc15;">{odd:.2f}</b></div>
                     <div style="font-size: 1rem; font-weight: 700; color: {decision_color};">Вердикт: {decision}</div>
                 </div>
             """, unsafe_allow_html=True)
-            
-            if st.button("➕ Взять в работу", key=f"take_fc_{idx}"):
-                existing_matches = [b["match"] for b in st.session_state.app_data["bets"]]
-                if match_str in existing_matches:
-                    st.warning("Матч уже в ставках!")
-                elif st.session_state.app_data["bank"] < STAKE_SIZE:
-                    st.error("Недостаточно средств!")
-                else:
-                    st.session_state.app_data["bank"] -= STAKE_SIZE
-                    new_bet = {
-                        "id": len(st.session_state.app_data["bets"]) + 1,
-                        "match": match_str,
-                        "league_name": l_name,
-                        "league_color": l_color,
-                        "pick": pick,
-                        "odd": odd,
-                        "stake": STAKE_SIZE,
-                        "status": "pending",
-                        "reason": f"{reason} | {decision}"
-                    }
-                    st.session_state.app_data["bets"].append(new_bet)
-                    save_history(st.session_state.app_data)
-                    st.success("Ставка добавлена!")
-                    st.rerun()
             st.markdown("---")
 
 with tab2:
-    st.markdown("### 📜 История ставок")
+    st.markdown("### 📜 История и Активные ставки")
     bets = st.session_state.app_data.get("bets", [])
     if not bets:
-        st.info("История пуста.")
+        st.info("История пуста. Запустите поиск в первой вкладке.")
     else:
         for idx, b in enumerate(bets):
             match_name = b.get("match", "Матч")
@@ -428,4 +432,4 @@ with tab3:
 
 with tab4:
     st.markdown("### ℹ️ О системе")
-    st.write("ИИ анализирует матчи, состояние составов и выдает краткий вердикт с решением о ставке.")
+    st.write("ИИ автоматически анализирует матчи, сортирует их по вероятности победы и самостоятельно размещает ставки по одобренным сигналам.")
