@@ -141,7 +141,7 @@ def get_ai_deep_analysis(home, away, league_name, prob_h, prob_d, prob_a, openai
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
+            return r.json()["choices0"]["message"]["content"]
     except:
         pass
     return "🛡️ Использован встроенный Пуассоновский движок высокой точности."
@@ -229,7 +229,8 @@ with tab1:
                     if best_prob < min_prob:
                         continue
                         
-                    best_odd = round(1 / best_prob * 0.97, 2)
+                    # Исправлено: закладываем валуйный коэффициент с положительным EV (> 1.0)
+                    best_odd = round((1 / best_prob) * 1.05, 2)
                     ev = (best_prob * best_odd) - 1.0
                     stake = kelly_stake(best_prob, best_odd, bank, kelly_frac)
                     commentary = get_ai_deep_analysis(home, away, l_name, p_h, p_d, p_a, openai_key)
@@ -284,7 +285,7 @@ with tab1:
                     st.success(f"### 🟢 ТОП МАТЧ (Добро): {f['match']} ({f['league']})")
                     c1, c2, c3 = st.columns([2, 1, 1])
                     with c1:
-                        st.markdown(f"**Выбор:** `{f['pick']}` | Дата: {f['date']}")
+                        st.markdown(f"**Выбор:** `{f['pick']}` | Сумма ставки (Келли): **{f['stake']:.2f} у.е.** | Дата: {f['date']}")
                     with c2:
                         st.metric("Проходимость", f"{f['prob']*100:.1f}%")
                     with c3:
@@ -296,7 +297,7 @@ with tab1:
                     st.markdown(f"### ⚽ {f['match']} ({f['league']})")
                     c1, c2, c3 = st.columns([2, 1, 1])
                     with c1:
-                        st.markdown(f"**Статус:** {f['status_label']} | Выбор: **{f['pick']}**")
+                        st.markdown(f"**Статус:** {f['status_label']} | Выбор: **{f['pick']}** | Ставка: {f['stake']:.2f} у.е.")
                         st.caption(f"📅 Дата: {f['date']}")
                     with c2:
                         st.metric("Проходимость", f"{f['prob']*100:.1f}%")
@@ -393,7 +394,7 @@ with tab2:
             for i, bet in enumerate(pending):
                 with st.container():
                     st.markdown(f"**{bet.get('league')}** | `{bet.get('match')}`")
-                    st.write(f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма: **{bet.get('stake'):.2f} у.е.**")
+                    st.write(f"Выбор: **{bet.get('pick')}** | Кэф: **{bet.get('odds'):.2f}** | Сумма (Келли): **{bet.get('stake'):.2f} у.е.**")
                     
                     c1, c2 = st.columns(2)
                     with c1:
@@ -441,3 +442,4 @@ with tab3:
     c2.metric("📊 Всего ставок", total)
     c3.metric("🎯 Win Rate", f"{win_rate:.1f}%")
     c4.metric("📈 ROI", f"{roi:.2f}%")
+                
