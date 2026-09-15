@@ -11,6 +11,16 @@ st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wi
 
 HISTORY_FILE = "bet_history.json"
 
+def reset_history_file():
+    clean_data = {
+        "bank": 10000.0, 
+        "weights": {"xg_w": 1.0, "form_w": 0.5, "odds_limit": 2.2},
+        "bets": []
+    }
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(clean_data, f, ensure_ascii=False, indent=4)
+    return clean_data
+
 def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
@@ -21,11 +31,7 @@ def load_history():
                 return data
         except:
             pass
-    return {
-        "bank": 10000.0, 
-        "weights": {"xg_w": 1.0, "form_w": 0.5, "odds_limit": 2.2},
-        "bets": []
-    }
+    return reset_history_file()
 
 def save_history(data):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -54,13 +60,8 @@ st.sidebar.metric(label="Виртуальный банк", value=f"{current_bank
 STAKE_SIZE = 100.0
 
 if st.sidebar.button("🔄 Сбросить всё (банк и веса)"):
-    st.session_state.app_data = {
-        "bank": 10000.0, 
-        "weights": {"xg_w": 1.0, "form_w": 0.5, "odds_limit": 2.2},
-        "bets": []
-    }
-    save_history(st.session_state.app_data)
-    st.sidebar.success("Сброшено к заводским настройкам!")
+    st.session_state.app_data = reset_history_file()
+    st.sidebar.success("История и статистика полностью очищены!")
     st.rerun()
 
 # --- СПИСОК ЛИГ ---
@@ -75,6 +76,29 @@ LEAGUES = [
     'soccer_uefa_europa_conference_league',
     'soccer_turkey_super_lig'
 ]
+
+# --- АЛГОРИТМИЧЕСКИЙ ГЕНЕРАТОР ОБОСНОВАНИЙ ---
+def get_smart_reason(m, best_edge):
+    pick, prob, odd, edge = best_edge
+    reasons = []
+    
+    if edge > 0.08:
+        reasons.append(f"🔥 Высокий статистический перевес (+{edge*100:.1f}%)")
+    elif edge > 0.04:
+        reasons.append(f"✅ Уверенный валуйный сигнал (+{edge*100:.1f}%)")
+    else:
+        reasons.append(f"⚖️ Умеренный сигнал (+{edge*100:.1f}%)")
+        
+    reasons.append(f"Модель Пуассона оценивает вероятность исхода '{pick}' в {prob*100:.1f}%")
+    
+    if odd < 1.75:
+        reasons.append("коэффициент надежного фаворита")
+    elif odd <= 2.1:
+        reasons.append("сбалансированный коэффициент в рамках риск-менеджмента")
+    else:
+        reasons.append("высокий коэффициент на грани допустимого лимита")
+        
+    return " • ".join(reasons)
 
 # --- ОБУЧЕНИЕ ИИ НА РЕАЛЬНЫХ СЫГРАННЫХ МАТЧАХ ИЗ API ---
 def train_on_real_recent_matches(odds_key):
@@ -100,7 +124,6 @@ def train_on_real_recent_matches(odds_key):
                             home_score = int(scores[0]['score']) if scores[0]['name'] == ev_home else int(scores[1]['score'])
                             away_score = int(scores[1]['score']) if scores[1]['name'] == ev_away else int(scores[0]['score'])
                             
-                            # Если хозяева разгромно проиграли или была сенсация, ИИ корректирует веса (пример адаптации под реальные ошибки)
                             if abs(home_score - away_score) >= 3:
                                 weights["odds_limit"] = max(1.75, weights["odds_limit"] * 0.99)
                                 weights["xg_w"] = min(2.5, weights["xg_w"] * 1.01)
@@ -141,10 +164,12 @@ def update_pending_results(odds_key):
                                 if b["status"] == "pending" and b.get("home") == ev_home and b.get("away") == ev_away:
                                     if b["pick"] == winner:
                                         st.session_state.app_data["bets"][idx]["status"] = "won"
-                                        profit = b['stake'] * b['odd'] - b['stake']
-                                        st.session_state.app_data["bank"] += profit + b['stake']
+                                        # Возвращаем полную выплату, так как ставка уже была списана при оформлении
+                                        payout = b['stake'] * b['odd']
+                                        st.session_state.app_data["bank"] += payout
                                     else:
                                         st.session_state.app_data["bets"][idx]["status"] = "lost"
+                                        # При проигрыше деньги не возвращаются (уже списаны)
                                     updated_count += 1
         except:
             pass
@@ -238,15 +263,17 @@ with tab1:
                         best_edge = max(edges, key=lambda x: x[3])
                         max_allowed_odd = current_weights.get("odds_limit", 2.2)
                         
+                        reason_text = get_smart_reason(m, best_edge)
+                        
                         if best_edge[3] > 0.05 and best_edge[2] <= max_allowed_odd:
                             status = "green"
-                            ai_text = f"🤖 ИИ (Память активна): Строгий отбор пройден. Валуй на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес)."
+                            ai_text = f"🤖 Анализ ИИ: Строгий отбор пройден. Валуй на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес).<br>💡 *Почему интересен:* {reason_text}"
                         elif best_edge[3] > 0:
                             status = "blue"
-                            ai_text = f"🤖 ИИ: Умеренный сигнал на **{best_edge[0]}**, коэффициент близко к лимиту."
+                            ai_text = f"🤖 Анализ ИИ: Умеренный сигнал на **{best_edge[0]}**, коэффициент близко к лимиту.<br>💡 *Почему интересен:* {reason_text}"
                         else:
                             status = "red"
-                            ai_text = "🤖 ИИ: Матч отклонен. Перевеса нет или параметры нарушают правила."
+                            ai_text = f"🤖 Анализ ИИ: Матч отклонен. Перевеса нет или параметры нарушают правила.<br>💡 *Причина отклонения:* {reason_text}"
 
                         analyzed_matches.append({
                             'home': home, 'away': away, 'league': m.get('league', ''), 'time': m.get('time', ''),
@@ -278,15 +305,22 @@ with tab1:
             
             if m['status'] != "red":
                 if st.button(f"Поставить 100 у.е. на мат. №{idx+1}", key=f"bet_{idx}"):
-                    bet_record = {
-                        "match": f"{m['home']} vs {m['away']}",
-                        "home": m['home'], "away": m['away'], "league": m['league'],
-                        "pick": m['best_edge'][0], "odd": m['best_edge'][2],
-                        "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
-                    }
-                    st.session_state.app_data["bets"].append(bet_record)
-                    save_history(st.session_state.app_data)
-                    st.success("Ставка записана!")
+                    if st.session_state.app_data["bank"] >= STAKE_SIZE:
+                        # Списываем сумму ставки с банка сразу
+                        st.session_state.app_data["bank"] -= STAKE_SIZE
+                        
+                        bet_record = {
+                            "match": f"{m['home']} vs {m['away']}",
+                            "home": m['home'], "away": m['away'], "league": m['league'],
+                            "pick": m['best_edge'][0], "odd": m['best_edge'][2],
+                            "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
+                        }
+                        st.session_state.app_data["bets"].append(bet_record)
+                        save_history(st.session_state.app_data)
+                        st.success("Ставка записана, 100 у.е. списано с банка!")
+                        st.rerun()
+                    else:
+                        st.error("Недостаточно средств в виртуальном банке!")
 
 with tab2:
     st.markdown("### 🧠 Панель самообучения ИИ и История")
@@ -358,9 +392,6 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Эта программа сочетает в себе статистическое моделирование матчей (через распределение Пуассона и оценку потенциала) 
-    и механизм непрерывного самообучения на основе реальных данных. 
-    
-    При нажатии кнопки обучения бот обращается к API результатов, анализирует реально сыгранные матчи за последние дни 
-    и подстраивает внутренние веса для фильтрации будущих событий.
+    Эта программа сочетает в себе статистическое моделирование матчей (через распределение Пуассона и оценку потенциала), 
+    алгоритмический генератор логических обоснований и механизм непрерывного самообучения на основе реальных данных из API.
     """)
