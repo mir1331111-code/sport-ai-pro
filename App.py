@@ -35,7 +35,6 @@ def load_csv(url):
 def find_active_season():
     """Приоритетный поиск сезона 2026/2027 (код 2627)"""
     base_url = "https://www.football-data.co.uk/mmz4281/"
-    # Сначала проверяем актуальный сезон 2026/2027, если его нет — откатываемся на 2526
     seasons = ["2627", "2526"]
     for season in seasons:
         test_url = f"{base_url}{season}/E0.csv"
@@ -48,23 +47,30 @@ def find_active_season():
     return "2627"
 
 def parse_date(date_str):
-    """Парсинг даты"""
-    formats = ["%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%y"]
-    for fmt in formats:
-        try:
-            return datetime.strptime(date_str.strip(), fmt)
-        except:
-            continue
+    """Парсинг даты с защитой от времени и лишних символов"""
+    if not date_str:
+        return None
+    try:
+        # Убираем возможное время из строки (например, '15/08/2026 15:00' -> '15/08/2026')
+        clean_date = date_str.strip().split()[0]
+        formats = ["%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%y", "%d.%m.%Y", "%d.%m.%y"]
+        for fmt in formats:
+            try:
+                return datetime.strptime(clean_date, fmt)
+            except:
+                continue
+    except:
+        pass
     return None
 
 def calculate_elo(data, home_col='HomeTeam', away_col='AwayTeam', score1_col='FTHG', score2_col='FTAG'):
-    """Расчёт Elo рейтингов"""
+    """Расчёт Elo рейтингов по сыгранным матчам"""
     elo = {}
     for row in data:
-        h = row.get(home_col, '')
-        a = row.get(away_col, '')
-        s1 = row.get(score1_col)
-        s2 = row.get(score2_col)
+        h = row.get(home_col, '').strip()
+        a = row.get(away_col, '').strip()
+        s1 = row.get(score1_col, '')
+        s2 = row.get(score2_col, '')
         
         if not h or not a or not s1 or not s2:
             continue
@@ -148,59 +154,73 @@ with tab1:
     }
     
     selected_league = st.selectbox("Лига/Турнир", list(leagues.keys()))
-    days = st.slider("Период анализа (дней вперед)", 1, 30, 14)
+    days = st.slider("Период анализа (дней вперед)", 1, 60, 14)
     
     col1, col2 = st.columns(2)
     with col1:
         show_all = st.checkbox("Показать все матчи (включая сыгранные)", False)
     with col2:
-        debug_mode = st.checkbox("Режим отладки", False)
+        debug_mode = st.checkbox("Режим отладки", True)
     
     if st.button("🚀 Запустить анализ", type="primary"):
         league_code = leagues[selected_league]
-        season = find_active_season() # Автоматически выберет '2627'
+        season = find_active_season()
         url = f"https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv"
         
         if debug_mode:
-            st.info(f"Используемый сезон: {season} | URL: {url}")
+            st.info(f"Сезон: {season} | URL: {url}")
         
-        with st.spinner("Загрузка данных сезона 2026/2027..."):
+        with st.spinner("Загрузка данных..."):
             data = load_csv(url)
             
             if not data:
-                st.error("❌ Не удалось загрузить данные. Возможно, файлы сезона 2026/2027 еще полностью не сформированы на источнике.")
+                st.error("❌ Не удалось загрузить данные. Проверьте соединение или доступность лиги.")
                 st.stop()
             
-            st.success(f"✅ Успешно загружено {len(data)} записей (Сезон: {season})")
+            st.success(f"✅ Загружено строк: {len(data)}")
         
         with st.spinner("Обработка и расчет моделей..."):
-            today = datetime.now()
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             limit = today + timedelta(days=days)
             
+            # Elo считаем по тем строкам, где уже есть результаты
             elo = calculate_elo(data)
             
+            if debug_mode:
+                st.write(f"Команд в базе Elo: {len(elo)}")
+            
             forecasts = []
+            debug_rows = []
             
             for row in data:
-                home = row.get('HomeTeam', '')
-                away = row.get('AwayTeam', '')
+                home = row.get('HomeTeam', '').strip()
+                away = row.get('AwayTeam', '').strip()
                 
                 if not home or not away:
                     continue
                 
                 date_str = row.get('Date', '')
-                match_date = parse_date(date_str) if date_str else None
+                match_date = parse_date(date_str)
                 
-                if not match_date and not show_all:
-                    continue
+                score1 = row.get('FTHG', '').strip()
+                is_played = bool(score1 and score1 != '')
                 
-                if match_date and not show_all:
-                    if match_date < today.replace(hour=0, minute=0, second=0, microsecond=0) or match_date > limit:
+                # Логика фильтрации
+                if not show_all:
+                    if is_played:
+                        continue
+                    if not match_date:
+                        continue
+                    if match_date < today or match_date > limit:
                         continue
                 
-                score1 = row.get('FTHG', '')
-                if score1 and score1.strip() != '' and not show_all:
-                    continue
+                if debug_mode and len(debug_rows) < 10:
+                    debug_rows.append({
+                        "Match": f"{home} vs {away}",
+                        "RawDate": date_str,
+                        "ParsedDate": match_date.strftime('%d.%m.%Y') if match_date else "None",
+                        "Played": is_played
+                    })
                 
                 try:
                     odds_h = float(row.get('B365H', row.get('PSH', 0)))
@@ -237,7 +257,7 @@ with tab1:
                         forecasts.append({
                             "league": selected_league,
                             "match": f"{home} vs {away}",
-                            "date": match_date.strftime('%d.%m.%Y') if match_date else "N/A",
+                            "date": match_date.strftime('%d.%m.%Y') if match_date else date_str,
                             "pick": best_pick,
                             "prob": best_prob,
                             "odds": best_odd,
@@ -245,13 +265,16 @@ with tab1:
                             "stake": stake
                         })
             
+            if debug_mode and debug_rows:
+                st.write("🔍 Отладка распознавания матчей:", debug_rows)
+            
             st.session_state.data["forecasts"] = forecasts
             save_data(st.session_state.data)
             
             if forecasts:
-                st.success(f"✅ Найдено {len(forecasts)} перспективных ставок!")
+                st.success(f"✅ Найдено подходящих матчей: {len(forecasts)}")
             else:
-                st.warning("⚠️ Нет матчей под заданные фильтры EV. Попробуйте расширить диапазон дней или поставить галочку «Показать все матчи».")
+                st.warning("⚠️ Под текущие фильтры матчи не попали. Попробуйте увеличить период дней в настройках или включить «Показать все матчи».")
             
             st.rerun()
 
@@ -289,15 +312,13 @@ with tab1:
                     st.success("Ставка успешно добавлена во вкладку «Ставки»!")
                 st.markdown("---")
     else:
-        st.info("👆 Нажмите «Запустить анализ», чтобы подгрузить матчи текущего сезона")
+        st.info("👆 Нажмите «Запустить анализ»")
 
 with tab2:
     st.header("📋 Управление активными ставками")
-    
     bets = st.session_state.data.get("bets", [])
-    
     if not bets:
-        st.info("У вас нет добавленных ставок. Перейдите во вкладку «Прогнозы».")
+        st.info("Нет активных ставок.")
     else:
         pending = [b for b in bets if b.get("status") == "pending"]
         completed = [b for b in bets if b.get("status") in ["won", "lost"]]
@@ -318,7 +339,6 @@ with tab2:
                             st.session_state.data["stats"]["won"] += 1
                             st.session_state.data["stats"]["profit"] += profit
                             save_data(st.session_state.data)
-                            st.success(f"Засчитан выигрыш: +{profit:.2f} у.е.")
                             st.rerun()
                     with c2:
                         if st.button("❌ Проиграла", key=f"loss_{i}"):
@@ -328,7 +348,6 @@ with tab2:
                             st.session_state.data["stats"]["lost"] += 1
                             st.session_state.data["stats"]["profit"] -= loss
                             save_data(st.session_state.data)
-                            st.error(f"Засчитан проигрыш: -{loss:.2f} у.е.")
                             st.rerun()
                     st.markdown("---")
         
@@ -340,7 +359,6 @@ with tab2:
 
 with tab3:
     st.header("📊 Статистика эффективности")
-    
     stats = st.session_state.data.get("stats", {})
     bank = st.session_state.data["bank"]
     initial_bank = 10000.0
@@ -358,11 +376,4 @@ with tab3:
     c2.metric("📊 Всего ставок", total)
     c3.metric("🎯 Win Rate", f"{win_rate:.1f}%")
     c4.metric("📈 Прибыль (ROI)", f"{roi:.2f}%")
-    
-    st.markdown("---")
-    st.markdown("""
-    ### ℹ️ Справка
-    - **Модель Elo**: Анализирует результаты матчей сезона 2026/2027 в реальном времени.
-    - **Банкролл-менеджмент**: Критерий Келли минимизирует риски просадки банка.
-    """)
     
