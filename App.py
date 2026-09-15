@@ -12,7 +12,13 @@ REFIT_STRUCT_EVERY=300
 DISAGREE_MIN=0.03
 UA={"User-Agent":"Mozilla/5.0"}
 
-DEF_LP=lambda: {"w_shots":0.35,"rho":-0.13,"w_dc":0.72}
+DEF_LP=lambda: {"w_shots":0.35,"rho":-0.13,"w_dc":0.72,"w_ml":0.25}
+NFEAT_ML=6  # [bias, elo_diff/400, lam_g diff, lam_s diff, form diff, log(games+1)]
+ML_REFIT_MIN=150   # минимум размеченных примеров в лиге, чтобы вообще пробовать обучать ML-слой
+ML_WINDOW=400
+ML_LR=0.05
+ML_L2=0.001
+ML_ITERS=300
 
 DIV_NAMES={"E0":"🏴󠁢󠁥󠁧󠁿 АПЛ","E1":"🏴󠁢󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
  "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
@@ -100,6 +106,7 @@ class Engine:
         self.h2h=defaultdict(list)
         self.calib=[];self.platt_a=0.0;self.platt_b=1.0
         self.lp=defaultdict(DEF_LP);self.hist=defaultdict(list)
+        self.ml_w={};self.ml_hist=defaultdict(list)  # второй движок: обучаемая softmax-регрессия по лиге
         self.match_count=0
         self.market_roi=defaultdict(lambda:{"n":0,"profit":0.0})
     @staticmethod
@@ -176,6 +183,53 @@ class Engine:
                 return
         cur["w_shots"]=ws_pick
         cur["rho"],cur["w_dc"]=best[1],best[2]
+    @staticmethod
+    def _softmax(scores):
+        m=max(scores);exps=[math.exp(s-m) for s in scores];tot=sum(exps) or 1.0
+        return tuple(v/tot for v in exps)
+    def _ml_probs(self,lg,feat):
+        W=self.ml_w.get(lg)
+        if not W: return (1/3,1/3,1/3)
+        scores=[sum(w*x for w,x in zip(W[c],feat)) for c in range(3)]
+        return self._softmax(scores)
+    def _ml_nll(self,W,rows):
+        s=0.0
+        for feat,out in rows:
+            scores=[sum(w*x for w,x in zip(W[c],feat)) for c in range(3)]
+            p=self._softmax(scores)[out]
+            s-=math.log(min(max(p,1e-6),1-1e-6))
+        return s
+    def _fit_ml(self,lg):
+        """Мультиномиальная логистическая регрессия (свой градиентный спуск,
+        без sklearn) — второй, независимый от Пуассона движок. Обучается на
+        признаках уровня матча, а не на самих голах, поэтому может поймать
+        нелинейные закономерности, которые Dixon-Coles формула не видит.
+        Как и _fit_league, принимает новые веса только если они не хуже
+        старых на отложенной выборке — иначе легко переобучиться на 300
+        итерациях градиентного спуска с малым числом матчей."""
+        data=self.ml_hist[lg][-ML_WINDOW:]
+        if len(data)<ML_REFIT_MIN: return
+        split=int(len(data)*0.8)
+        train,hold=data[:split],data[split:]
+        old_W=self.ml_w.get(lg)
+        W=[row[:] for row in old_W] if old_W else [[0.0]*NFEAT_ML for _ in range(3)]
+        n=max(1,len(train))
+        for _ in range(ML_ITERS):
+            grad=[[0.0]*NFEAT_ML for _ in range(3)]
+            for feat,out in train:
+                scores=[sum(w*x for w,x in zip(W[c],feat)) for c in range(3)]
+                probs=self._softmax(scores)
+                for c in range(3):
+                    err=probs[c]-(1.0 if c==out else 0.0)
+                    for k in range(NFEAT_ML): grad[c][k]+=err*feat[k]
+            for c in range(3):
+                for k in range(NFEAT_ML):
+                    W[c][k]-=ML_LR*(grad[c][k]/n+ML_L2*W[c][k])
+        if hold:
+            ll_new=self._ml_nll(W,hold)
+            ll_old=self._ml_nll(old_W,hold) if old_W else float("inf")
+            if ll_new>ll_old: return  # хуже на holdout -> оставляем прежние веса
+        self.ml_w[lg]=W
     def record_market(self,mkt,won,odd):
         r=self.market_roi[mkt];r["n"]+=1;r["profit"]=0.9*r["profit"]+0.1*((odd-1) if won else -1)
     def market_adjust(self,mkt):
@@ -225,8 +279,11 @@ class Engine:
         return max(0.3,lh+shift/2),max(0.25,la-shift/2),n
     def predict(self,h,a,lg="G"):
         P0=self.lp[lg];ws=P0["w_shots"];N=MATRIX_N
-        lh_g=self._m(self.hg,1.5);la_g=self._m(self.ag,1.2)
-        lh_s=self._m(self.hsth,4.5);la_s=self._m(self.hsta,4.0)
+        # floor at 0.05: guards a latent ZeroDivisionError if the league-wide
+        # mean happens to land exactly on 0 (e.g. the very first recorded
+        # match had 0 goals/shots for that side) — these means are divisors below.
+        lh_g=max(0.05,self._m(self.hg,1.5));la_g=max(0.05,self._m(self.ag,1.2))
+        lh_s=max(0.05,self._m(self.hsth,4.5));la_s=max(0.05,self._m(self.hsta,4.0))
         sh,sa=self.st[h],self.st[a]
         ah_=self._m(sh["hs"],lh_g)/lh_g;dh_=self._m(sh["hc"],la_g)/la_g
         aa_=self._m(sa["as"],la_g)/la_g;da_=self._m(sa["ac"],lh_g)/lh_g
@@ -247,16 +304,26 @@ class Engine:
         f1=P0["w_dc"]*p1+(1-P0["w_dc"])*e*(1-pde)
         fd=P0["w_dc"]*px+(1-P0["w_dc"])*pde
         f2=max(0.0,1-f1-fd)
+        # --- Второй движок: обучаемая softmax-регрессия по признакам матча ---
+        elo_diff=self.elo.get(h,1500)-self.elo.get(a,1500)
+        games=min(len(sh["hs"])+len(sh["as"]),len(sa["hs"])+len(sa["as"]))
+        ml_feat=[1.0,elo_diff/400.0,lam_g_h-lam_g_a,lam_s_h-lam_s_a,fh-fa,math.log(games+1)]
+        ml_p1,ml_x,ml_p2=self._ml_probs(lg,ml_feat)
+        n_trained=len(self.ml_hist.get(lg,[]))
+        w_ml=P0.get("w_ml",0.25)*min(1.0,n_trained/300.0)  # вес растёт по мере накопления данных
+        if lg in self.ml_w and w_ml>0:
+            f1=(1-w_ml)*f1+w_ml*ml_p1;fd=(1-w_ml)*fd+w_ml*ml_x;f2=(1-w_ml)*f2+w_ml*ml_p2
+            tt=f1+fd+f2 or 1.0;f1/=tt;fd/=tt;f2/=tt
         c1,cx,c2=self.calibrate(f1),self.calibrate(fd),self.calibrate(f2)
         ct=c1+cx+c2 or 1.0;f1,fd,f2=c1/ct,cx/ct,c2/ct
         over=1-sum(self._p(lam_h+lam_a,k) for k in range(3))
         btts=sum(M[i][j] for i in range(1,N) for j in range(1,N))
-        games=min(len(sh["hs"])+len(sh["as"]),len(sa["hs"])+len(sa["as"]))
         corners=((self._m(sh["cfh"],5)+self._m(sa["caa"],5))/2,(self._m(sa["cfa"],5)+self._m(sh["cah"],5))/2)
         yellows=((self._m(sh["yfh"],2)+self._m(sa["yaa"],2))/2,(self._m(sa["yfa"],2)+self._m(sh["yah"],2))/2)
         return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,"agree":agree,
                 "lams":(lam_h,lam_a),"lams_g":(lam_g_h,lam_g_a),"lams_s":(lam_s_h,lam_s_a),
                 "games":games,"corners":corners,"yellows":yellows,"h2h_n":h2h_n,"e":e,"pde":pde,
+                "ml_feat":ml_feat,"w_ml_eff":w_ml,
                 # raw (pre-market-blend) probabilities kept alongside the blended
                 # ones so the UI/EV logic can show how much of any "edge" comes
                 # from the model itself vs. from the market prior it was blended with.
@@ -270,6 +337,8 @@ class Engine:
         if len(self.calib)>6000: self.calib=self.calib[-6000:]  # was unbounded
         self.hist[lg].append((P["lams_g"][0],P["lams_g"][1],P["lams_s"][0],P["lams_s"][1],P["e"],P["pde"],out))
         if len(self.hist[lg])>1200: self.hist[lg]=self.hist[lg][-1200:]  # was unbounded
+        self.ml_hist[lg].append((P["ml_feat"],out))
+        if len(self.ml_hist[lg])>1200: self.ml_hist[lg]=self.ml_hist[lg][-1200:]
         if row:
             for mkt,pick,prob,odd,won in [("1X2","П1",P["p1"],_f(row.get("B365H")),hg>ag),
                                           ("1X2","X",P["x"],_f(row.get("B365D")),hg==ag),
@@ -279,7 +348,9 @@ class Engine:
                 if odd and odd>1.01: self.record_market(mkt,bool(won),odd)
         self.match_count+=1
         if self.match_count%REFIT_PLATT_EVERY==0: self.refit_platt()
-        if len(self.hist[lg])%REFIT_STRUCT_EVERY==0: self._fit_league(lg)
+        if len(self.hist[lg])%REFIT_STRUCT_EVERY==0:
+            self._fit_league(lg)
+            self._fit_ml(lg)
         self.add(h,a,hg,ag,row,match_num=match_num,total=total)
         return P
 
@@ -371,6 +442,14 @@ def clv_for(pick,odd,mkt,row):
     if mkt:
         idx={"П1":0,"X":1,"П2":2}.get(pick)
         if idx is not None: return odd*mkt[idx]-1
+    if pick.startswith("Ф1") or pick.startswith("Ф2"):
+        # Pinnacle closing Asian handicap odds (football-data.co.uk: PAHH/PAHA)
+        po=_f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
+        ot=_f(row.get("PAHA")) if pick.startswith("Ф1") else _f(row.get("PAHH"))
+        if po and ot:
+            i1,i2=1/po,1/ot;s=i1+i2
+            return odd*(i1/s)-1
+        return None
     po=_f(row.get("PS>2.5")) if pick=="ТБ 2.5" else (_f(row.get("PS<2.5")) if pick=="ТМ 2.5" else None)
     ot=_f(row.get("PS<2.5")) if pick=="ТБ 2.5" else (_f(row.get("PS>2.5")) if pick=="ТМ 2.5" else None)
     if po and ot:
@@ -506,6 +585,11 @@ def apply_settle(D,idx,outcome):
         b["status"]="lost";D2["stats"]["lost"]+=1;D2["stats"]["profit"]-=b["stake"]
     return D2
 
+BACKTEST_WARMUP=120  # matches to train on (per league) before any bet is logged;
+                      # early-season predictions run on near-default hyperparameters
+                      # and thin team stats, so including them just adds cold-start
+                      # noise to ROI/Sharpe/CLV rather than testing the fitted model.
+
 def backtest(div,season,PR,min_edge,stake_mode,use_dis=True):
     rows=[r for r in load_seasonal(div,season)
           if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,"") and parse_date(r.get("Date",""))]
@@ -523,23 +607,33 @@ def backtest(div,season,PR,min_edge,stake_mode,use_dis=True):
             cands=[("1X2","П1",P["p1"],best_odd(r,"П1")),("1X2","X",P["x"],best_odd(r,"X")),
                    ("1X2","П2",P["p2"],best_odd(r,"П2")),
                    ("OU","ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),("OU","ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5"))]
-            for mktk,pick,prob,o in cands:
-                if not o or not (PR["corr"][0]<=o<=PR["corr"][1] if mktk=="1X2" else 1.4<=o<=4.2): continue
-                if mktk=="1X2" and not P["agree"]: continue
-                if use_dis and mkt and gap is not None and gap<DISAGREE_MIN: continue
-                if prob-1/o<min_edge: continue
-                won=False
-                if pick=="П1": won=hg>ag
-                elif pick=="X": won=hg==ag
-                elif pick=="П2": won=hg<ag
-                elif pick=="ТБ 2.5": won=hg+ag>=3
-                elif pick=="ТМ 2.5": won=hg+ag<=2
-                st_=1.0
-                if stake_mode=="Kelly": st_=max(1.0,kelly(prob,o,bank,0.25))
-                pnl=st_*(o-1) if won else -st_
-                bank+=pnl
-                log.append({"mkt":mktk,"prob":prob,"odd":o,"won":bool(won),"stake":st_,"pnl":pnl,
-                            "clv":clv_for(pick,o,mkt,r)})
+            ahh=_f(r.get("AHh"));ohh=odd1(r,["MaxAHH","B365AHH","PAHH"]);oha=odd1(r,["MaxAHA","B365AHA","PAHA"])
+            if j>=BACKTEST_WARMUP and ahh is not None and abs((ahh*2)%2)==1 and ohh and oha:
+                pc=sum(P["M"][i][j2] for i in range(MATRIX_N) for j2 in range(MATRIX_N) if (i-j2+ahh)>0.001)
+                cands+=[("AH",f"Ф1({ahh:+.1f})",pc,ohh),("AH",f"Ф2({-ahh:+.1f})",1-pc,oha)]
+            if j>=BACKTEST_WARMUP:
+                for mktk,pick,prob,o in cands:
+                    if not o or not (PR["corr"][0]<=o<=PR["corr"][1] if mktk=="1X2" else CORRIDORS.get(mktk,(1.4,4.2))[0]<=o<=CORRIDORS.get(mktk,(1.4,4.2))[1]): continue
+                    if mktk=="1X2" and not P["agree"]: continue
+                    if use_dis and mkt and gap is not None and gap<DISAGREE_MIN: continue
+                    if prob-1/o<min_edge: continue
+                    won=None
+                    if pick=="П1": won=hg>ag
+                    elif pick=="X": won=hg==ag
+                    elif pick=="П2": won=hg<ag
+                    elif pick=="ТБ 2.5": won=hg+ag>=3
+                    elif pick=="ТМ 2.5": won=hg+ag<=2
+                    elif mktk=="AH":
+                        s=settle_ah(pick,hg,ag)
+                        if s=="push": continue  # pushes don't affect ROI/win-rate
+                        won=bool(s)
+                    if won is None: continue
+                    st_=1.0
+                    if stake_mode=="Kelly": st_=max(1.0,kelly(prob,o,bank,0.25))
+                    pnl=st_*(o-1) if won else -st_
+                    bank+=pnl
+                    log.append({"mkt":mktk,"prob":prob,"odd":o,"won":bool(won),"stake":st_,"pnl":pnl,
+                                "clv":clv_for(pick,o,mkt,r)})
         except Exception as e: log_err("backtest loop",e)
         try: eng.learn_step(h,a,hg,ag,r,lg=div,match_num=j,total=len(rows))
         except Exception as e: log_err("backtest learn",e)
@@ -617,7 +711,8 @@ LEGEND="""
 **⚠️ мало данных / движки не согласны** — блокирующие флаги ·
 **📏 CLV** — перевес взятого кэфа над закрытием Pinnacle ·
 **P / Безуб. / EV** — вероятность модели / безубыточность кэфа / перевес ·
-**💰 Келли** — сумма ставки · **⏳🔴⚪** — ожидает/выиграла/проиграла/возврат
+**💰 Келли** — сумма ставки · **⏳🔴⚪** — ожидает/выиграла/проиграла/возврат ·
+**МЛ** — вес обучаемого softmax-слоя в ансамбле (растёт по мере накопления данных по лиге, максимум задан пресетом)
 """
 
 # ================= UI =================
@@ -626,7 +721,7 @@ D=st.session_state.data
 st.markdown(f"""
 <div class="hero">
  <h1>🏟 NEURO BET PRO v7</h1>
- <p>Только футбол · пер-лига гиперпараметры · CLV · 2 движка λ · Pinnacle-якорь · Platt · retraining · bandit · ИИ-вердикт</p>
+ <p>Только футбол · пер-лига гиперпараметры · CLV · 2 движка λ + ML-слой (softmax) · Pinnacle-якорь · Platt · retraining · bandit · ИИ-вердикт</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -653,7 +748,7 @@ with st.sidebar:
     if lp:
         st.markdown("**🧠 Гиперпараметры лиг**")
         for k,v in list(lp.items())[:6]:
-            st.caption(f"{DIV_NAMES.get(k,k)}: ws={v['w_shots']:.2f} ρ={v['rho']:.2f} DC={v['w_dc']:.2f}")
+            st.caption(f"{DIV_NAMES.get(k,k)}: ws={v['w_shots']:.2f} ρ={v['rho']:.2f} DC={v['w_dc']:.2f} МЛ={v.get('w_ml',0):.2f}")
     with st.expander("📖 Легенда значков"):
         st.markdown(LEGEND)
     with st.expander(f"🐞 Лог ошибок ({len(ERR)})"):
@@ -853,6 +948,8 @@ with tab5:
     bt_season=b2.selectbox("Сезон",["2526","2425","2324"],index=1)
     bt_edge=b3.slider("Edge, п.п.",0,8,int(PR["edge"]*100),key="bte")/100
     bt_mode=b4.selectbox("Стейк",["Flat","Kelly"])
+    st.caption(f"Первые {BACKTEST_WARMUP} матчей сезона идут только на обучение (без ставок) — "
+               "иначе холодный старт на дефолтных гиперпараметрах портит ROI/CLV.")
     if st.button("▶️ Прогнать",type="primary"):
         log,eng=backtest(bt_div,bt_season,PR,bt_edge,bt_mode,use_dis)
         bl=[k for k,v in eng.market_roi.items() if v["n"]>=30 and v["profit"]/v["n"]<-0.02]
