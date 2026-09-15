@@ -9,14 +9,22 @@ import datetime
 
 st.set_page_config(page_title="AI Football Bot Pro", page_icon="⚽", layout="wide")
 
-# Динамические обои стадиона на фоне интерфейса
+# Роскошные обои стадиона на фоне интерфейса + стилизация карточек
 st.markdown("""
     <style>
     .stApp {
-        background: linear-gradient(rgba(13, 17, 23, 0.90), rgba(13, 17, 23, 0.95)), 
-                    url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1920&auto=format&fit=crop');
+        background: linear-gradient(rgba(10, 15, 25, 0.82), rgba(10, 15, 25, 0.92)), 
+                    url('https://images.unsplash.com/photo-1518091043644-c1d4457512c6?q=80&w=1920&auto=format&fit=crop');
         background-size: cover;
+        background-position: center;
         background-attachment: fixed;
+    }
+    .match-card {
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 18px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+        backdrop-filter: blur(8px);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -278,7 +286,7 @@ with tab1:
                         
                         if best_edge[3] > 0.05 and best_edge[2] <= max_allowed_odd:
                             status = "green"
-                            ai_text = f"✅ Валуй на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес).<br>💡 *Обоснование:* {reason_text}"
+                            ai_text = f"✅ Валуйный сигнал на **{best_edge[0]}** (+{best_edge[3]*100:.1f}% перевес).<br>💡 *Обоснование:* {reason_text}"
                         elif best_edge[3] > 0:
                             status = "blue"
                             ai_text = f"⚖️ Умеренный сигнал на **{best_edge[0]}**.<br>💡 *Обоснование:* {reason_text}"
@@ -303,41 +311,55 @@ with tab1:
         for idx, m in enumerate(st.session_state.current_board):
             league_name = m['league']
             is_cup = league_name in CUP_LEAGUES
+            status = m['status']
             
-            # Используем встроенные контейнеры Streamlit для безупречной чистой верстки
-            with st.container(border=True):
-                if is_cup:
-                    st.warning("🏆 [КУБКОВЫЙ / ЕВРОКУБКОВЫЙ ТУРНИР] — Повышенный риск ротации составов!")
-                
-                col_info, col_action = st.columns([3, 1])
-                with col_info:
-                    st.markdown(f"#### ⚽ {idx+1}. {m['home']} vs {m['away']}")
-                    st.caption(f"🌍 Лига: {league_name} | ⏰ Начало (UTC): {m['time']}")
-                    st.write(f"📊 **Котировки букмекеров:** П1: `{m['bh']}` | Х: `{m['bd']}` | П2: `{m['ba']}`")
-                    st.write(f"🤖 **Вероятности модели:** Хозяева: `{m['p_h']*100:.1f}%` | Ничья: `{m['p_d']*100:.1f}%` | Гости: `{m['p_a']*100:.1f}%`")
-                    st.markdown(f"> {m['ai_text']}", unsafe_allow_html=True)
-                
-                with col_action:
-                    st.write("")
-                    st.write("")
-                    if m['status'] != "red":
-                        if st.button(f"Поставить 100 у.е.", key=f"bet_{idx}"):
-                            if st.session_state.app_data["bank"] >= STAKE_SIZE:
-                                st.session_state.app_data["bank"] -= STAKE_SIZE
-                                bet_record = {
-                                    "match": f"{m['home']} vs {m['away']}",
-                                    "home": m['home'], "away": m['away'], "league": m['league'],
-                                    "pick": m['best_edge'][0], "odd": m['best_edge'][2],
-                                    "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
-                                }
-                                st.session_state.app_data["bets"].append(bet_record)
-                                save_history(st.session_state.app_data)
-                                st.success("Ставка принята!")
-                                st.rerun()
-                            else:
-                                st.error("Не хватает средств в банке!")
+            # Настройка цветов рамок и фона для каждого типа матча
+            if is_cup:
+                border_color = "#ffc107"  # Желтый (Кубок / Еврокубок)
+                bg_color = "rgba(255, 193, 7, 0.12)"
+                badge_text = "🏆 **[КУБКОВЫЙ / ЕВРОКУБКОВЫЙ ТУРНИР]** — ⚠️ *Повышенный риск ротации состава!*"
+            elif status == "green":
+                border_color = "#28a745"  # Зеленый (Отличный валуй)
+                bg_color = "rgba(40, 167, 69, 0.12)"
+                badge_text = "🟢 **[ВЫСОКИЙ ВАЛУЙ]** — Рекомендовано к ставке"
+            elif status == "blue":
+                border_color = "#17a2b8"  # Синий (Умеренный)
+                bg_color = "rgba(23, 162, 184, 0.12)"
+                badge_text = "🔵 **[УМЕРЕННЫЙ СИГНАЛ]** — Ставка под контролем"
+            else:
+                border_color = "#dc3545"  # Красный (Пропуск)
+                bg_color = "rgba(220, 53, 69, 0.12)"
+                badge_text = "🔴 **[ПРОПУСК МАТЧА]** — Высокие риски / нет перевеса"
+
+            # Рендер карточки с полноценной цветной подсветкой и логотипами-иконками
+            st.markdown(f"""
+            <div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.4);">
+                <p style="color: {border_color}; font-weight: bold; margin-bottom: 6px; font-size: 13px;">{badge_text}</p>
+                <h4 style="margin-top: 0; color: #ffffff;">🛡️ {idx+1}. {m['home']} <span style="color: #ff4b4b;">VS</span> ⚔️ {m['away']}</h4>
+                <p style="color: #cbd5e1; font-size: 14px; margin-bottom: 8px;">🌍 <b>Лига:</b> {league_name} &nbsp;|&nbsp; ⏰ <b>Время (UTC):</b> {m['time']}</p>
+                <p style="color: #e2e8f0; font-size: 14px;">📊 <b>Котировки:</b> П1: <code>{m['bh']}</code> | Х: <code>{m['bd']}</code> | П2: <code>{m['ba']}</code></p>
+                <p style="color: #e2e8f0; font-size: 14px;">🤖 <b>Вероятности ИИ:</b> Хозяева: <code>{m['p_h']*100:.1f}%</code> | Ничья: <code>{m['p_d']*100:.1f}%</code> | Гости: <code>{m['p_a']*100:.1f}%</code></p>
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+                <p style="font-style: italic; color: #f8fafc; margin-bottom: 0;">{m['ai_text']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if m['status'] != "red":
+                if st.button(f"💵 Поставить 100 у.е. на матч №{idx+1}", key=f"bet_{idx}"):
+                    if st.session_state.app_data["bank"] >= STAKE_SIZE:
+                        st.session_state.app_data["bank"] -= STAKE_SIZE
+                        bet_record = {
+                            "match": f"{m['home']} vs {m['away']}",
+                            "home": m['home'], "away": m['away'], "league": m['league'],
+                            "pick": m['best_edge'][0], "odd": m['best_edge'][2],
+                            "stake": STAKE_SIZE, "status": "pending", "date": str(datetime.date.today())
+                        }
+                        st.session_state.app_data["bets"].append(bet_record)
+                        save_history(st.session_state.app_data)
+                        st.success("Ставка успешно принята!")
+                        st.rerun()
                     else:
-                        st.markdown("⛔ *Пропуск*")
+                        st.error("Не хватает средств в виртуальном банке!")
 
 with tab2:
     st.markdown("### 🧠 Панель самообучения ИИ и История")
@@ -380,6 +402,6 @@ with tab2:
 with tab3:
     st.markdown("### ℹ️ О системе")
     st.write("""
-    Программа использует распределение Пуассона и анализирует котировки через The Odds API. 
-    Интерфейс оформлен в темной киберспортивной стилистике с фоном футбольного стадиона.
+    Программа использует математическое распределение Пуассона, анализирует котировки через The Odds API 
+    и выводит данные в интерфейсе с цветовой индикацией валуев, кубковых матчей и стадионными обоями.
     """)
