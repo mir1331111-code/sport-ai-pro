@@ -1,30 +1,26 @@
 import streamlit as st
 import requests, csv, io, json, os, math, re
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="NEURO BET PRO Multi", page_icon="🏟", layout="wide")
-HISTORY_FILE="neuro_multi.json"
+st.set_page_config(page_title="NEURO BET PRO v7", page_icon="🏟", layout="wide")
+HISTORY_FILE="neuro_bet_pro.json"
 MATRIX_N=9
+REFIT_PLATT_EVERY=150
+REFIT_STRUCT_EVERY=300
+DISAGREE_MIN=0.03
 UA={"User-Agent":"Mozilla/5.0"}
-ERR=[]
-def log_err(tag,e):
-    ERR.append(f"[{tag}] {type(e).__name__}: {e}")
-    if len(ERR)>300: ERR.pop(0)
 
-SPORTS={
- "⚽ Футбол":dict(src="fd"),
- "🏐 Волейбол":dict(src="espn",espn=["volleyball/womens-college-volleyball","volleyball/mens-college-volleyball"],tsdb_sport="Volleyball",kw=[],max=3,k=24,ha=50,div=150),
- "🏒 Хоккей":dict(src="nhl",espn=["hockey/nhl"],tsdb_sport="Ice Hockey",kw=["NHL","KHL","AHL","SHL"],max=3,k=24,ha=40,div=120,tot=True,pois=True),
-}
+DEF_LP=lambda: {"w_shots":0.35,"rho":-0.13,"w_dc":0.72}
 
-DIV_NAMES={"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮 Чемпионшип","SC0":"🏴󠁧󠁢󠁳󠁣󠁴󠁿 Шотландия",
+DIV_NAMES={"E0":"🏴󠁢󠁥󠁧󠁿 АПЛ","E1":"🏴󠁢󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
  "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "SP1":"🇪 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
-
+ "G1":"🇬 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+TSDB_LEAGUES={"432":"🏴󠁢󠁥󠁧󠁿 АПЛ","434":"🇪 Ла Лига","435":"🇮🇹 Серия A","436":"🇩 Бундеслига",
+ "437":"🇫🇷 Лига 1","448":"🏆 ЛЧ","442":"🇺🇸 MLS","439":"🇵🇹 Примейра"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
@@ -35,206 +31,96 @@ CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
 st.markdown("""
 <style>
 html,body,.stApp{background:#070b14 !important;}
-.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e2e8f0;}
-.stCaption,.stCaption *{color:#94a3b8 !important;}
+.stApp{background-image:none !important;}
+.stMarkdown,.stMarkdown p,.stMarkdown li,.stMarkdown ul{color:#e2e8f0;}
+.stCaption,.stCaption *,div[data-testid="stCaptionContainer"]{color:#94a3b8 !important;}
 div[data-testid="stMetricValue"]{color:#f8fafc !important;}
 div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
+.stTabs button p{color:#cbd5e1 !important;}
 header,#MainMenu,footer{visibility:hidden}
-section[data-testid="stSidebar"]{background:#0b0f1a !important;}
-section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e2e8f0 !important;}
-section[data-testid="stSidebar"] div[data-baseweb="select"]>div{background:#111827 !important;}
-.hero{padding:18px 24px;border-radius:20px;margin-bottom:14px;border:1px solid rgba(56,189,248,.35);
- background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(6,78,59,.8) 55%,rgba(120,53,15,.75));}
-.hero h1{margin:0;font-size:2.1rem;font-weight:900;color:#fff}
-.hero p{margin:4px 0 0;color:#dbeafe;font-size:.9rem}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
-.kpi{background:rgba(2,6,23,.92);border:1px solid rgba(148,163,184,.28);border-radius:14px;padding:10px 14px}
-.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.1px}
-.kpi .v{font-size:1.35rem;font-weight:800;color:#fff}
+section[data-testid="stSidebar"]{background:#0b0f1a !important;border-right:1px solid rgba(148,163,184,.2)}
+section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,section[data-testid="stSidebar"] .stMarkdown{color:#e2e8f0 !important;}
+section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,section[data-testid="stSidebar"] h3{color:#f8fafc !important;}
+section[data-testid="stSidebar"] div[data-testid="stMetricValue"]{color:#facc15 !important;}
+section[data-testid="stSidebar"] div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
+section[data-testid="stSidebar"] div[data-baseweb="select"]>div{background:#111827 !important;border:1px solid rgba(148,163,184,.35)}
+section[data-testid="stSidebar"] div[data-baseweb="select"] span{color:#e2e8f0 !important;}
+.hero{padding:20px 26px;border-radius:22px;margin-bottom:16px;border:1px solid rgba(56,189,248,.35);
+ background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(6,78,59,.80) 55%,rgba(120,53,15,.75)),
+ url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1600&auto=format&fit=crop') center/cover;}
+.hero h1{margin:0;font-size:2.3rem;font-weight:900;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.9)}
+.hero p{margin:4px 0 0;color:#dbeafe;font-size:.92rem;text-shadow:0 1px 6px rgba(0,0,0,.9)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+.kpi{background:rgba(2,6,23,.92);border:1px solid rgba(148,163,184,.28);border-radius:14px;padding:12px 16px}
+.kpi .t{color:#7dd3fc;font-size:.68rem;text-transform:uppercase;letter-spacing:1.2px}
+.kpi .v{font-size:1.45rem;font-weight:800;color:#fff}
 .kpi .v.g{color:#4ade80}.kpi .v.y{color:#facc15}.kpi .v.r{color:#f87171}
-.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:14px 16px;margin-bottom:12px}
-.mcard.value{border-color:rgba(16,185,129,.65)}
-.mcard.hot{border-color:rgba(250,204,21,.6)}
-.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:2px 9px;border-radius:999px;font-size:.7rem;font-weight:700;margin-right:6px}
+.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px 18px;margin-bottom:14px}
+.mcard.value{border-color:rgba(16,185,129,.65);box-shadow:0 0 26px rgba(16,185,129,.18)}
+.mcard.hot{border-color:rgba(250,204,21,.6);box-shadow:0 0 26px rgba(250,204,21,.15)}
+.mhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:700}
 .chip.when{background:rgba(250,204,21,.16);color:#fde68a;border-color:rgba(250,204,21,.45)}
-.badge{float:right;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:800}
+.chip.warn{background:rgba(248,113,113,.18);color:#fecaca;border-color:rgba(248,113,113,.5)}
+.badge{margin-left:auto;padding:4px 12px;border-radius:999px;font-size:.72rem;font-weight:800}
 .badge.val{background:rgba(16,185,129,.22);color:#86efac;border:1px solid rgba(16,185,129,.6)}
-.badge.hot{background:rgba(250,204,21,.2);color:#fde68a;border-color:rgba(250,204,21,.6)}
+.badge.hot{background:rgba(250,204,21,.2);color:#fde68a;border:1px solid rgba(250,204,21,.6)}
 .badge.no{background:rgba(100,116,139,.2);color:#cbd5e1;border:1px solid rgba(100,116,139,.4)}
-.teams{font-size:1.2rem;font-weight:800;color:#fff;margin:8px 0 2px}
+.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:10px 0 2px}
 .teams span{color:#94a3b8;font-weight:400}
-.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:8px 12px;margin:6px 0;color:#e2e8f0;font-size:.85rem}
+.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:12px;padding:10px 14px;margin:8px 0;color:#e2e8f0;font-size:.88rem}
 .verdict b.y{color:#facc15}.verdict b.g{color:#4ade80}.verdict b.r{color:#f87171}
-.mrow{display:grid;grid-template-columns:80px 1fr 80px 80px 80px 30px;gap:8px;padding:5px 0;border-top:1px solid rgba(148,163,184,.12);font-size:.82rem;color:#e2e8f0}
-.ok{color:#4ade80;font-weight:800}.nok{color:#64748b}
+.form5{font-size:.72rem;letter-spacing:2px;margin-bottom:6px;color:#cbd5e1}
+.form5 b{padding:1px 5px;border-radius:4px;margin-right:2px}
+.w{background:rgba(16,185,129,.3);color:#86efac}.d{background:rgba(148,163,184,.25);color:#e2e8f0}.l{background:rgba(239,68,68,.25);color:#fca5a5}
+.bar{height:6px;background:rgba(148,163,184,.2);border-radius:99px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#4ade80)}
+.mrow{display:grid;grid-template-columns:70px 96px 1.1fr 70px 70px 62px 74px 26px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid rgba(148,163,184,.14);font-size:.82rem;color:#e2e8f0}
+.mrow.hdr{color:#94a3b8;font-size:.68rem;text-transform:uppercase;border-top:none}
+.ok{color:#4ade80;font-weight:800}.nok{color:#64748b;font-weight:800}
 .evpos{color:#4ade80;font-weight:700}.evneg{color:#f87171;font-weight:700}
-.mfoot{margin-top:8px;color:#cbd5e1;font-size:.76rem}
+.mfoot{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(148,163,184,.3);color:#cbd5e1;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap}
 .mfoot b{color:#facc15}
 </style>""", unsafe_allow_html=True)
 
-def _f(v):
-    try: return float(v)
-    except Exception: return None
-def Phi(x): return 0.5*(1+math.erf(x/math.sqrt(2)))
-def pois_cdf(k,mu): return sum(math.exp(-mu)*mu**i/math.factorial(i) for i in range(k+1))
-def parse_date(s):
-    for fmt in ("%d/%m/%Y","%d/%m/%y","%Y-%m-%d"):
-        try: return datetime.strptime(str(s).strip(),fmt)
-        except Exception: continue
-    return None
-def _iso(s):
-    try: return datetime.fromisoformat(str(s).replace("Z","+00:00")).replace(tzinfo=None)
-    except Exception: return None
-def kelly(prob,odds,bank,frac):
-    if prob<=0 or odds<=1: return 0.0
-    b=odds-1;k=(b*prob-(1-prob))/b
-    return round(min(max(0,k*frac),0.05)*bank,2)
-def ml_dec(ml):
-    if ml is None: return None
-    ml=float(ml)
-    return round(ml/100+1,2) if ml>0 else round(100/abs(ml)+1,2)
-def _odd_s(rw):
-    o=rw.get("odd")
-    if o: return f"{o:.2f}"
-    p=max(rw.get("prob") or 0.01,0.01)
-    return f"фейр {1/p:.2f}"
+ERR=[]
+def log_err(tag,e):
+    ERR.append(f"[{tag}] {type(e).__name__}: {e}")
+    if len(ERR)>300: ERR.pop(0)
 
-# ---------- TheSportsDB (резерв) ----------
-@st.cache_data(ttl=86400)
-def tsdb_all_leagues():
-    for key in ("123","3"):
-        try:
-            r=requests.get(f"https://www.thesportsdb.com/api/v1/json/{key}/all_leagues.php",timeout=20)
-            ls=(r.json() or {}).get("leagues") or []
-            if ls: return [(l.get("idLeague"),l.get("strLeague"),l.get("strSport")) for l in ls]
-        except Exception as e: log_err("tsdb_all",e)
-    return []
-def tsdb_leagues_for(cfg):
-    out=[]
-    for lid,name,sport in tsdb_all_leagues():
-        if sport!=cfg.get("tsdb_sport"): continue
-        if cfg.get("kw") and not any(k.lower() in (name or "").lower() for k in cfg["kw"]): continue
-        out.append((lid,name))
-        if len(out)>=cfg.get("max",3): break
-    if not out:
-        for lid,name,sport in tsdb_all_leagues():
-            if sport==cfg.get("tsdb_sport"):
-                out.append((lid,name))
-                if len(out)>=cfg.get("max",3): break
-    return out
-@st.cache_data(ttl=21600)
-def tsdb_events(lid,kind):
-    for key in ("123","3"):
-        try:
-            r=requests.get(f"https://www.thesportsdb.com/api/v1/json/{key}/events{kind}league.php?id={lid}",timeout=20)
-            ev=(r.json() or {}).get("events")
-            if ev is not None: return ev or []
-        except Exception as e: log_err(f"tsdb_{kind}",e)
-    return []
-
-class BinElo:
-    def __init__(self,k,ha,div):
-        self.r={};self.k=k;self.ha=ha;self.div=div
-    def add(self,h,a,s1,s2):
-        r1=self.r.get(h,1500);r2=self.r.get(a,1500)
-        p=1/(1+10**(-((r1+self.ha)-r2)/self.div))
-        s=1.0 if s1>s2 else (0.0 if s1<s2 else 0.5)
-        self.r[h]=r1+self.k*(s-p);self.r[a]=r2+self.k*((1-s)-(1-p))
-    def predict(self,h,a):
-        r1=self.r.get(h,1500);r2=self.r.get(a,1500)
-        p=1/(1+10**(-((r1+self.ha)-r2)/self.div))
-        return p,1-p
-
-# ---------- ESPN ----------
-@st.cache_data(ttl=7200)
-def espn_events(path,dates):
-    try:
-        r=requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={dates}",timeout=20,headers=UA)
-        return (r.json() or {}).get("events") or []
-    except Exception as e:
-        log_err(f"espn {path}",e); return []
-def espn_parse(ev):
-    try:
-        comp=(ev.get("competitions") or [{}])[0]
-        home=away=None;hs=as_=None
-        for c in comp.get("competitors") or []:
-            t=c.get("team") or {}
-            name=t.get("displayName") or t.get("shortDisplayName") or t.get("name")
-            sc=_f(c.get("score"))
-            if c.get("homeAway")=="home": home,hs=name,sc
-            else: away,as_=name,sc
-        od=(comp.get("odds") or [{}])[0]
-        hml=_f((od.get("homeTeamOdds") or {}).get("moneyLine"))
-        aml=_f((od.get("awayTeamOdds") or {}).get("moneyLine"))
-        done=bool((ev.get("status") or {}).get("type",{}).get("completed"))
-        return {"date":_iso(ev.get("date")),"home":home,"away":away,"hs":hs,"as_":as_,
-                "done":done,"hml":hml,"aml":aml}
-    except Exception as e:
-        log_err("espn parse",e); return None
-
-# ---------- NHL API ----------
-@st.cache_data(ttl=21600)
-def nhl_day(dstr):
-    try:
-        r=requests.get(f"https://api-web.nhl.com/v1/schedule/{dstr}",timeout=15,headers=UA)
-        if r.status_code!=200: return []
-        out=[]
-        for w in ((r.json() or {}).get("weeks") or []):
-            out+=(w.get("gameWeek") or [])
-        return out
-    except Exception as e:
-        log_err("nhl_day",e); return []
-def nhl_parse(g):
-    try:
-        aw=g.get("awayTeam") or {};hm=g.get("homeTeam") or {}
-        a_=aw.get("abbrev");h_=hm.get("abbrev")
-        if not a_ or not h_: return None
-        an=(aw.get("commonName") or {}).get("default") or a_
-        hn=(hm.get("commonName") or {}).get("default") or h_
-        as_=_f(g.get("awayScore"));hs=_f(g.get("homeScore"))
-        done=(g.get("gameState") in ("OFF","FINAL")) or (as_ is not None and hs is not None)
-        d=_iso(g.get("startTime")) or parse_date(str(g.get("startTime",""))[:10])
-        return {"date":d,"a":a_,"h":h_,"an":an,"hn":hn,"as_":as_,"hs":hs,"done":done}
-    except Exception as e:
-        log_err("nhl_parse",e); return None
-def nhl_fetch(days_list):
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        lists=list(ex.map(nhl_day,days_list))
-    out=[];seen=set()
-    for lst in lists:
-        for g in lst:
-            x=nhl_parse(g)
-            if not x: continue
-            k=(x["date"],x["h"],x["a"])
-            if k in seen: continue
-            seen.add(k);out.append(x)
-    return out
-
-# ---------- ФУТБОЛ ДВИЖОК ----------
+# ================= ДВИЖОК (пер-лига параметры, 2 движка λ) =================
 class Engine:
     def __init__(self):
-        self.elo={};self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],"hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
-        self.hg=[];self.ag=[];self.hsth=[];self.hsta=[];self.h2h=defaultdict(list)
-        self.calib=[];self.platt_a=0.0;self.platt_b=1.0;self.history=[];self.rho=-0.13;self.w_dc=0.72;self.mc=0
+        self.elo={}
+        self.st=defaultdict(lambda:{"hs":[],"hc":[],"as":[],"ac":[],"form":[],
+            "cfh":[],"cah":[],"cfa":[],"caa":[],"yfh":[],"yah":[],"yfa":[],"yaa":[],
+            "hst_h":[],"hstc_h":[],"hst_a":[],"hstc_a":[]})
+        self.hg=[];self.ag=[];self.hsth=[];self.hsta=[]
+        self.h2h=defaultdict(list)
+        self.calib=[];self.platt_a=0.0;self.platt_b=1.0
+        self.lp=defaultdict(DEF_LP);self.hist=defaultdict(list)
+        self.match_count=0
+        self.market_roi=defaultdict(lambda:{"n":0,"profit":0.0})
     @staticmethod
     def _logit(p):
         p=min(max(p,1e-6),1-1e-6);return math.log(p/(1-p))
     @staticmethod
-    def _sig(x): return 1.0/(1.0+math.exp(-max(-30,min(30,x))))
+    def _sigmoid(x): return 1.0/(1.0+math.exp(-max(-30,min(30,x))))
     def _m(self,l,d=1.0): return sum(l)/len(l) if l else d
     def _p(self,l,k): return math.exp(-l)*l**k/math.factorial(k)
     def _form(self,t):
         f=self.st[t]["form"][-5:];return (sum(f)/(len(f)*3)) if f else 0.5
     def form_str(self,t):
         return "".join({"3":"В","1":"Н","0":"П"}[str(int(x))] for x in self.st[t]["form"][-5:]) or "—"
-    def calib_p(self,p): return self._sig(self.platt_a+self.platt_b*self._logit(p))
+    def calibrate(self,p): return self._sigmoid(self.platt_a+self.platt_b*self._logit(p))
     def refit_platt(self):
         if len(self.calib)<60: return
         data=self.calib[-3000:];a,b=self.platt_a,self.platt_b;n=len(data)
-        for _ in range(50):
+        for _ in range(60):
             ga=gb=0.0
             for x,y in data:
-                p=self._sig(a+b*x);ga+=p-y;gb+=(p-y)*x
+                p=self._sigmoid(a+b*x);err=p-y;ga+=err;gb+=err*x
             a-=0.08*ga/n;b-=0.08*gb/n;b=min(max(b,0.3),3.0)
         self.platt_a,self.platt_b=a,b
     def _p1px(self,lh,la,rho):
@@ -246,30 +132,62 @@ class Engine:
                 if (i,j) in tau: M[i][j]*=tau[(i,j)]
         tot=sum(map(sum,M)) or 1.0
         M=[[v/tot for v in r] for r in M]
-        return (sum(M[i][j] for i in range(N) for j in range(N) if i>j), sum(M[i][i] for i in range(N)), M)
-    def refit_struct(self):
-        if len(self.history)<200: return
-        win=self.history[-200:];best=None
+        p1=sum(M[i][j] for i in range(N) for j in range(N) if i>j)
+        px=sum(M[i][i] for i in range(N))
+        return p1,px,M
+    def _probs_from(self,lh,la,rho,w,e,pde):
+        p1,px,_=self._p1px(lh,la,rho)
+        f1=w*p1+(1-w)*e*(1-pde);fd=w*px+(1-w)*pde;f2=max(1e-6,1-f1-fd)
+        return f1,fd,f2
+    def _fit_league(self,lg):
+        win=self.hist[lg][-150:]
+        if len(win)<120: return
+        cur=self.lp[lg];best_ws=None
+        for ws in (0.20,0.35,0.50):
+            ll=0.0
+            for gh,ga,sh,sa,e,pde,out in win:
+                lh=(1-ws)*gh+ws*sh;la=(1-ws)*ga+ws*sa
+                f1,fd,f2=self._probs_from(lh,la,cur["rho"],cur["w_dc"],e,pde)
+                ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
+            if best_ws is None or ll<best_ws[0]: best_ws=(ll,ws)
+        cur["w_shots"]=best_ws[1]
+        data=[]
+        for gh,ga,sh,sa,e,pde,out in win:
+            lh=(1-best_ws[1])*gh+best_ws[1]*sh;la=(1-best_ws[1])*ga+best_ws[1]*sa
+            data.append(({r:self._p1px(lh,la,r)[0:2] for r in (-0.20,-0.13,-0.06,0.0)},e,pde,out))
+        best=None
         for rho in (-0.20,-0.13,-0.06,0.0):
             for w in (0.60,0.72,0.85):
                 ll=0.0
-                for lh,la,e,pde,out in win:
-                    p1,px,_=self._p1px(lh,la,rho)
+                for rowm,e,pde,out in data:
+                    p1,px=rowm[rho]
                     f1=w*p1+(1-w)*e*(1-pde);fd=w*px+(1-w)*pde;f2=max(1e-6,1-f1-fd)
                     ll-=math.log(min(max((f1,fd,f2)[out],1e-6),1-1e-6))
                 if best is None or ll<best[0]: best=(ll,rho,w)
-        if best: self.rho,self.w_dc=best[1],best[2]
-    def add(self,h,a,hg,ag,row=None,k=32):
+        cur["rho"],cur["w_dc"]=best[1],best[2]
+    def record_market(self,mkt,won,odd):
+        r=self.market_roi[mkt];r["n"]+=1;r["profit"]=0.9*r["profit"]+0.1*((odd-1) if won else -1)
+    def market_adjust(self,mkt):
+        r=self.market_roi.get(mkt)
+        if not r or r["n"]<40: return 0.0
+        roi=r["profit"]/r["n"];return max(-0.010,min(0.020,-roi*0.4))
+    def add(self,h,a,hg,ag,row=None,k=None,match_num=None,total=None):
+        if k is None:
+            k=(48-32*min(1.0,match_num/total)) if (match_num is not None and total) else 32
         rh,ra=self.elo.get(h,1500),self.elo.get(a,1500)
         eh=1/(1+10**((ra-(rh+60))/400));s=1.0 if hg>ag else (0.5 if hg==ag else 0.0)
         self.elo[h]=rh+k*(s-eh);self.elo[a]=ra+k*((1-s)-(1-eh))
         t=self.st
         t[h]["hs"].append(hg);t[h]["hc"].append(ag);t[a]["as"].append(ag);t[a]["ac"].append(hg)
         t[h]["form"].append(3 if hg>ag else (1 if hg==ag else 0))
-        t[a]["form"].append(3 if ag>hg else (1 if ag==hg else 0))
+        t[a]["form"].append(3 if ag>hg else (1 if hg==ag else 0))
         self.hg.append(hg);self.ag.append(ag)
         self.h2h[(h,a)].append(hg-ag);self.h2h[(h,a)]=self.h2h[(h,a)][-8:]
         if row:
+            for col,t1,k1,t2,k2 in (("HC",h,"cfh",a,"caa"),("AC",a,"cfa",h,"cah"),
+                                    ("HY",h,"yfh",a,"yaa"),("AY",a,"yfa",h,"yah")):
+                v=_f(row.get(col))
+                if v is not None: t[t1][k1].append(v);t[t2][k2].append(v)
             hst,ast=_f(row.get("HST")),_f(row.get("AST"))
             if hst is not None and ast is not None:
                 t[h]["hst_h"].append(hst);t[h]["hstc_h"].append(ast)
@@ -277,59 +195,79 @@ class Engine:
                 self.hsth.append(hst);self.hsta.append(ast)
         for team in (h,a):
             for key in t[team]: t[team][key]=t[team][key][-12:]
-    def predict(self,h,a):
-        ws=0.35;N=MATRIX_N
+    def h2h_adjust(self,h,a,lh,la):
+        hist=self.h2h.get((h,a),[])
+        if len(hist)<3: return lh,la,0
+        shift=(sum(hist)/len(hist))*0.15
+        return max(0.3,lh+shift/2),max(0.25,la-shift/2),len(hist)
+    def predict(self,h,a,lg="G"):
+        P0=self.lp[lg];ws=P0["w_shots"];N=MATRIX_N
         lh_g=self._m(self.hg,1.5);la_g=self._m(self.ag,1.2)
         lh_s=self._m(self.hsth,4.5);la_s=self._m(self.hsta,4.0)
         sh,sa=self.st[h],self.st[a]
         ah_=self._m(sh["hs"],lh_g)/lh_g;dh_=self._m(sh["hc"],la_g)/la_g
         aa_=self._m(sa["as"],la_g)/la_g;da_=self._m(sa["ac"],lh_g)/lh_g
         fh,fa=self._form(h),self._form(a)
-        lg_h=max(0.3,min(5.0,lh_g*ah_*da_*1.10*(0.85+0.30*fh)))
-        lg_a=max(0.25,min(4.5,la_g*aa_*dh_*0.95*(0.85+0.30*fa)))
-        ch_=lh_g/max(0.5,lh_s);ca_=la_g/max(0.5,la_s)
-        ash=self._m(sh["hst_h"],lh_s)/lh_s;dsa=self._m(sa["hstc_a"],lh_s)/lh_s
-        asa=self._m(sa["hst_a"],la_s)/la_s;dsh=self._m(sh["hstc_h"],la_s)/la_s
-        ls_h=max(0.3,min(5.0,lh_s*ch_*ash*dsa*(0.85+0.30*fh)))
-        ls_a=max(0.25,min(4.5,la_s*ca_*asa*dsh*(0.85+0.30*fa)))
-        lam_h=(1-ws)*lg_h+ws*ls_h;lam_a=(1-ws)*lg_a+ws*ls_a
-        agree=(lg_h-lg_a)*(ls_h-ls_a)>0
-        hist=self.h2h.get((h,a),[])
-        if len(hist)>=3:
-            sh_=(sum(hist)/len(hist))*0.15
-            lam_h=max(0.3,lam_h+sh_/2);lam_a=max(0.25,lam_a-sh_/2)
+        lam_g_h=max(0.3,min(5.0,lh_g*ah_*da_*1.10*(0.85+0.30*fh)))
+        lam_g_a=max(0.25,min(4.5,la_g*aa_*dh_*0.95*(0.85+0.30*fa)))
+        conv_h=lh_g/max(0.5,lh_s);conv_a=la_g/max(0.5,la_s)
+        att_sh_h=self._m(sh["hst_h"],lh_s)/lh_s;def_sh_a=self._m(sa["hstc_a"],lh_s)/lh_s
+        att_sh_a=self._m(sa["hst_a"],la_s)/la_s;def_sh_h=self._m(sh["hstc_h"],la_s)/la_s
+        lam_s_h=max(0.3,min(5.0,lh_s*conv_h*att_sh_h*def_sh_a*(0.85+0.30*fh)))
+        lam_s_a=max(0.25,min(4.5,la_s*conv_a*att_sh_a*def_sh_h*(0.85+0.30*fa)))
+        lam_h=(1-ws)*lam_g_h+ws*lam_s_h;lam_a=(1-ws)*lam_g_a+ws*lam_s_a
+        agree=(lam_g_h-lam_g_a)*(lam_s_h-lam_s_a)>0
+        lam_h,lam_a,h2h_n=self.h2h_adjust(h,a,lam_h,lam_a)
         e=1/(1+10**((self.elo.get(a,1500)-self.elo.get(h,1500)-60)/400))
         pde=0.20+0.12*(1-abs(e-0.5)*2)
-        p1,px,M=self._p1px(lam_h,lam_a,self.rho)
-        f1=self.w_dc*p1+(1-self.w_dc)*e*(1-pde);fd=self.w_dc*px+(1-self.w_dc)*pde;f2=max(0.0,1-f1-fd)
-        c1,cx,c2=self.calib_p(f1),self.calib_p(fd),self.calib_p(f2)
+        p1,px,M=self._p1px(lam_h,lam_a,P0["rho"])
+        f1=P0["w_dc"]*p1+(1-P0["w_dc"])*e*(1-pde)
+        fd=P0["w_dc"]*px+(1-P0["w_dc"])*pde
+        f2=max(0.0,1-f1-fd)
+        c1,cx,c2=self.calibrate(f1),self.calibrate(fd),self.calibrate(f2)
         ct=c1+cx+c2 or 1.0;f1,fd,f2=c1/ct,cx/ct,c2/ct
         over=1-sum(self._p(lam_h+lam_a,k) for k in range(3))
         btts=sum(M[i][j] for i in range(1,N) for j in range(1,N))
         games=min(len(sh["hs"])+len(sh["as"]),len(sa["hs"])+len(sa["as"]))
+        corners=((self._m(sh["cfh"],5)+self._m(sa["caa"],5))/2,(self._m(sa["cfa"],5)+self._m(sh["cah"],5))/2)
+        yellows=((self._m(sh["yfh"],2)+self._m(sa["yaa"],2))/2,(self._m(sa["yfa"],2)+self._m(sh["yah"],2))/2)
         return {"p1":f1,"x":fd,"p2":f2,"over":over,"btts":btts,"M":M,"agree":agree,
-                "lams":(lam_h,lam_a),"games":games,"h2h":len(hist),
-                "fh":self.form_str(h),"fa":self.form_str(a)}
-    def learn_step(self,h,a,hg,ag,row=None):
-        P=self.predict(h,a)
+                "lams":(lam_h,lam_a),"lams_g":(lam_g_h,lam_g_a),"lams_s":(lam_s_h,lam_s_a),
+                "games":games,"corners":corners,"yellows":yellows,"h2h_n":h2h_n,"e":e,"pde":pde}
+    def learn_step(self,h,a,hg,ag,row=None,lg="G",match_num=None,total=None):
+        P=self.predict(h,a,lg)
         out=0 if hg>ag else (1 if hg==ag else 2)
         self.calib+=[(self._logit(P["p1"]),1.0 if out==0 else 0.0),
                      (self._logit(P["x"]),1.0 if out==1 else 0.0),
                      (self._logit(P["p2"]),1.0 if out==2 else 0.0)]
-        self.history.append((P["lams"][0],P["lams"][1],0,0,out))
-        self.mc+=1
-        if self.mc%150==0: self.refit_platt()
-        if self.mc%300==0: self.refit_struct()
-        self.add(h,a,hg,ag,row)
+        self.hist[lg].append((P["lams_g"][0],P["lams_g"][1],P["lams_s"][0],P["lams_s"][1],P["e"],P["pde"],out))
+        if row:
+            for mkt,pick,prob,odd,won in [("1X2","П1",P["p1"],_f(row.get("B365H")),hg>ag),
+                                          ("1X2","X",P["x"],_f(row.get("B365D")),hg==ag),
+                                          ("1X2","П2",P["p2"],_f(row.get("B365A")),hg<ag),
+                                          ("OU","ТБ 2.5",P["over"],_f(row.get("B365>2.5")),hg+ag>=3),
+                                          ("OU","ТМ 2.5",1-P["over"],_f(row.get("B365<2.5")),hg+ag<=2)]:
+                if odd and odd>1.01: self.record_market(mkt,bool(won),odd)
+        self.match_count+=1
+        if self.match_count%REFIT_PLATT_EVERY==0: self.refit_platt()
+        if len(self.hist[lg])%REFIT_STRUCT_EVERY==0: self._fit_league(lg)
+        self.add(h,a,hg,ag,row,match_num=match_num,total=total)
         return P
 
+# ================= УТИЛИТЫ =================
+def _f(v):
+    try: return float(v)
+    except Exception: return None
+def is_cup(row):
+    dv=row.get("Div","");lg=(row.get("League") or "").lower()
+    return dv in ("C1","EL","EC") or any(x in lg for x in ["cup","champions","europa","conference","libertadores"])
 @st.cache_data(ttl=1800)
 def find_season():
     for s in ["2627","2526","2425"]:
         try:
             r=requests.head(f"https://www.football-data.co.uk/mmz4281/{s}/E0.csv",timeout=8)
             if r.status_code==200: return s
-        except Exception as e: log_err("season",e)
+        except Exception as e: log_err("find_season",e)
     return "2526"
 def prev_season(s):
     try: return f"{int(s[:2])-1:02d}{int(s[2:])-1:02d}"
@@ -341,7 +279,7 @@ def load_seasonal(div,season):
         if r.status_code!=200: return []
         return list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
     except Exception as e:
-        log_err(f"seasonal {div}",e); return []
+        log_err(f"load_seasonal {div}",e); return []
 def load_many(divs,season):
     with ThreadPoolExecutor(max_workers=8) as ex:
         return dict(zip(divs,ex.map(lambda d: load_seasonal(d,season),divs)))
@@ -349,21 +287,42 @@ def load_many(divs,season):
 def load_fixtures():
     rep=[];rows=[];seen=set()
     for u in ["https://www.football-data.co.uk/mmz4281/fixtures.csv",
-              "https://www.football-data.co.uk/fixtures.csv"]:
+              "https://www.football-data.co.uk/fixtures.csv",
+              "http://www.football-data.co.uk/mmz4281/fixtures.csv"]:
         try:
             r=requests.get(u,timeout=25,headers=UA)
-            if r.status_code!=200: rep.append(f"fixtures: HTTP {r.status_code}");continue
+            if r.status_code!=200: rep.append(f"{u.split('/')[-1]}: HTTP {r.status_code}");continue
             rd=list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
             n=0
             for x in rd:
                 k=(x.get("Div"),x.get("Date"),x.get("HomeTeam"),x.get("AwayTeam"))
                 if k in seen or not x.get("HomeTeam"): continue
                 seen.add(k);rows.append(x);n+=1
-            rep.append(f"fixtures.csv: OK, {n} матчей")
+            rep.append(f"{u.split('/')[-1]}: OK,{n}")
             if n: break
         except Exception as e:
-            log_err("fixtures",e); rep.append(f"fixtures: {type(e).__name__}")
+            log_err("load_fixtures",e); rep.append(f"{u.split('/')[-1]}: {type(e).__name__}")
     return rows,rep
+@st.cache_data(ttl=900)
+def load_tsdb():
+    rep=[];rows=[]
+    for lid,name in TSDB_LEAGUES.items():
+        try:
+            r=requests.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",timeout=15)
+            ev=(r.json() or {}).get("events") or []
+            for e in ev:
+                rows.append({"Div":"TSDB","League":name,"Date":e.get("dateEvent",""),
+                             "Time":(e.get("strTime") or "")[:5],"HomeTeam":e.get("strHomeTeam",""),
+                             "AwayTeam":e.get("strAwayTeam","")})
+            rep.append(f"TSDB {name}: {len(ev)}")
+        except Exception as e:
+            log_err(f"tsdb {name}",e); rep.append(f"TSDB {name}: ошибка")
+    return rows,rep
+def parse_date(s):
+    for fmt in ("%d/%m/%Y","%d/%m/%y","%Y-%m-%d"):
+        try: return datetime.strptime(str(s).strip(),fmt)
+        except Exception: continue
+    return None
 def odd1(row,keys):
     for k in keys:
         v=_f(row.get(k))
@@ -378,233 +337,518 @@ def market_probs(row):
     if not(ph and px and pa): return None
     i1,ix,ia=1/ph,1/px,1/pa;s=i1+ix+ia
     return (i1/s,ix/s,ia/s)
+def clv_for(pick,odd,mkt,row):
+    if not odd: return None
+    if mkt:
+        idx={"П1":0,"X":1,"П2":2}.get(pick)
+        if idx is not None: return odd*mkt[idx]-1
+    po=_f(row.get("PS>2.5")) if pick=="ТБ 2.5" else (_f(row.get("PS<2.5")) if pick=="ТМ 2.5" else None)
+    ot=_f(row.get("PS<2.5")) if pick=="ТБ 2.5" else (_f(row.get("PS>2.5")) if pick=="ТМ 2.5" else None)
+    if po and ot:
+        i1,i2=1/po,1/ot;s=i1+i2
+        return odd*(i1/s)-1
+    return None
+def blend_market(P,mkt,w):
+    if not mkt: return P
+    P=dict(P)
+    P["p1"]=(1-w)*P["p1"]+w*mkt[0];P["x"]=(1-w)*P["x"]+w*mkt[1];P["p2"]=(1-w)*P["p2"]+w*mkt[2]
+    t=P["p1"]+P["x"]+P["p2"] or 1.0
+    P["p1"]/=t;P["x"]/=t;P["p2"]/=t;P["mkt"]=mkt
+    return P
+def kelly(prob,odds,bank,frac):
+    if prob<=0 or odds<=1: return 0.0
+    b=odds-1;k=(b*prob-(1-prob))/b
+    return round(min(max(0,k*frac),0.05)*bank,2)
+def settle_ah(pick,hg,ag):
+    m=re.match(r"Ф([12])\(([-+]?\d+(?:\.\d+)?)\)",pick)
+    if not m: return None
+    side,line=int(m.group(1)),float(m.group(2))
+    res=((hg-ag) if side==1 else (ag-hg))+line
+    if res>0.001: return True
+    if abs(res)<=0.001: return "push"
+    return False
 
-def scan_football(PR,today,limit,bank):
-    season=find_season();pseason=prev_season(season)
-    fix,rep=load_fixtures()
-    eng=Engine();trained=0
-    divs=sorted({r.get("Div") for r in fix if r.get("Div")}) or ["E0","SP1","I1","D1","F1"]
-    dp=load_many(divs,pseason);dc=load_many(divs,season)
-    for dv in divs:
-        for src in (dp,dc):
-            rr=sorted([r for r in src.get(dv,[]) if parse_date(r.get("Date",""))],key=lambda r:parse_date(r["Date"]))
-            for r in rr:
-                if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,""):
-                    try: eng.learn_step(r["HomeTeam"],r["AwayTeam"],float(r["FTHG"]),float(r["FTAG"]),r); trained+=1
-                    except Exception as e: log_err(f"train {dv}",e)
-    cards=[];passed=0;inwin=0
-    for r in fix:
-        try:
-            d=parse_date(r.get("Date",""))
-            if not d or not (today<=d<=limit): continue
-            h=(r.get("HomeTeam") or "").strip();a=(r.get("AwayTeam") or "").strip()
-            if not h or not a: continue
-            inwin+=1
-            P=eng.predict(h,a)
-            mkt=market_probs(r);w=PR["w_market"]
-            if mkt:
-                t=(1-w)*P["p1"]+w*mkt[0];x=(1-w)*P["x"]+w*mkt[1];q=(1-w)*P["p2"]+w*mkt[2]
-                s=t+x+q or 1.0;P["p1"],P["x"],P["p2"]=t/s,x/s,q/s;P["mkt"]=mkt
-            gap=max(abs(P["p1"]-mkt[0]),abs(P["x"]-mkt[1]),abs(P["p2"]-mkt[2])) if mkt else None
-            rows=[];best=None;hot=[]
-            cands=[("1X2","П1",P["p1"],best_odd(r,"П1")),("1X2","X",P["x"],best_odd(r,"X")),
-                   ("1X2","П2",P["p2"],best_odd(r,"П2")),("OU","ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),
-                   ("OU","ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5")),
-                   ("STAT","BTTS да",P["btts"],None),("STAT","BTTS нет",1-P["btts"],None),
-                   ("STAT","1X",P["p1"]+P["x"],None),("STAT","X2",P["x"]+P["p2"],None),("STAT","12",P["p1"]+P["p2"],None)]
-            for mktk,pick,prob,odd in cands:
-                item={"mkt":mktk,"pick":pick,"prob":prob,"odd":odd,"ev":None,"be":None,"ok":False}
-                if odd:
-                    lo,hi=PR["corr"] if mktk=="1X2" else CORRIDORS.get(mktk,(1.4,4.2))
-                    ev=prob*odd-1;be=1/odd;edge=prob-be
-                    req=max(0.0,PR["ev"]+max(0.0,odd-2.5)*0.02)
-                    dis_ok=(not PR["dis"]) or (gap is None) or (gap>=0.03)
-                    agree_ok=(mktk!="1X2") or P["agree"]
-                    games_ok=P["games"]>=PR["min_games"]
-                    item.update(ev=ev,be=be,ok=(lo<=odd<=hi and edge>=PR["edge"] and ev>=req and dis_ok and agree_ok and games_ok))
-                    if item["ok"]:
-                        passed+=1;stk=kelly(prob,odd,bank,0.25)
-                        if best is None or ev>best[3]: best=(mktk,pick,odd,ev,prob,stk)
-                if prob>=PR["thr"]: hot.append((pick,prob,odd))
-                rows.append(item)
-            hot.sort(key=lambda x:-x[1])
-            tag="value" if best else ("hot" if hot else "")
-            nd=(d-today).days
-            when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
-            league=r.get("League") or DIV_NAMES.get(r.get("Div"),"Лига "+str(r.get("Div")))
-            cards.append({"div":r.get("Div"),"league":league,"match":f"{h} vs {a}",
-                "date":d.strftime("%d.%m")+(f" {r.get('Time')}" if r.get("Time") else ""),"when":when,
-                "rows":rows,"best":best,"hot":hot[:3],"tag":tag,"lams":P["lams"],
-                "games":P["games"],"h2h_n":P["h2h"],
-                "fh":P["fh"],"fa":P["fa"],"cup":False})
-        except Exception as e: log_err("scan_f_loop",e)
-    cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
-    return cards,rep
+def _odd_s(rw):
+    o=rw.get("odd")
+    if o: return f"{o:.2f}"
+    p=max(rw.get("prob") or 0.01,0.01)
+    return f"фейр {1/p:.2f}"
 
-# ---------- ХОККЕЙ СКАНЕР ----------
-def scan_hockey(PR,today,limit,bank):
-    cfg=SPORTS["🏒 Хоккей"]
-    days=[(today+timedelta(days=i)).strftime("%Y-%m-%d") for i in range((limit-today).days+1)]
-    nhl_evs=nhl_fetch(days)
-    cards=[];elo=BinElo(cfg["k"],cfg["ha"],cfg["div"])
-    # Тренируем на прошедших матчах недели если есть счета
-    for g in nhl_evs:
-        if g["done"] and g["hs"] is not None and g["as_"] is not None:
-            elo.add(g["h"],g["a"],g["hs"],g["as_"])
+def ai_verdict(c):
+    rows=c.get("rows",[])
+    scored=sorted([r for r in rows if r.get("prob")],key=lambda r:-r["prob"])
+    def prep(r):
+        if not r: return None
+        d=dict(r);d["odd_s"]=_odd_s(d);return d
+    main=prep(scored[0]) if scored else None
+    alt=prep(scored[1]) if len(scored)>1 else None
+    x12=[r for r in rows if r["mkt"]=="1X2"]
+    avoid=prep(min(x12,key=lambda r:r["prob"])) if x12 else None
+    lh,la=c.get("lams",(0,0));lg=c.get("lams_g",c.get("lams",(0,0)));ls=c.get("lams_s",c.get("lams",(0,0)))
+    parts=[f"Движок голов {lg[0]:.1f}–{lg[1]:.1f}, движок ударов {ls[0]:.1f}–{ls[1]:.1f} → итог xG {lh[0] if isinstance(lh,tuple) else lh:.1f}–{lh[1] if isinstance(lh,tuple) else la:.1f}."]
+    if not c.get("agree",True): parts.append("⚠️ Движки не согласны о фаворите — 1X2 пропущен.")
+    if c.get("fh","—")!="—": parts.append(f"Форма {c['fh']} против {c['fa']}.")
+    m=c.get("mkt");gap=None
+    if m:
+        gap=max(abs(c.get("p1",0)-m[0]),abs(c.get("px",c.get("x",0))-m[1]),abs(c.get("p2",0)-m[2]))
+        parts.append(f"Pinnacle: П1 {m[0]*100:.0f}/X {m[1]*100:.0f}/П2 {m[2]*100:.0f}%; расхождение {gap*100:.0f} п.п. — "
+                     +("модель видит alpha" if gap>=DISAGREE_MIN else "консенсус с рынком")+".")
+    if c.get("h2h_n",0)>=3: parts.append(f"H2H: {c['h2h_n']} встреч учтены.")
+    if c.get("cup"): parts.append("Кубковый матч: темп ниже.")
+    return main,alt,avoid," ".join(parts),gap
 
-    for g in nhl_evs:
-        if g["done"]: continue
-        h=g["hn"];a=g["an"]
-        p1,p2=elo.predict(h,a)
-        # В хоккее средний тотал ~ 5.5 голов
-        over_p=0.55 if abs(p1-p2)<0.1 else 0.52
-        rows=[
-            {"mkt":"1X2","pick":"П1","prob":p1,"odd":ml_dec(150), "ev":p1*ml_dec(150)-1,"be":1/ml_dec(150),"ok":p1>=PR["thr"]},
-            {"mkt":"1X2","pick":"П2","prob":p2,"odd":ml_dec(140), "ev":p2*ml_dec(140)-1,"be":1/ml_dec(140),"ok":p2>=PR["thr"]},
-            {"mkt":"OU","pick":"ТБ 5.5","prob":over_p,"odd":1.90,"ev":over_p*1.90-1,"be":1/1.90,"ok":over_p>=PR["thr"]},
-            {"mkt":"OU","pick":"ТМ 5.5","prob":1-over_p,"odd":1.90,"ev":(1-over_p)*1.90-1,"be":1/1.90,"ok":(1-over_p)>=PR["thr"]},
-        ]
-        best=max(rows,key=lambda x:x["ev"]) if rows[0]["ev"]>0 else None
-        best_tuple=(best["mkt"],best["pick"],best["odd"],best["ev"],best["prob"],kelly(best["prob"],best["odd"],bank,0.25)) if best and best["ok"] else None
-        nd=(g["date"]-today).days if g["date"] else 0
-        when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
-        cards.append({
-            "league":"🏒 NHL / Хоккей","match":f"{h} vs {a}",
-            "date":g["date"].strftime("%d.%m") if g["date"] else "—","when":when,
-            "rows":rows,"best":best_tuple,"hot":rows[:2],"tag":"value" if best_tuple else "hot",
-            "lams":(3.1, 2.7),"games":20,"h2h_n":2,"fh":"—","fa":"—","cup":False
-        })
-    return cards,["NHL API: OK"]
+def stars_for(rw,thr):
+    if rw["ok"]:
+        ev=rw["ev"];return "⭐⭐⭐⭐⭐" if ev>=0.10 else ("⭐⭐⭐⭐" if ev>=0.06 else "⭐⭐⭐")
+    if rw["prob"]>=thr:
+        return "⭐⭐⭐⭐⭐" if rw["prob"]>=0.70 else ("⭐⭐⭐⭐" if rw["prob"]>=0.65 else "⭐⭐⭐")
+    return ""
 
-# ---------- ВОЛЕЙБОЛ СКАНЕР ----------
-def scan_volleyball(PR,today,limit,bank):
-    cfg=SPORTS["🏐 Волейбол"]
-    dates_str=(today).strftime("%Y%m%d")
-    evs=espn_events(cfg["espn"][0], dates_str)
-    elo=BinElo(cfg["k"],cfg["ha"],cfg["div"])
-    cards=[]
-    for ev in evs:
-        parsed=espn_parse(ev)
-        if not parsed or parsed["done"]: continue
-        h=parsed["home"];a=parsed["away"]
-        if not h or not a: continue
-        p1,p2=elo.predict(h,a)
-        od1=ml_dec(parsed["hml"]) or 1.75
-        od2=ml_dec(parsed["aml"]) or 2.10
-        rows=[
-            {"mkt":"1X2","pick":"П1","prob":p1,"odd":od1,"ev":p1*od1-1,"be":1/od1,"ok":p1>=PR["thr"]},
-            {"mkt":"1X2","pick":"П2","prob":p2,"odd":od2,"ev":p2*od2-1,"be":1/od2,"ok":p2>=PR["thr"]},
-        ]
-        best=max(rows,key=lambda x:x["ev"]) if rows[0]["ev"]>0 else None
-        best_tuple=(best["mkt"],best["pick"],best["odd"],best["ev"],best["prob"],kelly(best["prob"],best["odd"],bank,0.25)) if best and best["ok"] else None
-        cards.append({
-            "league":"🏐 Волейбол (ESPN)","match":f"{h} vs {a}",
-            "date":parsed["date"].strftime("%d.%m %H:%M") if parsed["date"] else "—","when":"сегодня",
-            "rows":rows,"best":best_tuple,"hot":rows,"tag":"value" if best_tuple else "hot",
-            "lams":(3.0, 2.5),"games":10,"h2h_n":1,"fh":"—","fa":"—","cup":False
-        })
-    return cards,["ESPN Volleyball: OK"]
+def build_picks(cards,thr,bank,kelly_frac):
+    picks=[]
+    for c in cards:
+        row=None;ptype=None
+        if c.get("best"):
+            ok=[r for r in c["rows"] if r["ok"]]
+            row=max(ok,key=lambda r:r["ev"]) if ok else None;ptype="value"
+        if row is None:
+            hot=[r for r in c["rows"] if r["prob"]>=thr]
+            if hot: row=max(hot,key=lambda r:r["prob"]);ptype="hot"
+        if row is None: continue
+        main,alt,avoid,text,gap=ai_verdict(c)
+        stake=kelly(row["prob"],row["odd"],bank,kelly_frac) if row["odd"] else round(bank*0.01,2)
+        picks.append({"league":c["league"],"match":c["match"],"date":c["date"],"when":c["when"],
+                      "pick":row["pick"],"prob":row["prob"],"odd":row["odd"],
+                      "odd_s":_odd_s(row),"stake":stake,"stars":stars_for(row,thr),
+                      "type":ptype,"verdict":text,"main":main,"alt":alt,"avoid":avoid,
+                      "clv":c.get("clv"),
+                      "score":(row["ev"] if ptype=="value" else 0)+row["prob"]})
+    picks.sort(key=lambda p:(p["type"]=="value",p["score"]),reverse=True)
+    return picks[:10]
 
-def load_data():
-    if os.path.exists(HISTORY_FILE):
-        try: return json.load(open(HISTORY_FILE,encoding="utf-8"))
-        except Exception: pass
+# ================= СОСТОЯНИЕ + МИГРАЦИЯ СТАРОГО ФАЙЛА =================
+def new_data():
     return {"bank":10000.0,"bets":[],"cards":[],"picks":[],"funnel":None,"report":[],"meta":{},
             "stats":{"won":0,"lost":0,"profit":0,"push":0}}
-def save_data(d): json.dump(d,open(HISTORY_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
+def migrate(D):
+    if not isinstance(D,dict): return new_data()
+    base=new_data()
+    for k,v in base.items():
+        if k not in D or D[k] is None: D[k]=json.loads(json.dumps(v))
+    if not isinstance(D.get("cards"),list): D["cards"]=[]
+    if not isinstance(D.get("picks"),list): D["picks"]=[]
+    if D["cards"] and isinstance(D["cards"][0],dict) and "lams_g" not in D["cards"][0]:
+        D["cards"]=[];D["picks"]=[]
+    if not isinstance(D.get("bets"),list): D["bets"]=[]
+    D["bets"]=[b for b in D["bets"] if isinstance(b,dict) and all(k in b for k in ("match","pick","odds","stake","status"))]
+    if not isinstance(D.get("stats"),dict): D["stats"]=base["stats"]
+    for s in ("won","lost","profit","push"): D["stats"].setdefault(s,0)
+    if not isinstance(D.get("meta"),dict): D["meta"]={}
+    if not isinstance(D.get("report"),list): D["report"]=[]
+    return D
+def load_data():
+    if os.path.exists(HISTORY_FILE):
+        try: return migrate(json.load(open(HISTORY_FILE,encoding="utf-8")))
+        except Exception as e: log_err("load_data",e)
+    return new_data()
+def save_data(d):
+    try: json.dump(d,open(HISTORY_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
+    except Exception as e: log_err("save_data",e)
+def clone(D): return json.loads(json.dumps(D))
+def apply_scan(D,cards,picks,funnel,report,meta,new_bets):
+    D2=clone(D)
+    D2["cards"]=cards;D2["picks"]=picks;D2["funnel"]=funnel;D2["report"]=report
+    D2["meta"]=meta;D2["bets"]=D2["bets"]+new_bets
+    return D2
+def apply_settle(D,idx,outcome):
+    D2=clone(D);b=D2["bets"][idx]
+    if b["status"]!="pending": return D
+    if outcome=="push":
+        b["status"]="push";D2["bank"]+=b["stake"];D2["stats"]["push"]=D2["stats"].get("push",0)+1
+    elif outcome=="won":
+        pr=b["stake"]*(b["odds"]-1);b["status"]="won";D2["bank"]+=b["stake"]+pr
+        D2["stats"]["won"]+=1;D2["stats"]["profit"]+=pr
+    else:
+        b["status"]="lost";D2["stats"]["lost"]+=1;D2["stats"]["profit"]-=b["stake"]
+    return D2
+
+def backtest(div,season,PR,min_edge,stake_mode,use_dis=True):
+    rows=[r for r in load_seasonal(div,season)
+          if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,"") and parse_date(r.get("Date",""))]
+    rows.sort(key=lambda r: parse_date(r["Date"]))
+    eng=Engine();log=[];bank=10000.0
+    for j,r in enumerate(rows):
+        h=(r.get("HomeTeam") or "").strip();a=(r.get("AwayTeam") or "").strip()
+        try: hg,ag=float(r["FTHG"]),float(r["FTAG"])
+        except Exception as e: log_err("backtest parse",e); continue
+        try:
+            P=eng.predict(h,a,div)
+            mkt=market_probs(r)
+            P=blend_market(P,mkt,PR["w_market"])
+            gap=max(abs(P["p1"]-mkt[0]),abs(P["x"]-mkt[1]),abs(P["p2"]-mkt[2])) if mkt else None
+            cands=[("1X2","П1",P["p1"],best_odd(r,"П1")),("1X2","X",P["x"],best_odd(r,"X")),
+                   ("1X2","П2",P["p2"],best_odd(r,"П2")),
+                   ("OU","ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),("OU","ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5"))]
+            for mktk,pick,prob,o in cands:
+                if not o or not (PR["corr"][0]<=o<=PR["corr"][1] if mktk=="1X2" else 1.4<=o<=4.2): continue
+                if mktk=="1X2" and not P["agree"]: continue
+                if use_dis and mkt and gap is not None and gap<DISAGREE_MIN: continue
+                if prob-1/o<min_edge: continue
+                won=False
+                if pick=="П1": won=hg>ag
+                elif pick=="X": won=hg==ag
+                elif pick=="П2": won=hg<ag
+                elif pick=="ТБ 2.5": won=hg+ag>=3
+                elif pick=="ТМ 2.5": won=hg+ag<=2
+                st_=1.0
+                if stake_mode=="Kelly": st_=max(1.0,kelly(prob,o,bank,0.25))
+                pnl=st_*(o-1) if won else -st_
+                bank+=pnl
+                log.append({"mkt":mktk,"prob":prob,"odd":o,"won":bool(won),"stake":st_,"pnl":pnl,
+                            "clv":clv_for(pick,o,mkt,r)})
+        except Exception as e: log_err("backtest loop",e)
+        try: eng.learn_step(h,a,hg,ag,r,lg=div,match_num=j,total=len(rows))
+        except Exception as e: log_err("backtest learn",e)
+    return log,eng
+
+# ================= КОМПОНЕНТЫ РЕНДЕРА =================
+def chip_html(t,kind=""): return f"<span class='chip {kind}'>{t}</span>"
+def badge_html(kind,label): return f"<span class='badge {kind}'>{label}</span>"
+def form_html(s):
+    return "".join(f"<b class='{'w' if ch=='В' else ('d' if ch=='Н' else 'l')}'>{ch}</b>" for ch in s)
+def market_rows_html(rows,thr):
+    out="<div class='mrow hdr'><span>Рынок</span><span>Выбор</span><span>Вероятность</span><span>P</span><span>Безуб.</span><span>Кэф</span><span>EV</span><span></span></div>"
+    for rw in rows:
+        w=min(100,rw["prob"]*100)
+        odd_s=f"{rw['odd']:.2f}" if rw["odd"] else f"fair {1/rw['prob']:.2f}"
+        ev_s=f"<span class='{'evpos' if rw['ev']>0 else 'evneg'}'>{rw['ev']*100:+.1f}%</span>" if rw["ev"] is not None else "<span style='color:#64748b'>—</span>"
+        be_s=f"{rw['be']*100:.1f}%" if rw["be"] else "—"
+        mk="<span class='ok'>✅</span>" if rw["ok"] else ("<span style='color:#fde047;font-weight:800'>🔥</span>" if rw["prob"]>=thr else "<span class='nok'>·</span>")
+        out+=(f"<div class='mrow'><span style='color:#94a3b8'>{rw['mkt']}</span><b style='color:#facc15'>{rw['pick']}</b>"
+              f"<div><div class='bar'><i style='width:{w:.0f}%'></i></div></div>"
+              f"<span style='color:#4ade80;font-weight:700'>{rw['prob']*100:.1f}%</span><span style='color:#f87171'>{be_s}</span>"
+              f"<span style='color:#fff;font-weight:700'>{odd_s}</span>{ev_s}{mk}</div>")
+    return out
+def verdict_html(main,alt,avoid,text,pick=None,odd_s=None,prob=None,stake=None,btype=None):
+    m_s=f"✅ <b class='y'>{main['pick']}</b> @ {main['odd_s']} (P {main['prob']*100:.0f}%)" if main else ""
+    a_s=f"🔁 <b class='g'>{alt['pick']}</b> (P {alt['prob']*100:.0f}%)" if alt else ""
+    v_s=f"⛔ <b class='r'>{avoid['pick']}</b>" if avoid else ""
+    line2=""
+    if pick:
+        line2=f"<br>➤ Ставь <b class='y'>{pick}</b> @ <b class='y'>{odd_s}</b> · P <b class='g'>{prob*100:.0f}%</b> · сумма <b class='y'>{stake:.2f} у.е.</b> · {btype}"
+    return f"<div class='verdict'>🤖 <b>Вердикт:</b> {m_s} · {a_s} · {v_s}{line2}<br><span style='color:#cbd5e1'>{text}</span></div>"
+def render_match_card(c,thr,PR):
+    val=c.get("best") is not None
+    hot=any(r["prob"]>=thr for r in c["rows"]) and not val
+    badge=badge_html("val","🟢 ВАЛУЙ") if val else (badge_html("hot",f"🔥 P≥{thr*100:.0f}%") if hot else badge_html("no","фон"))
+    chips=chip_html(c["league"])+chip_html(f"📅 {c['date']} · {c['when']}","when")
+    if c["games"]<PR["min_games"]: chips+=chip_html("⚠️ мало данных","warn")
+    if c.get("cup"): chips+=chip_html("🏆 Кубок","warn")
+    if c.get("h2h_n",0)>=3: chips+=chip_html(f"⚔ H2H:{c['h2h_n']}")
+    if not c.get("agree",True): chips+=chip_html("⚠️ движки не согласны","warn")
+    main,alt,avoid,vtext,gap=ai_verdict(c)
+    ch,ca=c["corners"];yh,ya=c["yellows"]
+    best_html=f"<span>💰 Келли: <b>{c['best'][5]:.2f}</b> на <b>{c['best'][1]}</b> @ <b>{c['best'][2]:.2f}</b></span>" if val else ""
+    clv_html=f"<span>📏 CLV: <b>{c['clv']*100:+.1f}%</b></span>" if c.get("clv") is not None else ""
+    h,a=c["match"].split(" vs ")
+    return f"""
+<div class="mcard {'value' if val else ('hot' if hot else '')}">
+ <div class="mhead">{chips}{badge}</div>
+ <div class="teams">{h} <span>—</span> {a}</div>
+ {verdict_html(main,alt,avoid,vtext)}
+ <div class="form5">форма: {form_html(c['fh'])} <span style='color:#64748b'>vs</span> {form_html(c['fa'])}</div>
+ {market_rows_html(c["rows"],thr)}
+ <div class="mfoot"><span>xG: <b>{c['lams'][0]:.2f}–{c['lams'][1]:.2f}</b></span>
+  <span>🚩 угл <b>{ch+ca:.1f}</b></span><span>🟨 жёл <b>{yh+ya:.1f}</b></span>
+  <span>📚 игр <b>{c['games']}</b></span>{clv_html}{best_html}</div>
+</div>"""
+def render_pick_card(p,i):
+    cls="value" if p["type"]=="value" else "hot"
+    btype="🟢 ВАЛУЙ" if p["type"]=="value" else "🔥 Проходимость"
+    clv_html=f" · 📏 CLV {p['clv']*100:+.1f}%" if p.get("clv") is not None else ""
+    return f"""
+<div class="mcard {cls}" style="padding:14px 18px">
+ <div class="mhead">{chip_html(p['league'])}{chip_html(f"📅 {p['date']} · {p['when']}",'when')}
+  {badge_html('val' if p['type']=='value' else 'hot',p['stars'])}</div>
+ <div class="teams" style="font-size:1.15rem;margin:8px 0 2px">{i}. {p['match']}</div>
+ {verdict_html(p['main'],p['alt'],p['avoid'],p['verdict'],p['pick'],p['odd_s'],p['prob'],p['stake'],btype+clv_html)}
+</div>"""
+
+LEGEND="""
+**🟢 ВАЛУЙ** — EV>0 против кэфа, ставка авто-ушла в портфель ·
+**🔥 P≥N%** — вероятность выше порога проходимости ·
+**✅ в строке рынка** — прошёл все фильтры · **🔥 в строке рынка** — ставка по проходимости ·
+**· / ⛔** — не прошёл фильтры · **⭐** — рейтинг уверенности ·
+**🤖** — ИИ-вердикт: ✅ основная / 🔁 альтернатива / ⛔ избегать ·
+**⚠️ мало данных / движки не согласны** — блокирующие флаги ·
+**📏 CLV** — перевес взятого кэфа над закрытием Pinnacle ·
+**P / Безуб. / EV** — вероятность модели / безубыточность кэфа / перевес ·
+**💰 Келли** — сумма ставки · **⏳🔴⚪** — ожидает/выиграла/проиграла/возврат
+"""
 
 # ================= UI =================
 if "data" not in st.session_state: st.session_state.data=load_data()
 D=st.session_state.data
-
 st.markdown(f"""
 <div class="hero">
- <h1>🏟 NEURO BET PRO Multi-Sport</h1>
- <p>Мультиспортивный сканер (Футбол, Хоккей, Волейбол) · Пуассон и Elo · Умный банкролл</p>
+ <h1>🏟 NEURO BET PRO v7</h1>
+ <p>Только футбол · пер-лига гиперпараметры · CLV · 2 движка λ · Pinnacle-якорь · Platt · retraining · bandit · ИИ-вердикт</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
   <div class="kpi"><div class="t">Прибыль</div><div class="v {'g' if D['stats']['profit']>=0 else 'r'}">{D['stats']['profit']:+.0f}</div></div>
-  <div class="kpi"><div class="t">Рекомендаций</div><div class="v g">{len(D.get('picks',[]))}</div></div>
+  <div class="kpi"><div class="t">Ошибок в логе</div><div class="v {'r' if ERR else 'g'}">{len(ERR)}</div></div>
  </div>
 </div>""",unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("⚙️ Настройки")
-    sport_choice=st.selectbox("🎯 Вид спорта",list(SPORTS.keys()))
     goal=st.selectbox("🎯 Цель стратегии",list(GOALS.keys()),index=0)
     PR=GOALS[goal]
     kelly_frac=st.slider("Келли (дробь)",0.10,0.40,0.25,0.05)
     mode=st.radio("Режим ленты",["🎯 Высокая проходимость","💰 Валуи (EV)"])
     thr=st.slider("Порог проходимости, %",50,80,int(PR["thr"]*100))/100
-    PR["thr"]=thr
-    if st.button("🔄 Сброс базы"):
-        st.session_state.data={"bank":10000.0,"bets":[],"cards":[],"picks":[],"funnel":None,"report":[],"meta":{},
-                               "stats":{"won":0,"lost":0,"profit":0,"push":0}}
-        save_data(st.session_state.data);st.cache_data.clear();st.rerun()
+    min_edge=st.slider("Edge, п.п.",0,8,int(PR["edge"]*100))/100
+    min_ev=st.slider("Мин. EV, %",0,10,int(PR["ev"]*100))/100
+    use_dis=st.checkbox("Только расхождения с рынком (alpha)",value=PR["dis"])
+    use_bl=st.checkbox("Блэклист рынков из бэктеста",value=True)
+    st.caption(f"Пресет «{goal}»: якорь {PR['w_market']*100:.0f}%, коридор 1X2 {PR['corr'][0]}–{PR['corr'][1]}, мин. игр {PR['min_games']}")
+    bl=D.get("meta",{}).get("blacklist",[])
+    if bl: st.caption("🚫 Блэклист: "+", ".join(bl))
+    lp=D.get("meta",{}).get("lp",{})
+    if lp:
+        st.markdown("**🧠 Гиперпараметры лиг**")
+        for k,v in list(lp.items())[:6]:
+            st.caption(f"{DIV_NAMES.get(k,k)}: ws={v['w_shots']:.2f} ρ={v['rho']:.2f} DC={v['w_dc']:.2f}")
+    with st.expander("📖 Легенда значков"):
+        st.markdown(LEGEND)
+    with st.expander(f"🐞 Лог ошибок ({len(ERR)})"):
+        if ERR:
+            for line in ERR[-40:]: st.text(line)
+        else: st.text("Ошибок нет.")
+    if st.button("🔄 Сброс"):
+        st.session_state.data=new_data();save_data(st.session_state.data)
+        st.cache_data.clear();st.rerun()
 
-tab1,tab2,tab3,tab4=st.tabs(["🏟 Сканер матчей","💼 Портфель","📈 Статистика","🧮 Калькулятор EV"])
+tab1,tab2,tab3,tab4,tab5=st.tabs(["🏟 Сканер","💼 Портфель","📈 Статистика","🧮 Калькулятор","🧪 Бэктест"])
 
 with tab1:
-    c1,c2=st.columns([4,1])
-    days=c1.slider("Горизонт, дней",1,14,7)
-    scan=c2.button("⚡ СКАН",type="primary")
-    
+    c1,c2=st.columns([4,1]);days=c1.slider("Горизонт, дней",1,21,10);scan=c2.button("⚡ СКАН",type="primary")
+    blacklist=set(D.get("meta",{}).get("blacklist",[])) if use_bl else set()
     if scan:
+        season=find_season();pseason=prev_season(season)
         today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
         limit=today+timedelta(days=days)
-        cards=[];rep=[]
-        
-        if sport_choice=="⚽ Футбол":
-            cards,rep=scan_football(PR,today,limit,D["bank"])
-        elif sport_choice=="🏒 Хоккей":
-            cards,rep=scan_hockey(PR,today,limit,D["bank"])
-        elif sport_choice=="🏐 Волейбол":
-            cards,rep=scan_volleyball(PR,today,limit,D["bank"])
-            
-        D["cards"]=cards
-        D["report"]=rep
-        save_data(D)
-        st.success(30 * " " + f"Найдено матчей: {len(cards)}")
-        st.rerun()
-
-    cards=D.get("cards",[])
-    if not cards:
-        st.info("Выберите вид спорта в меню слева и нажмите кнопку **⚡ СКАН**.")
-    for c in cards:
-        val=c["best"] is not None
-        badge="<span class='badge val'>🟢 ВАЛУЙ</span>" if val else "<span class='badge hot'>🔥 Топ</span>"
-        rows_html=""
-        for rw in c["rows"]:
-            w=min(100,rw["prob"]*100)
-            odd_s=_odd_s(rw)
-            ev_s=f"<span class='{'evpos' if rw['ev']>0 else 'evneg'}'>{rw['ev']*100:+.1f}%</span>" if rw["ev"] is not None else "—"
-            mk="<span class='ok'>✅</span>" if rw["ok"] else "<span class='nok'>·</span>"
-            rows_html+=(f"<div class='mrow'><span style='color:#94a3b8'>{rw['mkt']}</span><b style='color:#facc15'>{rw['pick']}</b>"
-                        f"<span style='color:#4ade80;font-weight:700'>{rw['prob']*100:.1f}%</span>"
-                        f"<span style='color:#fff;font-weight:700'>{odd_s}</span>{ev_s}{mk}</div>")
-        st.markdown(f"""
-<div class="mcard {'value' if val else 'hot'}">
- <div class="mhead"><span class="chip">{c['league']}</span><span class="chip when">📅 {c['date']} · {c['when']}</span>{badge}</div>
- <div class="teams">{c['match'].split(' vs ')[0]} <span>—</span> {c['match'].split(' vs ')[1]}</div>
- {rows_html}
-</div>""",unsafe_allow_html=True)
+        fix,rep1=load_fixtures();tsd,rep2=load_tsdb()
+        engine=Engine();trained=0
+        train_divs=sorted({r.get("Div") for r in fix if r.get("Div")}) or ["E0","SP1","I1","D1","F1"]
+        prog=st.progress(0.0,text="Самообучение (2 сезона, пер-лига refit)...")
+        dp=load_many(train_divs,pseason);dc=load_many(train_divs,season)
+        n=len(train_divs)
+        for i,dv in enumerate(train_divs):
+            for src in (dp,dc):
+                rr=sorted([r for r in src.get(dv,[]) if parse_date(r.get("Date",""))],key=lambda r:parse_date(r["Date"]))
+                for j,r in enumerate(rr):
+                    if r.get("FTHG") not in (None,"") and r.get("FTAG") not in (None,""):
+                        try:
+                            engine.learn_step(r["HomeTeam"],r["AwayTeam"],float(r["FTHG"]),float(r["FTAG"]),r,lg=dv,match_num=j,total=max(1,len(rr)))
+                            trained+=1
+                        except Exception as e: log_err(f"train {dv}",e)
+            prog.progress((i+1)/n)
+        prog.empty()
+        meta={"platt_a":round(engine.platt_a,3),"platt_b":round(engine.platt_b,3),
+              "blacklist":D.get("meta",{}).get("blacklist",[]),
+              "lp":{k:dict(v) for k,v in list(engine.lp.items())[:15]}}
+        cards=[];passed=0;inwin=0;withodds=0
+        new_bets=[];existing={b["match"]+"|"+b["pick"] for b in D["bets"]}
+        for r in fix+tsd:
+            try:
+                d=parse_date(r.get("Date",""))
+                if not d or not (today<=d<=limit): continue
+                h=(r.get("HomeTeam") or "").strip();a=(r.get("AwayTeam") or "").strip()
+                if not h or not a: continue
+                inwin+=1
+                lg=r.get("Div","G")
+                P=engine.predict(h,a,lg)
+                mkt=market_probs(r)
+                P=blend_market(P,mkt,PR["w_market"])
+                league=r.get("League") or DIV_NAMES.get(lg,"Лига "+str(lg))
+                if any(best_odd(r,p) for p in ("П1","ТБ 2.5")): withodds+=1
+                if is_cup(r): P["lams"]=(max(0.3,P["lams"][0]-0.15),max(0.25,P["lams"][1]-0.15))
+                gap=max(abs(P["p1"]-mkt[0]),abs(P["x"]-mkt[1]),abs(P["p2"]-mkt[2])) if mkt else None
+                rows=[];best=None;hot=[];card_clv=None
+                cands=[("1X2","П1",P["p1"],best_odd(r,"П1")),("1X2","X",P["x"],best_odd(r,"X")),
+                       ("1X2","П2",P["p2"],best_odd(r,"П2")),
+                       ("OU","ТБ 2.5",P["over"],best_odd(r,"ТБ 2.5")),("OU","ТМ 2.5",1-P["over"],best_odd(r,"ТМ 2.5")),
+                       ("STAT","BTTS да",P["btts"],None),("STAT","BTTS нет",1-P["btts"],None),
+                       ("STAT","1X",P["p1"]+P["x"],None),("STAT","X2",P["x"]+P["p2"],None),("STAT","12",P["p1"]+P["p2"],None)]
+                ahh=_f(r.get("AHh"));ohh=odd1(r,["MaxAHH","B365AHH","PAHH"]);oha=odd1(r,["MaxAHA","B365AHA","PAHA"])
+                if ahh is not None and abs((ahh*2)%2)==1 and ohh and oha:
+                    pc=sum(P["M"][i][j] for i in range(MATRIX_N) for j in range(MATRIX_N) if (i-j+ahh)>0.001)
+                    cands+=[("AH",f"Ф1({ahh:+.1f})",pc,ohh),("AH",f"Ф2({-ahh:+.1f})",1-pc,oha)]
+                for mktk,pick,prob,odd in cands:
+                    if mktk in blacklist: continue
+                    item={"mkt":mktk,"pick":pick,"prob":prob,"odd":odd,"ev":None,"be":None,"ok":False}
+                    if odd:
+                        lo,hi=PR["corr"] if mktk=="1X2" else CORRIDORS.get(mktk,(1.4,4.2))
+                        ev=prob*odd-1;be=1/odd;edge=prob-be
+                        req=max(0.0,min_ev+max(0.0,odd-2.5)*0.02+engine.market_adjust(mktk))
+                        dis_ok=(not use_dis) or (gap is None) or (gap>=DISAGREE_MIN)
+                        agree_ok=(mktk!="1X2") or P["agree"]
+                        games_ok=P["games"]>=PR["min_games"]
+                        item.update(ev=ev,be=be,ok=(lo<=odd<=hi and edge>=min_edge and ev>=req and dis_ok and agree_ok and games_ok))
+                        if item["ok"]:
+                            passed+=1;stk=kelly(prob,odd,D["bank"],kelly_frac)
+                            if best is None or ev>best[3]:
+                                best=(mktk,pick,odd,ev,prob,stk);card_clv=clv_for(pick,odd,mkt,r)
+                    if prob>=thr: hot.append((pick,prob,odd))
+                    rows.append(item)
+                hot.sort(key=lambda x:-x[1])
+                tag="value" if best else ("hot" if hot else "")
+                nd=(d-today).days
+                when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
+                cards.append({"div":lg,"league":league,"match":f"{h} vs {a}",
+                    "date":d.strftime("%d.%m")+(f" {r.get('Time')}" if r.get("Time") else ""),"when":when,
+                    "rows":rows,"best":best,"hot":hot[:3],"tag":tag,"lams":P["lams"],
+                    "lams_g":P["lams_g"],"lams_s":P["lams_s"],"mkt":mkt,"gap":gap,"agree":P["agree"],
+                    "clv":card_clv,"p1":P["p1"],"px":P["x"],"p2":P["p2"],
+                    "corners":P["corners"],"yellows":P["yellows"],"games":P["games"],"h2h_n":P["h2h_n"],
+                    "fh":engine.form_str(h),"fa":engine.form_str(a),"cup":is_cup(r)})
+                if best and best[5]>0:
+                    key=f"{h} vs {a}|{best[1]}"
+                    if key not in existing:
+                        new_bets.append({"match":f"{h} vs {a}","div":lg,"league":league,
+                            "market":best[0],"pick":best[1],"odds":best[2],"stake":best[5],
+                            "prob":best[4],"clv":card_clv,"status":"pending"})
+                        existing.add(key)
+            except Exception as e: log_err("scan row",e)
+        cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
+        picks=build_picks(cards,thr,D["bank"],kelly_frac)
+        funnel={"trained":trained,"fix":len(fix),"tsdb":len(tsd),"inwin":inwin,"odds":withodds,
+                "passed":passed,"added":len(new_bets)}
+        st.session_state.data=apply_scan(D,cards,picks,funnel,rep1+rep2,meta,new_bets)
+        save_data(st.session_state.data); st.rerun()
+    fn=D.get("funnel")
+    if fn: st.caption(f"Обучено {fn['trained']} · расписание {fn['fix']}+{fn['tsdb']} · в окне {fn['inwin']} · валуев {fn['passed']} · в портфель +{fn['added']}")
+    with st.expander("🔌 Диагностика источников"):
+        for line in D.get("report",[]): st.text(line)
+    picks=D.get("picks",[])
+    if picks:
+        st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
+        txt=["NEURO BET PRO v7 — "+datetime.now().strftime("%d.%m.%Y %H:%M"),""]
+        for i,p in enumerate(picks,1):
+            st.markdown(render_pick_card(p,i),unsafe_allow_html=True)
+            txt+=[f"{i}. {p['match']} ({p['league']}, {p['date']})",
+                  f"   Ставка: {p['pick']} @ {p['odd_s']} | P={p['prob']*100:.0f}% | {p['stake']:.2f} у.е. | {p['stars']}",
+                  f"   ИИ: {p['verdict']}",""]
+        st.download_button("📥 Скачать (.txt)","\n".join(txt),file_name="picks.txt")
+    st.markdown("### 📋 Лента матчей с ИИ-вердиктом")
+    shown=0
+    for c in D.get("cards",[]):
+        if mode=="🎯 Высокая проходимость" and not (c["hot"] or c["tag"]): continue
+        if mode=="💰 Валуи (EV)" and not c["best"]: continue
+        st.markdown(render_match_card(c,thr,PR),unsafe_allow_html=True); shown+=1
+    if not shown: st.info("Нажми ⚡ СКАН.")
 
 with tab2:
-    st.header("💼 Портфель ставок")
-    if not D["bets"]: st.info("Портфель пуст.")
+    st.header("💼 Портфель")
+    if st.button("🔄 Автосинхронизация"):
+        season=find_season();D2=clone(D);upd=0
+        for idx,b in enumerate(D["bets"]):
+            if b["status"]!="pending" or b.get("div") in (None,"TSDB"): continue
+            bd=parse_date(b.get("date_iso","")) if b.get("date_iso") else None
+            for r in load_seasonal(b["div"],season):
+                if r.get("HomeTeam")==b["match"].split(" vs ")[0] and r.get("AwayTeam")==b["match"].split(" vs ")[1] and r.get("FTHG") not in (None,""):
+                    rd=parse_date(r.get("Date",""))
+                    if bd and rd and abs((rd-bd).days)>1: continue
+                    if rd and rd.date()>=datetime.now().date(): continue
+                    try: hg,ag=float(r["FTHG"]),float(r["FTAG"])
+                    except Exception as e: log_err("sync parse",e); continue
+                    out=None
+                    if b["market"]=="1X2":
+                        out="won" if ("П1" if hg>ag else "X" if hg==ag else "П2")==b["pick"] else "lost"
+                    elif b["market"]=="OU":
+                        won=(b["pick"]=="ТБ 2.5" and hg+ag>=3) or (b["pick"]=="ТМ 2.5" and hg+ag<=2)
+                        out="won" if won else "lost"
+                    elif b["market"]=="AH":
+                        s=settle_ah(b["pick"],hg,ag)
+                        out="push" if s=="push" else ("won" if s else "lost")
+                    if out: D2=apply_settle(D2,idx,out); upd+=1
+                    break
+        st.session_state.data=D2; save_data(D2); st.success(f"Закрыто: {upd}"); st.rerun()
+    if not D["bets"]: st.info("Пусто.")
     for i,b in enumerate(D["bets"]):
-        st.markdown(f"⏳ **{b['match']}** · {b.get('market','')} **{b['pick']}** @ **{b['odds']:.2f}**")
+        icon={"pending":"⏳","won":"🟢","lost":"🔴","push":"⚪"}.get(b["status"],"⏳")
+        clv=f" · 📏 CLV {b['clv']*100:+.1f}%" if b.get("clv") is not None else ""
+        st.markdown(f"{icon} **{b['match']}** · {b.get('market','')} **{b['pick']}** @ **{b['odds']:.2f}** · {b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{clv}")
+        if b["status"]=="pending":
+            cc=st.columns(2)
+            if cc[0].button("✅ Зашло",key=f"w{i}"):
+                st.session_state.data=apply_settle(D,i,"won");save_data(st.session_state.data);st.rerun()
+            if cc[1].button("❌ Мимо",key=f"l{i}"):
+                st.session_state.data=apply_settle(D,i,"lost");save_data(st.session_state.data);st.rerun()
 
 with tab3:
+    st.header("📈 Статистика + CLV")
     s=D["stats"];tot=s["won"]+s["lost"]
     m1,m2,m3,m4=st.columns(4)
     m1.metric("Банк",f"{D['bank']:.2f}");m2.metric("Ставок",tot)
     m3.metric("WinRate",f"{(s['won']/tot*100) if tot else 0:.1f}%");m4.metric("Profit",f"{s['profit']:+.2f}")
+    clvs=[b["clv"] for b in D["bets"] if b.get("clv") is not None]
+    if clvs:
+        avg=sum(clvs)/len(clvs);pos=sum(1 for x in clvs if x>0)/len(clvs)*100
+        st.markdown(f"**📏 Средний CLV:** {avg*100:+.2f}% · доля ставок с CLV>0: {pos:.0f}% · "
+                    +("✅ модель бьёт закрытие рынка" if avg>0 else "⚠️ модель не бьёт закрытие рынка"))
+    else:
+        st.caption("📏 CLV появится после скана: фиксируется в момент ставки против Pinnacle.")
 
 with tab4:
-    st.header("🧮 Калькулятор EV")
+    st.header("🧮 EV-калькулятор")
     q1,q2,q3=st.columns(3)
     p=q1.number_input("Вероятность, %",1,99,60);o=q2.number_input("Кэф",1.01,30.0,1.80);bk=q3.number_input("Банк",100.0,1e6,float(D["bank"]))
     ev=(p/100)*o-1
-    st.markdown(f"**EV:** {ev*100:+.1f}% · **Безубыточность:** {100/o:.1f}% · **Келли:** {kelly(p/100,o,bk,0.25):.2f} у.е.")
+    st.markdown(f"**EV:** {ev*100:+.1f}% · **Безубыточность:** {100/o:.1f}% · **Келли:** {kelly(p/100,o,bk,kelly_frac):.2f} у.е.")
+    if ev>0.02: st.success("✅ Можно ставить")
+    else: st.warning("⛔ EV мал")
+
+with tab5:
+    st.header("🧪 Бэктест: walk-forward обучение + проверка + CLV")
+    b1,b2,b3,b4=st.columns(4)
+    bt_div=b1.selectbox("Лига",list(DIV_NAMES.keys()),format_func=lambda k:DIV_NAMES[k])
+    bt_season=b2.selectbox("Сезон",["2526","2425","2324"],index=1)
+    bt_edge=b3.slider("Edge, п.п.",0,8,int(PR["edge"]*100),key="bte")/100
+    bt_mode=b4.selectbox("Стейк",["Flat","Kelly"])
+    if st.button("▶️ Прогнать",type="primary"):
+        log,eng=backtest(bt_div,bt_season,PR,bt_edge,bt_mode,use_dis)
+        bl=[k for k,v in eng.market_roi.items() if v["n"]>=30 and v["profit"]/v["n"]<-0.02]
+        D2=clone(D);D2["meta"]["blacklist"]=bl
+        D2["meta"]["lp"]={k:dict(v) for k,v in list(eng.lp.items())[:15]}
+        st.session_state.data=D2; save_data(D2)
+        if not log: st.warning("Нет сигналов: снизь edge или смени цель.")
+        else:
+            n=len(log);wins=sum(1 for x in log if x["won"])
+            profit=sum(x["pnl"] for x in log);staked=sum(x["stake"] for x in log)
+            roi=profit/staked*100 if staked else 0
+            curve=0;peak=0;mdd=0
+            for x in log:
+                curve+=x["pnl"];peak=max(peak,curve);mdd=max(mdd,peak-curve)
+            mean_p=profit/n
+            std_p=(sum((x["pnl"]-mean_p)**2 for x in log)/max(1,n-1))**0.5
+            sharpe=mean_p/std_p if std_p>0 else 0
+            cl=[x["clv"] for x in log if x.get("clv") is not None]
+            avg_clv=sum(cl)/len(cl) if cl else 0
+            k1,k2,k3,k4,k5=st.columns(5)
+            k1.metric("Ставок",n);k2.metric("WinRate",f"{wins/n*100:.1f}%")
+            k3.metric("ROI",f"{roi:+.2f}%");k4.metric("MaxDD",f"{mdd:.1f}");k5.metric("Sharpe",f"{sharpe:.2f}")
+            st.markdown(f"**📏 Средний CLV: {avg_clv*100:+.2f}%** "
+                        +("✅ модель системно бьёт закрытие Pinnacle" if avg_clv>0.01
+                          else "⚠️ CLV около нуля: плюс (если есть) может быть дисперсией")
+                        +f" · Чистыми {profit:+.1f} у.е. · ρ({bt_div})={eng.lp[bt_div]['rho']:.2f} ws={eng.lp[bt_div]['w_shots']:.2f}")
+            by=defaultdict(lambda:[0,0,0.0])
+            for x in log:
+                by[x["mkt"]][0]+=1;by[x["mkt"]][1]+=1 if x["won"] else 0;by[x["mkt"]][2]+=x["pnl"]
+            mrows=[{"Рынок":k,"Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"} for k,v in sorted(by.items())]
+            if mrows: st.dataframe(mrows,use_container_width=True,hide_index=True)
+            if roi>0 and sharpe>0.1 and avg_clv>0: st.success("✅ Плюс, стабильно и подтверждено CLV.")
+            elif roi>0: st.warning("⚠️ Плюс, но без подтверждения CLV — возможна дисперсия.")
+            else: st.error("❌ Минус. Смени цель/лигу или убери disagreement.")
