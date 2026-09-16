@@ -88,6 +88,16 @@ section[data-testid="stSidebar"] div[data-baseweb="select"] span{color:#e2e8f0 !
 .evpos{color:#4ade80;font-weight:700}.evneg{color:#f87171;font-weight:700}
 .mfoot{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(148,163,184,.3);color:#cbd5e1;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap}
 .mfoot b{color:#facc15}
+.betcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-left:4px solid rgba(148,163,184,.4);
+ border-radius:12px;padding:10px 14px;margin-bottom:8px;font-size:.86rem;color:#e2e8f0}
+.betcard.pending{border-left-color:#facc15}
+.betcard.won{border-left-color:#22c55e;background:rgba(16,185,129,.08)}
+.betcard.lost{border-left-color:#ef4444;background:rgba(239,68,68,.07)}
+.betcard.push{border-left-color:#64748b}
+.betcard .score{font-weight:900;padding:2px 9px;border-radius:8px;margin-left:6px;font-size:.9rem}
+.betcard.won .score{background:rgba(34,197,94,.25);color:#86efac}
+.betcard.lost .score{background:rgba(239,68,68,.25);color:#fca5a5}
+.betcard.push .score{background:rgba(100,116,139,.3);color:#e2e8f0}
 </style>""", unsafe_allow_html=True)
 
 ERR=[]
@@ -573,9 +583,10 @@ def apply_scan(D,cards,picks,funnel,report,meta,new_bets):
     D2["cards"]=cards;D2["picks"]=picks;D2["funnel"]=funnel;D2["report"]=report
     D2["meta"]=meta;D2["bets"]=D2["bets"]+new_bets
     return D2
-def apply_settle(D,idx,outcome):
+def apply_settle(D,idx,outcome,score=None):
     D2=clone(D);b=D2["bets"][idx]
     if b["status"]!="pending": return D
+    if score: b["score"]=score
     if outcome=="push":
         b["status"]="push";D2["bank"]+=b["stake"];D2["stats"]["push"]=D2["stats"].get("push",0)+1
     elif outcome=="won":
@@ -690,6 +701,16 @@ def render_match_card(c,thr,PR):
   <span>🚩 угл <b>{ch+ca:.1f}</b></span><span>🟨 жёл <b>{yh+ya:.1f}</b></span>
   <span>📚 игр <b>{c['games']}</b></span>{clv_html}{best_html}</div>
 </div>"""
+def bet_card_html(b):
+    st_=b.get("status","pending")
+    icon={"pending":"⏳","won":"🟢","lost":"🔴","push":"⚪"}.get(st_,"⏳")
+    score_html=f"<span class='score'>{b['score']}</span>" if b.get("score") else ""
+    clv=f" · 📏 CLV {b['clv']*100:+.1f}%" if b.get("clv") is not None else ""
+    date_s=f" · {b['date']}" if b.get("date") else ""
+    return (f"<div class='betcard {st_}'>{icon} <b>{b['match']}</b>{score_html}{date_s}<br>"
+            f"<span style='color:#94a3b8'>{b.get('market','')}</span> "
+            f"<b style='color:#facc15'>{b['pick']}</b> @ <b>{b['odds']:.2f}</b> · "
+            f"{b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{clv}</div>")
 def render_pick_card(p,i):
     cls="value" if p["type"]=="value" else "hot"
     btype="🟢 ВАЛУЙ" if p["type"]=="value" else "🔥 Проходимость"
@@ -767,6 +788,7 @@ with tab1:
     if scan:
         season=find_season();pseason=prev_season(season)
         today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+        now=datetime.now()
         limit=today+timedelta(days=days)
         fix,rep1=load_fixtures();tsd,rep2=load_tsdb()
         engine=Engine();trained=0
@@ -794,6 +816,16 @@ with tab1:
             try:
                 d=parse_date(r.get("Date",""))
                 if not d or not (today<=d<=limit): continue
+                # Combine date+time when available and skip fixtures that already
+                # kicked off + a typical match duration ago — otherwise an early
+                # kickoff stays in the "upcoming" feed all day even after it's over.
+                tm=(r.get("Time") or "").strip()
+                if tm:
+                    try:
+                        hh,mm=tm.split(":")[:2]
+                        ko=d.replace(hour=int(hh),minute=int(mm))
+                        if now>=ko+timedelta(hours=2,minutes=15): continue
+                    except Exception: pass
                 h=(r.get("HomeTeam") or "").strip();a=(r.get("AwayTeam") or "").strip()
                 if not h or not a: continue
                 inwin+=1
@@ -849,7 +881,8 @@ with tab1:
                     if key not in existing:
                         new_bets.append({"match":f"{h} vs {a}","div":lg,"league":league,
                             "market":best[0],"pick":best[1],"odds":best[2],"stake":best[5],
-                            "prob":best[4],"clv":card_clv,"status":"pending"})
+                            "prob":best[4],"clv":card_clv,"status":"pending",
+                            "date":d.strftime("%d.%m.%Y"),"date_iso":d.strftime("%Y-%m-%d"),"score":None})
                         existing.add(key)
             except Exception as e: log_err("scan row",e)
         cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
@@ -903,20 +936,20 @@ with tab2:
                     elif b["market"]=="AH":
                         s=settle_ah(b["pick"],hg,ag)
                         out="push" if s=="push" else ("won" if s else "lost")
-                    if out: D2=apply_settle(D2,idx,out); upd+=1
+                    if out: D2=apply_settle(D2,idx,out,score=f"{int(hg)}:{int(ag)}"); upd+=1
                     break
         st.session_state.data=D2; save_data(D2); st.success(f"Закрыто: {upd}"); st.rerun()
     if not D["bets"]: st.info("Пусто.")
     for i,b in enumerate(D["bets"]):
-        icon={"pending":"⏳","won":"🟢","lost":"🔴","push":"⚪"}.get(b["status"],"⏳")
-        clv=f" · 📏 CLV {b['clv']*100:+.1f}%" if b.get("clv") is not None else ""
-        st.markdown(f"{icon} **{b['match']}** · {b.get('market','')} **{b['pick']}** @ **{b['odds']:.2f}** · {b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{clv}")
+        st.markdown(bet_card_html(b),unsafe_allow_html=True)
         if b["status"]=="pending":
-            cc=st.columns(2)
-            if cc[0].button("✅ Зашло",key=f"w{i}"):
-                st.session_state.data=apply_settle(D,i,"won");save_data(st.session_state.data);st.rerun()
-            if cc[1].button("❌ Мимо",key=f"l{i}"):
-                st.session_state.data=apply_settle(D,i,"lost");save_data(st.session_state.data);st.rerun()
+            cc=st.columns([1,1,1])
+            score_in=cc[0].text_input("Счёт (напр. 2:1)",key=f"sc{i}",label_visibility="collapsed",placeholder="Счёт 2:1")
+            sc=score_in.strip() if re.match(r"^\d+\s*:\s*\d+$",score_in.strip()) else None
+            if cc[1].button("✅ Зашло",key=f"w{i}"):
+                st.session_state.data=apply_settle(D,i,"won",score=sc);save_data(st.session_state.data);st.rerun()
+            if cc[2].button("❌ Мимо",key=f"l{i}"):
+                st.session_state.data=apply_settle(D,i,"lost",score=sc);save_data(st.session_state.data);st.rerun()
 
 with tab3:
     st.header("📈 Статистика + CLV")
@@ -931,6 +964,42 @@ with tab3:
                     +("✅ модель бьёт закрытие рынка" if avg>0 else "⚠️ модель не бьёт закрытие рынка"))
     else:
         st.caption("📏 CLV появится после скана: фиксируется в момент ставки против Pinnacle.")
+
+    settled=[b for b in D["bets"] if b.get("status") in ("won","lost","push")]
+    st.markdown("---")
+    st.subheader(f"📋 Завершённые матчи ({len(settled)})")
+    if not settled:
+        st.caption("Пока ни одна ставка не завершена — рассчитаются автоматически после «🔄 Автосинхронизация» в Портфеле, или отметь вручную там же.")
+    else:
+        # equity curve — cumulative P/L over settled bets in the order they were closed
+        curve=[];run=0.0
+        for b in settled:
+            if b["status"]=="won": run+=b["stake"]*(b["odds"]-1)
+            elif b["status"]=="lost": run-=b["stake"]
+            curve.append(run)
+        st.line_chart(curve, height=180)
+        st.caption("Кривая накопленной прибыли по завершённым ставкам (в у.е.).")
+
+        by_lg=defaultdict(lambda:[0,0,0.0]);by_mk=defaultdict(lambda:[0,0,0.0])
+        for b in settled:
+            won=1 if b["status"]=="won" else 0
+            pnl=b["stake"]*(b["odds"]-1) if b["status"]=="won" else (0.0 if b["status"]=="push" else -b["stake"])
+            lgk=b.get("league") or b.get("div") or "—"
+            by_lg[lgk][0]+=1;by_lg[lgk][1]+=won;by_lg[lgk][2]+=pnl
+            by_mk[b.get("market","—")][0]+=1;by_mk[b.get("market","—")][1]+=won;by_mk[b.get("market","—")][2]+=pnl
+        cbrk1,cbrk2=st.columns(2)
+        with cbrk1:
+            st.markdown("**По лигам**")
+            rows_lg=[{"Лига":k,"Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"} for k,v in sorted(by_lg.items(),key=lambda kv:-kv[1][0])]
+            st.dataframe(rows_lg,use_container_width=True,hide_index=True)
+        with cbrk2:
+            st.markdown("**По рынкам**")
+            rows_mk=[{"Рынок":k,"Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"} for k,v in sorted(by_mk.items(),key=lambda kv:-kv[1][0])]
+            st.dataframe(rows_mk,use_container_width=True,hide_index=True)
+
+        st.markdown("**Лента завершённых матчей**")
+        for b in reversed(settled):  # most recently settled first
+            st.markdown(bet_card_html(b),unsafe_allow_html=True)
 
 with tab4:
     st.header("🧮 EV-калькулятор")
