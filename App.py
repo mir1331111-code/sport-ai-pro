@@ -1,4 +1,4 @@
-"""NEURO BET PRO v8.8 — single-file app with live engine."""
+"""NEURO BET PRO v8.9 — single-file: fixed sidebar + links + live engine."""
 import streamlit as st
 import requests, csv, io, os, math, re, pickle, json, html
 from datetime import datetime, timedelta
@@ -10,7 +10,8 @@ try:
 except Exception:
     Retry=None
 
-st.set_page_config(page_title="NEURO BET PRO v8.8", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.9", page_icon="🏟",
+                   layout="wide", initial_sidebar_state="expanded")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 AVG_GOALS=2.75
@@ -27,7 +28,7 @@ ML_LR=0.05
 ML_L2=0.001
 ML_ITERS=300
 NFEAT_ML=12
-ENGINE_CACHE_VERSION="8.8"
+ENGINE_CACHE_VERSION="8.9"
 LIVE_MODEL_FILE="live_model.json"
 UA={"User-Agent":"Mozilla/5.0"}
 CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
@@ -37,11 +38,10 @@ ENGINE_CACHE="neuro_engine.pkl"
 
 API_LG={"R1":235,"T1":203,"C1":2,"EL":3,"EC":848,"RUS_CUP":233}
 API_NAMES={235:"🇷🇺 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
-LIVE_REFRESH_SECONDS=300
 
-DIV_NAMES={"E0":"🏴󠁢󠁥󠁮󠁿 АПЛ","E1":"🏴󠁢󠁮 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
+DIV_NAMES={"E0":"🏴󠁢󠁮 АПЛ","E1":"🏴󠁢󠁿 Чемпионшип","SC0":"🏴󠁣󠁴󠁿 Шотландия",
  "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
  "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
@@ -251,7 +251,7 @@ def blend_market(P,mkt,w):
     return P
 
 # ============= LIVE MODEL =============
-DEFAULT_LIVE={"alpha":1.5,"beta":TOTAL_MIN,"temp":1.0,"signals":[],"league_pace":{},"n_learned":0,"bets":[]}
+DEFAULT_LIVE={"alpha":1.5,"beta":TOTAL_MIN,"temp":1.0,"signals":[],"league_pace":{},"n_learned":0}
 
 def load_live_model():
     try:
@@ -1037,6 +1037,38 @@ WALL_CSS=WALLS[wall_key]
 
 st.markdown("<style>"+"""
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
+
+/* ===== САЙДБАР: ВСЕГДА ВИДИМ, НЕ УХОДИТ ===== */
+@media (min-width: 992px) {
+  section[data-testid="stSidebar"] {
+    visibility: visible !important;
+    transform: none !important;
+    width: 320px !important;
+    z-index: 999 !important;
+  }
+  section[data-testid="stSidebar"] > div {
+    width: 320px !important;
+    overflow-y: auto !important;
+    height: 100vh !important;
+  }
+  button[kind="header"] { display: none !important; }
+  section.main { margin-left: 320px !important; }
+}
+@media (max-width: 991px) {
+  .stApp { display: flex; flex-direction: column; }
+  section[data-testid="stSidebar"] {
+    position: static !important;
+    transform: none !important;
+    visibility: visible !important;
+    width: 100% !important;
+    order: -1;
+    max-height: none !important;
+  }
+  section[data-testid="stSidebar"] > div { width: 100% !important; }
+  button[kind="header"] { display: none !important; }
+}
+
+/* ===== ОСНОВНЫЕ СТИЛИ ===== */
 html,body,#root,div[data-testid="stAppViewContainer"],
 div[data-testid="stAppViewContainer"]>div,section.main,.stApp{
  background: __WALL__ !important;background-attachment: fixed !important;}
@@ -1103,6 +1135,13 @@ div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;
 .betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}
 .betcard.won .score{background:rgba(52,211,153,.25);color:#6ee7b7}
 .betcard.lost .score{background:rgba(248,113,113,.25);color:#fca5a5}
+.side-link{display:block;padding:8px 12px;margin:3px 0;border-radius:10px;
+ background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+ color:#e6eaf2 !important;text-decoration:none !important;font-size:.85rem;transition:.15s;}
+.side-link:hover{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.4);}
+.side-section{margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);}
+.side-section h4{margin:0 0 8px 0;color:#7dd3fc;font-size:.72rem;
+ text-transform:uppercase;letter-spacing:1.3px;font-weight:700;}
 </style>""".replace("__WALL__",WALL_CSS), unsafe_allow_html=True)
 
 # ============= БИЗНЕС-ЛОГИКА UI =============
@@ -1480,7 +1519,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v8.8 · live-движок (Bayesian Poisson + momentum) · API-Football (РПЛ, ЛЧ, ЛЕ, ЛК, Турция, Кубок России) · обучение по онлайну · сигналы гола · автообновление</p>
+ <p>v8.9 · фиксированный сайдбар со ссылками · live-движок (Bayesian Poisson + momentum) · API-Football (РПЛ, ЛЧ, ЛЕ, ЛК, Турция, Кубок России) · обучение по онлайну · сигналы гола</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -1530,6 +1569,58 @@ with st.sidebar:
         st.session_state.data=new_data()
         save_data(st.session_state.data)
         st.rerun()
+
+    st.markdown("""
+<div class="side-section">
+<h4>🧭 Вкладки</h4>
+<a class="side-link" href="#tab-сканер">🏟 Сканер — ближайшие матчи</a>
+<a class="side-link" href="#tab-портфель">💼 Портфель — мои ставки</a>
+<a class="side-link" href="#tab-статистика">📈 Статистика — метрики</a>
+<a class="side-link" href="#tab-калькулятор">🧮 EV-калькулятор</a>
+<a class="side-link" href="#tab-бэктест">🧪 Бэктест — тест стратегии</a>
+<a class="side-link" href="#tab-онлайн">🔴 Онлайн — live-сигналы</a>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="side-section">
+<h4>📚 Источники данных</h4>
+<a class="side-link" href="https://www.football-data.co.uk/" target="_blank" rel="noopener">
+  ⚽ football-data.co.uk — исторические CSV</a>
+<a class="side-link" href="https://www.api-football.com/" target="_blank" rel="noopener">
+  📡 api-football.com — live + РПЛ/ЛЧ/ЛЕ/ЛК</a>
+<a class="side-link" href="https://www.thesportsdb.com/" target="_blank" rel="noopener">
+  🌍 thesportsdb.com — резервный livescore</a>
+<a class="side-link" href="https://www.pinnacle.com/en/" target="_blank" rel="noopener">
+  🎯 pinnacle.com — острая линия (референс)</a>
+<a class="side-link" href="https://www.oddsportal.com/" target="_blank" rel="noopener">
+  📊 oddsportal.com — архив коэффициентов</a>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="side-section">
+<h4>🛠 Инструменты</h4>
+<a class="side-link" href="https://kellycriterion.com/" target="_blank" rel="noopener">
+  💰 Kelly Criterion — теория</a>
+<a class="side-link" href="https://www.pinnacle.com/en/betting-resources" target="_blank" rel="noopener">
+  📖 Pinnacle Betting Resources</a>
+<a class="side-link" href="https://understat.com/" target="_blank" rel="noopener">
+  📉 understat.com — xG и аналитика</a>
+<a class="side-link" href="https://fbref.com/" target="_blank" rel="noopener">
+  📋 fbref.com — статистика игроков</a>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="side-section">
+<h4>ℹ️ О системе</h4>
+<span class="side-link" style="cursor:default">🧠 Версия: <b>8.9</b></span>
+<span class="side-link" style="cursor:default">📊 Лиг: <b>"""+str(len(DIV_NAMES))+"""</b></span>
+<span class="side-link" style="cursor:default">🔴 Онлайн-движков: <b>4</b></span>
+<span class="side-link" style="cursor:default">🎯 Стратегий: <b>"""+str(len(GOALS))+"""</b></span>
+</div>
+""", unsafe_allow_html=True)
 
 tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["🏟 Сканер","💼 Портфель","📈 Статистика","🧮 Калькулятор","🧪 Бэктест","🔴 Онлайн"])
 
@@ -1673,7 +1764,7 @@ with tab1:
     with st.expander("🔌 Диагностика источников"):
         for line in D.get("report",[]):
             st.text(line)
-        st.caption("fixtures.csv = ближайшие матчи топ-лиг (30 строк — норма). РПЛ/ЛЧ/ЛЕ/ЛК/Турция/Кубок России = во вкладке «Онлайн» через API-Football.")
+        st.caption("fixtures.csv = ближайшие матчи топ-лиг. РПЛ/ЛЧ/ЛЕ/ЛК/Турция/Кубок России = во вкладке «Онлайн» через API-Football.")
 
     sc1,sc2=st.columns([3,1])
     sort_key=sc1.selectbox("Сортировка ленты и рекомендаций",SORT_OPTIONS,index=0,key="sort_key")
