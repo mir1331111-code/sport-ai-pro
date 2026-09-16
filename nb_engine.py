@@ -1,4 +1,4 @@
-"""NEURO BET engine v8.3.1 — чистый Python, без streamlit."""
+"""NEURO BET engine v8.5 — чистый Python, без streamlit."""
 import requests, csv, io, os, math, re, pickle
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -52,8 +52,15 @@ def parse_date(s):
         except Exception: continue
     return None
 def is_half_line(x):
+    """Только линии, кратные 0.5 (целые и полу-). Четверти (-0.25) отклоняем:
+    движок не умеет half-win/half-loss."""
     v=_f(x)
-    return v is not None and abs((v*2)%1-0.5)<1e-9
+    return v is not None and abs((v*2)%1)<1e-9
+def fmt_line(v):
+    s=f"{v:+.2f}"
+    if s.endswith("0"): s=s[:-1]
+    if s.endswith("."): s=s[:-1]
+    return s
 def is_cup(row):
     if not row: return False
     dv=row.get("Div",""); lg=(row.get("League") or "").lower()
@@ -119,7 +126,7 @@ def clv_for(pick,odd,mkt,row):
     if mkt:
         idx={"П1":0,"X":1,"П2":2}.get(pick)
         if idx is not None: return odd*mkt[idx]-1
-    if row is None: return None          # ФИКС v8.3.1: не падаем на None
+    if row is None: return None
     if pick.startswith("Ф1") or pick.startswith("Ф2"):
         po=_f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
         ot=_f(row.get("PAHA")) if pick.startswith("Ф1") else _f(row.get("PAHH"))
@@ -402,12 +409,11 @@ def build_candidates(P,row,PR,blacklist=()):
         ohh=odd1(row,["MaxAHH","B365AHH","PAHH"]); oha=odd1(row,["MaxAHA","B365AHA","PAHA"])
         if ohh and oha:
             pc=sum(P["M"][i][j] for i in range(MATRIX_N) for j in range(MATRIX_N) if (i-j+ahh)>0.001)
-            cands.append(("AH",f"Ф1({ahh:+.1f})",pc,ohh))
-            cands.append(("AH",f"Ф2({-ahh:+.1f})",1-pc,oha))
+            cands.append(("AH",f"Ф1({fmt_line(ahh)})",pc,ohh))
+            cands.append(("AH",f"Ф2({fmt_line(-ahh)})",1-pc,oha))
     return cands
 
 def evaluate_rows(cands,P,mkt_probs,PR,engine,use_dis,row=None):
-    """ФИКС v8.3.1: принимает row, чтобы clv_for для ТБ/ТМ/фор не падал на None."""
     rows=[]; best=None; hot=[]; card_clv=None
     gap=max(abs(P["p1"]-mkt_probs[0]),abs(P["x"]-mkt_probs[1]),abs(P["p2"]-mkt_probs[2])) if mkt_probs else None
     for mkt,pick,prob,odd in cands:
