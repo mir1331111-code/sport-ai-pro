@@ -1,5 +1,5 @@
-"""NEURO BET engine v8.6 — чистый Python, без streamlit."""
-import requests, csv, io, os, math, re, pickle
+"""NEURO BET engine v8.8 — + live engine с Bayesian update + temperature scaling."""
+import requests, csv, io, os, math, re, pickle, json
 from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -20,12 +20,18 @@ ML_LR=0.05
 ML_L2=0.001
 ML_ITERS=300
 NFEAT_ML=12
-ENGINE_CACHE_VERSION="8.6"
+ENGINE_CACHE_VERSION="8.8"
+TOTAL_MIN=95.0
+LIVE_MODEL_FILE="live_model.json"
 UA={"User-Agent":"Mozilla/5.0"}
 CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
 ERR=[]
 ERR_FILE="neuro_errors.log"
 ENGINE_CACHE="neuro_engine.pkl"
+
+# ID лиг API-Football (v3)
+API_LG={"R1":235,"T1":203,"C1":2,"EL":3,"EC":848,"RUS_CUP":233}
+API_NAMES={235:"🇷🇺 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
 
 def log_err(tag,e):
     line=f"[{datetime.now():%Y-%m-%d %H:%M:%S}][{tag}] {type(e).__name__}: {e}"
@@ -62,9 +68,9 @@ def _f(v):
         return None
 
 def parse_date(s):
-    for fmt in ("%d/%m/%Y","%d/%m/%y","%Y-%m-%d"):
+    for fmt in ("%d/%m/%Y","%d/%m/%y","%Y-%m-%d","%Y-%m-%dT%H:%M:%S%z","%Y-%m-%dT%H:%M:%S"):
         try:
-            return datetime.strptime(str(s).strip(),fmt)
+            return datetime.strptime(str(s).strip()[:19],fmt[:19] if "z" in fmt else fmt)
         except Exception:
             continue
     return None
@@ -211,6 +217,164 @@ def blend_market(P,mkt,w):
     P["p2"]/=t
     P["mkt"]=mkt
     return P
+
+# ============== LIVE MODEL (persistent) ==============
+DEFAULT_LIVE={"alpha":1.5,"beta":TOTAL_MIN,"temp":1.0,"signals":[],"league_pace":{},"n_learned":0}
+def load_live_model():
+    try:
+        if os.path.exists(LIVE_MODEL_FILE):
+            with open(LIVE_MODEL_FILE,"r",encoding="utf-8") as f:
+                d=json.load(f)
+            for k in DEFAULT_LIVE:
+                d.setdefault(k,DEFAULT_LIVE[k])
+            return d
+    except Exception as e:
+        log_err("load_live_model",e)
+    return dict(DEFAULT_LIVE)
+
+def save_live_model(m):
+    try:
+        with open(LIVE_MODEL_FILE,"w",encoding="utf-8") as f:
+            json.dump(m,f,ensure_ascii=False,indent=2)
+    except Exception as e:
+        log_err("save_live_model",e)
+
+def live_predict(minute,cur_total,base_lam,league=None,pressure=None,live_model=None):
+    """Bayesian update (Gamma-Poisson) + momentum/pressure + temperature scaling."""
+    if live_model is None:
+        live_model=load_live_model()
+    alpha=float(live_model.get("alpha",1.5))
+    beta=float(live_model.get("beta",TOTAL_MIN))
+    temp=float(live_model.get("temp",1.0))
+    minute_f=max(1.0,float(minute))
+    remaining=max(1.0,TOTAL_MIN-minute_f)
+    pace=league and live_model.get("league_pace",{}).get(league)
+    lam_pace=pace[0]/pace[1] if pace else (base_lam/TOTAL_MIN)
+    lam_prior=lam_pace*minute_f
+    alpha_post=alpha+cur_total
+    beta_post=beta+minute_f
+    lam_post=alpha_post/beta_post
+    k=(lam_post/lam_pace) if lam_pace>0.001 else 1.0
+    k=max(0.4,min(3.0,k))
+    if pressure is not None and pressure>0:
+        k*=min(1.5,max(0.6,1.0+0.3*pressure))
+    lam_rem=lam_pace*remaining*k
+    p_goal=1.0-math.exp(-lam_rem/temp)
+    proj=cur_total+lam_rem
+    return {"p_goal":p_goal,"proj_total":proj,"lam_rem":lam_rem,"pace":lam_pace*TOTAL_MIN,"k":k}
+
+def live_learn_step(minute,cur_total,final_total,league=None,live_model=None):
+    """Дообучение по завершённому матчу: обновляет α/β темпа + лигу."""
+    if live_model is None:
+        live_model=load_live_model()
+    alpha=float(live_model.get("alpha",1.5))
+    beta=float(live_model.get("beta",TOTAL_MIN))
+    minute_f=max(1.0,float(minute))
+    if final_total>cur_total:
+        alpha+=final_total-cur_total
+    beta+=TOTAL_MIN-minute_f
+    live_model["alpha"]=min(alpha,50.0)
+    live_model["beta"]=min(beta,50.0*TOTAL_MIN)
+    if league:
+        lp=live_model.setdefault("league_pace",{})
+        if league not in lp:
+            lp[league]=[0.0,0.0]
+        lp[league][0]+=final_total
+        lp[league][1]+=TOTAL_MIN
+    live_model["n_learned"]=int(live_model.get("n_learned",0))+1
+    return live_model
+
+def live_refit_temp(live_model,window=500):
+    """Temperature scaling по сигналам с исходом (был гол / не был)."""
+    sigs=[s for s in live_model.get("signals",[]) if s.get("had_goal") is not None][-window:]
+    if len(sigs)<30:
+        return live_model
+    def nll(T):
+        s=0.0
+        for sig in sigs:
+            p=sig.get("p_goal",0.5)/T
+            p=1.0-math.exp(-max(0.001,-math.log(1-min(max(p,0.001),0.999))))
+            y=1.0 if sig.get("had_goal") else 0.0
+            s-=math.log(min(max(p if y>0.5 else 1-p,1e-9),1-1e-9))
+        return s
+    best_T,best_ll=live_model.get("temp",1.0),nll(live_model.get("temp",1.0))
+    T=0.5
+    while T<=3.0001:
+        ll=nll(T)
+        if ll<best_ll-1e-9:
+            best_ll,best_T=ll,T
+        T+=0.05
+    lo=max(0.5,best_T-0.05)
+    hi=min(3.0,best_T+0.05)
+    T=lo
+    while T<=hi+1e-9:
+        ll=nll(T)
+        if ll<best_ll-1e-9:
+            best_ll,best_T=ll,T
+        T+=0.005
+    live_model["temp"]=min(max(best_T,0.5),3.0)
+    return live_model
+
+def live_stats(live_model):
+    sigs=live_model.get("signals",[])
+    finished=[s for s in sigs if s.get("had_goal") is not None]
+    total=len(finished)
+    if total<5:
+        return {"n":total,"hit_rate":None,"brier":None,"cal":[]}
+    hits=sum(1 for s in finished if s.get("had_goal"))
+    brier=sum((s.get("p_goal",0.5)-(1.0 if s.get("had_goal") else 0.0))**2 for s in finished)/total
+    cal=[]
+    for lo,hi in [(0.3,0.5),(0.5,0.65),(0.65,0.80),(0.80,1.01)]:
+        bin_=[s for s in finished if lo<=s.get("p_goal",0)<hi]
+        if len(bin_)>=3:
+            wr=sum(1 for s in bin_ if s.get("had_goal"))/len(bin_)*100
+            avg=sum(s.get("p_goal",0) for s in bin_)/len(bin_)*100
+            cal.append({"bin":f"{lo*100:.0f}–{hi*100:.0f}%","n":len(bin_),
+                        "pred":f"{avg:.1f}%","fact":f"{wr:.1f}%"})
+    return {"n":total,"hit_rate":hits/total*100,"brier":brier,"cal":cal}
+
+# ============== API-FOOTBALL LIVE ==============
+def api_football_live(api_key,league_ids):
+    """Вернёт список live-матчей с API-Football (если ключ есть)."""
+    if not api_key:
+        return [],["API-Football: ключ не задан"]
+    out=[]
+    rep=[]
+    headers={"x-apisports-key":api_key,"x-rapidapi-host":"v3.football.api-sports.io"}
+    for lid in league_ids:
+        try:
+            r=_sess.get(f"https://v3.football.api-sports.io/fixtures?live=all&league={lid}",
+                        headers=headers,timeout=15)
+            if r.status_code!=200:
+                rep.append(f"API {API_NAMES.get(lid,lid)}: HTTP {r.status_code}")
+                continue
+            data=(r.json() or {}).get("response") or []
+            n=0
+            for f in data:
+                fix=f.get("fixture") or {}
+                teams=f.get("teams") or {}
+                goals=f.get("goals") or {}
+                stats_raw=f.get("statistics") or []
+                stat={"home":{},"away":{}}
+                for side,st in zip(("home","away"),stats_raw):
+                    for val in st.get("statistics") or []:
+                        stat[side][val.get("type")]=(val.get("value"))
+                out.append({"league":API_NAMES.get(lid,str(lid)),"league_id":lid,
+                            "fixture_id":fix.get("id"),
+                            "home":(teams.get("home") or {}).get("name"),
+                            "away":(teams.get("away") or {}).get("name"),
+                            "home_score":goals.get("home") or 0,
+                            "away_score":goals.get("away") or 0,
+                            "minute":fix.get("status",{}).get("elapsed") or 0,
+                            "progress":f"{fix.get('status',{}).get('elapsed') or 0}'",
+                            "status":(fix.get("status") or {}).get("short") or "",
+                            "stats":stat})
+                n+=1
+            rep.append(f"API {API_NAMES.get(lid,lid)}: {n} live")
+        except Exception as e:
+            log_err(f"api_live {lid}",e)
+            rep.append(f"API {API_NAMES.get(lid,lid)}: {type(e).__name__}")
+    return out,rep
 
 class Engine:
     def __init__(self):
@@ -700,38 +864,17 @@ def load_fixtures():
             rep.append(f"{u.split('/')[-1]}: {type(e).__name__}")
     return rows,rep
 
-TSDB_LEAGUES={"432":"АПЛ","434":"Ла Лига","435":"Серия A","436":"Бундеслига",
-              "437":"Лига 1","448":"ЛЧ","442":"MLS","439":"Примейра"}
-
-def load_tsdb():
-    rep=[]
-    rows=[]
-    for lid,name in TSDB_LEAGUES.items():
-        try:
-            r=_sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",timeout=15)
-            ev=(r.json() or {}).get("events") or []
-            for e in ev:
-                rows.append({"Div":"TSDB","League":name,"Date":e.get("dateEvent",""),
-                             "Time":(e.get("strTime") or "")[:5],"HomeTeam":e.get("strHomeTeam",""),
-                             "AwayTeam":e.get("strAwayTeam","")})
-            rep.append(f"TSDB {name}: {len(ev)}")
-        except Exception as e:
-            log_err(f"tsdb {name}",e)
-            rep.append(f"TSDB {name}: ошибка")
-    return rows,rep
-
-def _norm_team(s):
-    return re.sub(r"[^a-zа-я0-9]","",(s or "").lower())
-
 def load_livescores():
     try:
         r=_sess.get("https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",timeout=10)
         out={}
         for e in (r.json() or {}).get("events") or []:
-            key=(_norm_team(e.get("strHomeTeam","")),_norm_team(e.get("strAwayTeam","")))
-            out[key]={"home":e.get("intHomeScore"),"away":e.get("intAwayScore"),
-                      "status":(e.get("strStatus") or "").strip(),
-                      "progress":(e.get("strProgress") or "").strip()}
+            hk=re.sub(r"[^a-zа-я0-9]","",(e.get("strHomeTeam","") or "").lower())
+            ak=re.sub(r"[^a-zа-я0-9]","",(e.get("strAwayTeam","") or "").lower())
+            out[(hk,ak)]={"home":e.get("intHomeScore"),"away":e.get("intAwayScore"),
+                          "status":(e.get("strStatus") or "").strip(),
+                          "progress":(e.get("strProgress") or "").strip(),
+                          "league":e.get("strLeague") or ""}
         return out
     except Exception as e:
         log_err("livescores",e)
@@ -740,7 +883,8 @@ def load_livescores():
 def match_live(live,home,away):
     if not live:
         return None
-    hk,ak=_norm_team(home),_norm_team(away)
+    hk=re.sub(r"[^a-zа-я0-9]","",(home or "").lower())
+    ak=re.sub(r"[^a-zа-я0-9]","",(away or "").lower())
     for (lh,la),v in live.items():
         if (lh==hk and la==ak) or (hk in lh and ak in la) or (lh in hk and la in ak):
             return v
