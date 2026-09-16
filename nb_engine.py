@@ -1,4 +1,4 @@
-"""NEURO BET engine v8.3 — чистый Python, без streamlit."""
+"""NEURO BET engine v8.3.1 — чистый Python, без streamlit."""
 import requests, csv, io, os, math, re, pickle
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -114,10 +114,12 @@ def market_probs(row):
     i1,ix,ia=1/ph,1/px,1/pa; s=i1+ix+ia
     return (i1/s,ix/s,ia/s)
 def clv_for(pick,odd,mkt,row):
+    """Перевес взятого кэфа над ОТКРЫТИЕМ Pinnacle. row может быть None."""
     if not odd: return None
     if mkt:
         idx={"П1":0,"X":1,"П2":2}.get(pick)
         if idx is not None: return odd*mkt[idx]-1
+    if row is None: return None          # ФИКС v8.3.1: не падаем на None
     if pick.startswith("Ф1") or pick.startswith("Ф2"):
         po=_f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
         ot=_f(row.get("PAHA")) if pick.startswith("Ф1") else _f(row.get("PAHH"))
@@ -404,7 +406,8 @@ def build_candidates(P,row,PR,blacklist=()):
             cands.append(("AH",f"Ф2({-ahh:+.1f})",1-pc,oha))
     return cands
 
-def evaluate_rows(cands,P,mkt_probs,PR,engine,use_dis):
+def evaluate_rows(cands,P,mkt_probs,PR,engine,use_dis,row=None):
+    """ФИКС v8.3.1: принимает row, чтобы clv_for для ТБ/ТМ/фор не падал на None."""
     rows=[]; best=None; hot=[]; card_clv=None
     gap=max(abs(P["p1"]-mkt_probs[0]),abs(P["x"]-mkt_probs[1]),abs(P["p2"]-mkt_probs[2])) if mkt_probs else None
     for mkt,pick,prob,odd in cands:
@@ -420,7 +423,7 @@ def evaluate_rows(cands,P,mkt_probs,PR,engine,use_dis):
             if item["ok"]:
                 stk=kelly(prob,odd,PR["bank"],PR["kelly"])
                 if best is None or ev>best[3]:
-                    best=(mkt,pick,odd,ev,prob,stk); card_clv=clv_for(pick,odd,mkt_probs,None)
+                    best=(mkt,pick,odd,ev,prob,stk); card_clv=clv_for(pick,odd,mkt_probs,row)
         if prob>=PR["thr"]: hot.append((pick,prob,odd))
         rows.append(item)
     hot.sort(key=lambda x:-x[1])
@@ -441,7 +444,7 @@ def backtest(div,season,PR,use_dis=True,stake_mode="Flat"):
             mkt=market_probs(r); Pb=blend_market(P,mkt,PR["w_market"])
             if j>=BACKTEST_WARMUP:
                 cands=build_candidates(Pb,r,PR)
-                rows_ev,best,hot,clv,gap=evaluate_rows(cands,Pb,mkt,PR,eng,use_dis)
+                rows_ev,best,hot,clv,gap=evaluate_rows(cands,Pb,mkt,PR,eng,use_dis,row=r)
                 for item in rows_ev:
                     if not item["ok"] or not item["odd"]: continue
                     res=determine_outcome(item["mkt"],item["pick"],hg,ag)
