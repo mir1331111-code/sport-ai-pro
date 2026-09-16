@@ -4,14 +4,14 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import nb_engine as E
 
-st.set_page_config(page_title="NEURO BET PRO v8.3", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.3.1", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 
-DIV_NAMES={"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁢󠁮󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+DIV_NAMES={"E0":"🏴󠁧󠁢󠁧 АПЛ","E1":"🏴󠁧󠁢󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁴󠁿 Шотландия",
+ "D1":"🇩 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
  "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
@@ -308,8 +308,8 @@ if not st.session_state.get("_auto_settled_done"):
 
 st.markdown(f"""
 <div class="hero">
- <h1>🏟 NEURO BET PRO v8.3</h1>
- <p>Футбол · temperature scaling · raw до калибровки · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · retry · лог в файл</p>
+ <h1>🏟 NEURO BET PRO v8.3.1</h1>
+ <p>Футбол · temperature scaling · raw до калибровки · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · retry · лог в файл · фикс clv_for(None)</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -403,7 +403,7 @@ with tab1:
                 league=r.get("League") or DIV_NAMES.get(lg,"Лига "+str(lg))
                 if any(E.best_odd(r,p) for p in ("П1","ТБ 2.5")): withodds+=1
                 cands=E.build_candidates(Pb,r,PR,blacklist)
-                rows,best,hot,card_clv,gap=E.evaluate_rows(cands,Pb,mkt,PR,engine,use_dis)
+                rows,best,hot,card_clv,gap=E.evaluate_rows(cands,Pb,mkt,PR,engine,use_dis,row=r)
                 if best: passed+=1
                 tag="value" if best else ("hot" if hot else "")
                 nd=(d-today).days
@@ -524,7 +524,7 @@ with tab2:
                 out=E.determine_outcome(b.get("market"),b.get("pick"),hg,ag)
                 if out:
                     st.session_state.data=apply_settle(D,i,out,score=f"{int(hg)}:{int(ag)}")
-                    D=st.session_state.data  # фикс stale D
+                    D=st.session_state.data
                     save_data(D)
                     st.toast(f"LIVE закрыто: {b['match'][:25]}… {int(hg)}:{int(ag)}",icon="🔴")
                     st.rerun()
