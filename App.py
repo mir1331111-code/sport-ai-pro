@@ -486,6 +486,103 @@ def settle_ah(pick,hg,ag):
     if abs(res)<=0.001: return "push"
     return False
 
+def determine_outcome(market,pick,hg,ag):
+    """Single source of truth for turning a final score into won/lost/push —
+    used everywhere a bet gets settled so the rule can't silently diverge
+    between the scan, auto-sync and any backfill/recheck path."""
+    if market=="1X2":
+        return "won" if ("П1" if hg>ag else "X" if hg==ag else "П2")==pick else "lost"
+    if market=="OU":
+        won=(pick=="ТБ 2.5" and hg+ag>=3) or (pick=="ТМ 2.5" and hg+ag<=2)
+        return "won" if won else "lost"
+    if market=="AH":
+        s=settle_ah(pick,hg,ag)
+        return "push" if s=="push" else ("won" if s else "lost")
+    return None
+
+def find_result(div,home,away,bd):
+    """Find the correct finished fixture for (home,away) instead of trusting
+    the first row that matches by team name — with a full season of history
+    the same pairing can appear more than once, and without a reliable
+    kickoff date the old code just grabbed whichever came first in the CSV,
+    which is how a bet could get matched to the wrong match entirely.
+    Returns (hg,ag,rd) for the best candidate, or None if nothing reliable found."""
+    if div in (None,"TSDB",""): return None
+    season=find_season()
+    cands=[]
+    for r in load_seasonal(div,season):
+        if r.get("HomeTeam")==home and r.get("AwayTeam")==away and r.get("FTHG") not in (None,""):
+            rd=parse_date(r.get("Date",""))
+            if not rd: continue
+            try: hg,ag=float(r["FTHG"]),float(r["FTAG"])
+            except Exception: continue
+            cands.append((rd,hg,ag))
+    if not cands: return None
+    if bd:
+        cands=[c for c in cands if abs((c[0]-bd).days)<=2]
+        if not cands: return None
+        cands.sort(key=lambda c:abs((c[0]-bd).days))
+    else:
+        # no stored kickoff date (older bet placed before this field existed) —
+        # best effort: most recent finished meeting, never a future one
+        cands=[c for c in cands if c[0]<=datetime.now()]
+        if not cands: return None
+        cands.sort(key=lambda c:c[0],reverse=True)
+    return cands[0]
+
+def recompute_bet(D,idx,hg,ag,score_str):
+    """Re-derive a bet's status from an authoritative score and correct the
+    bank/stats if it was already (possibly wrongly) settled before."""
+    D2=clone(D);b=D2["bets"][idx]
+    new_status=determine_outcome(b.get("market"),b.get("pick"),hg,ag)
+    if new_status is None: return D
+    old=b.get("status","pending")
+    if old=="won":
+        pr=b["stake"]*(b["odds"]-1);D2["bank"]-=b["stake"]+pr
+        D2["stats"]["won"]=max(0,D2["stats"]["won"]-1);D2["stats"]["profit"]-=pr
+    elif old=="lost":
+        D2["bank"]+=b["stake"];D2["stats"]["lost"]=max(0,D2["stats"]["lost"]-1);D2["stats"]["profit"]+=b["stake"]
+    elif old=="push":
+        D2["bank"]-=b["stake"];D2["stats"]["push"]=max(0,D2["stats"].get("push",0)-1)
+    b["status"]=new_status;b["score"]=score_str
+    if new_status=="won":
+        pr=b["stake"]*(b["odds"]-1);D2["bank"]+=b["stake"]+pr
+        D2["stats"]["won"]+=1;D2["stats"]["profit"]+=pr
+    elif new_status=="lost":
+        D2["bank"]-=b["stake"];D2["stats"]["lost"]+=1;D2["stats"]["profit"]-=b["stake"]
+    elif new_status=="push":
+        D2["bank"]+=b["stake"];D2["stats"]["push"]=D2["stats"].get("push",0)+1
+    return D2
+
+def _norm_team(s):
+    return re.sub(r"[^a-zа-я0-9]","",(s or "").lower())
+
+@st.cache_data(ttl=60)
+def load_livescores():
+    """Best-effort live scores via TheSportsDB's free livescore endpoint.
+    Coverage on the free tier is partial (not every league, occasional lag),
+    so this degrades silently to 'no live data' rather than guessing."""
+    try:
+        r=requests.get("https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",timeout=10)
+        ev=(r.json() or {}).get("events") or []
+        out={}
+        for e in ev:
+            key=(_norm_team(e.get("strHomeTeam","")),_norm_team(e.get("strAwayTeam","")))
+            out[key]={"home":e.get("intHomeScore"),"away":e.get("intAwayScore"),
+                       "status":(e.get("strStatus") or "").strip(),
+                       "progress":(e.get("strProgress") or "").strip()}
+        return out
+    except Exception as e:
+        log_err("livescores",e); return {}
+def match_live(live,home,away):
+    if not live: return None
+    hk,ak=_norm_team(home),_norm_team(away)
+    for (lh,la),v in live.items():
+        if (lh==hk and la==ak) or (hk in lh and ak in la) or (lh in hk and la in ak):
+            return v
+    return None
+FINISHED_STATUSES={"match finished","ft","aet","ap","finished","full time"}
+
 def _odd_s(rw):
     o=rw.get("odd")
     if o: return f"{o:.2f}"
@@ -701,10 +798,13 @@ def render_match_card(c,thr,PR):
   <span>🚩 угл <b>{ch+ca:.1f}</b></span><span>🟨 жёл <b>{yh+ya:.1f}</b></span>
   <span>📚 игр <b>{c['games']}</b></span>{clv_html}{best_html}</div>
 </div>"""
-def bet_card_html(b):
+def bet_card_html(b,live=None):
     st_=b.get("status","pending")
     icon={"pending":"⏳","won":"🟢","lost":"🔴","push":"⚪"}.get(st_,"⏳")
     score_html=f"<span class='score'>{b['score']}</span>" if b.get("score") else ""
+    if live and st_=="pending" and (live.get("status") or "").strip().lower() not in FINISHED_STATUSES and live.get("home") not in (None,""):
+        prog=f" {live['progress']}" if live.get("progress") else ""
+        score_html=f"<span class='score' style='background:rgba(239,68,68,.3);color:#fecaca'>🔴 LIVE {live['home']}:{live['away']}{prog}</span>"
     clv=f" · 📏 CLV {b['clv']*100:+.1f}%" if b.get("clv") is not None else ""
     date_s=f" · {b['date']}" if b.get("date") else ""
     return (f"<div class='betcard {st_}'>{icon} <b>{b['match']}</b>{score_html}{date_s}<br>"
@@ -915,33 +1015,58 @@ with tab1:
 
 with tab2:
     st.header("💼 Портфель")
-    if st.button("🔄 Автосинхронизация"):
-        season=find_season();D2=clone(D);upd=0
+    cbtn1,cbtn2,cbtn3=st.columns(3)
+    if cbtn1.button("🔄 Автосинхронизация"):
+        D2=clone(D);upd=0
         for idx,b in enumerate(D["bets"]):
             if b["status"]!="pending" or b.get("div") in (None,"TSDB"): continue
             bd=parse_date(b.get("date_iso","")) if b.get("date_iso") else None
-            for r in load_seasonal(b["div"],season):
-                if r.get("HomeTeam")==b["match"].split(" vs ")[0] and r.get("AwayTeam")==b["match"].split(" vs ")[1] and r.get("FTHG") not in (None,""):
-                    rd=parse_date(r.get("Date",""))
-                    if bd and rd and abs((rd-bd).days)>1: continue
-                    if rd and rd.date()>=datetime.now().date(): continue
-                    try: hg,ag=float(r["FTHG"]),float(r["FTAG"])
-                    except Exception as e: log_err("sync parse",e); continue
-                    out=None
-                    if b["market"]=="1X2":
-                        out="won" if ("П1" if hg>ag else "X" if hg==ag else "П2")==b["pick"] else "lost"
-                    elif b["market"]=="OU":
-                        won=(b["pick"]=="ТБ 2.5" and hg+ag>=3) or (b["pick"]=="ТМ 2.5" and hg+ag<=2)
-                        out="won" if won else "lost"
-                    elif b["market"]=="AH":
-                        s=settle_ah(b["pick"],hg,ag)
-                        out="push" if s=="push" else ("won" if s else "lost")
-                    if out: D2=apply_settle(D2,idx,out,score=f"{int(hg)}:{int(ag)}"); upd+=1
-                    break
+            h,a=b["match"].split(" vs ")
+            res=find_result(b.get("div"),h,a,bd)
+            if not res: continue
+            rd,hg,ag=res
+            out=determine_outcome(b.get("market"),b.get("pick"),hg,ag)
+            if out: D2=apply_settle(D2,idx,out,score=f"{int(hg)}:{int(ag)}"); upd+=1
         st.session_state.data=D2; save_data(D2); st.success(f"Закрыто: {upd}"); st.rerun()
+    if cbtn2.button("🧐 Перепроверить все счета"):
+        # re-derives score+outcome for EVERY settled bet from the correctly
+        # matched fixture — fixes bets that were (mis)settled by the old
+        # first-match-in-file logic before this fix, not just future ones.
+        D2=clone(D);fixed=0;checked=0
+        for idx,b in enumerate(D["bets"]):
+            if b.get("div") in (None,"TSDB"): continue
+            bd=parse_date(b.get("date_iso","")) if b.get("date_iso") else None
+            h,a=b["match"].split(" vs ")
+            res=find_result(b.get("div"),h,a,bd)
+            if not res: continue
+            checked+=1
+            rd,hg,ag=res
+            score_str=f"{int(hg)}:{int(ag)}"
+            if b.get("status")=="pending" or b.get("score")!=score_str:
+                D2=recompute_bet(D2,idx,hg,ag,score_str); fixed+=1
+        st.session_state.data=D2; save_data(D2)
+        st.success(f"Проверено: {checked} · исправлено/досчитано: {fixed}"); st.rerun()
+    live=None
+    if cbtn3.button("🔴 Проверить LIVE"):
+        live=load_livescores()
+        st.session_state["_live_cache"]=live
+        if not live: st.caption("Live-данных сейчас нет (бесплатный источник покрывает не все лиги/моменты).")
+    live=live or st.session_state.get("_live_cache")
     if not D["bets"]: st.info("Пусто.")
     for i,b in enumerate(D["bets"]):
-        st.markdown(bet_card_html(b),unsafe_allow_html=True)
+        lv=None
+        if b["status"]=="pending" and live:
+            h,a=b["match"].split(" vs ")
+            lv=match_live(live,h,a)
+        st.markdown(bet_card_html(b,lv),unsafe_allow_html=True)
+        if b["status"]=="pending" and lv and (lv.get("status") or "").strip().lower() in FINISHED_STATUSES \
+           and lv.get("home") not in (None,"") and lv.get("away") not in (None,""):
+            hg,ag=_f(lv["home"]),_f(lv["away"])
+            if hg is not None and ag is not None:
+                out=determine_outcome(b.get("market"),b.get("pick"),hg,ag)
+                if out:
+                    st.session_state.data=apply_settle(D,i,out,score=f"{int(hg)}:{int(ag)}")
+                    save_data(st.session_state.data); st.rerun()
         if b["status"]=="pending":
             cc=st.columns([1,1,1])
             score_in=cc[0].text_input("Счёт (напр. 2:1)",key=f"sc{i}",label_visibility="collapsed",placeholder="Счёт 2:1")
