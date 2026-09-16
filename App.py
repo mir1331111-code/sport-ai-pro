@@ -1,4 +1,4 @@
-"""NEURO BET PRO v9.1 — LLM risk layer + quota >=5/day + tiers + live engine."""
+"""NEURO BET PRO v9.2 — full: LLM risk (circuit-breaker) + quota>=5 + tiers + live engine."""
 import streamlit as st
 import requests, csv, io, os, math, re, pickle, json, html
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ try:
 except Exception:
     Retry=None
 
-st.set_page_config(page_title="NEURO BET PRO v9.1", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NEURO BET PRO v9.2", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 AVG_GOALS=2.75
@@ -26,7 +26,7 @@ ML_LR=0.05
 ML_L2=0.001
 ML_ITERS=300
 NFEAT_ML=12
-ENGINE_CACHE_VERSION="9.1"
+ENGINE_CACHE_VERSION="9.2"
 LIVE_MODEL_FILE="live_model.json"
 UA={"User-Agent":"Mozilla/5.0"}
 CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
@@ -35,9 +35,9 @@ ERR_FILE="neuro_errors.log"
 ENGINE_CACHE="neuro_engine.pkl"
 API_LG={"R1":235,"T1":203,"C1":2,"EL":3,"EC":848,"RUS_CUP":233}
 API_NAMES={235:"🇷🇺 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
-DIV_NAMES={"E0":"🏴󠁢󠁮 АПЛ","E1":"🏴󠁥󠁿 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+DIV_NAMES={"E0":"🏴󠁢󠁮󠁿 АПЛ","E1":"🏴󠁢󠁿 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
  "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
@@ -181,19 +181,20 @@ def blend_market(P,mkt,w):
     P["p1"]/=t; P["x"]/=t; P["p2"]/=t; P["mkt"]=mkt
     return P
 
-# ============= LLM RISK LAYER =============
+# ============= LLM RISK LAYER (circuit-breaker) =============
+_LLM_BAD=set()
 def llm_gemini(prompt,key):
     url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
     body={"contents":[{"parts":[{"text":prompt}]}],
           "generationConfig":{"temperature":0.2,"responseMimeType":"application/json"}}
-    r=_sess.post(url,json=body,timeout=25)
+    r=_sess.post(url,json=body,timeout=8)
     if r.status_code!=200: return None
     return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 def llm_grok(prompt,key):
     url="https://api.x.ai/v1/chat/completions"
     hdr={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
     body={"model":"grok-2-latest","messages":[{"role":"user","content":prompt}],"temperature":0.2}
-    r=_sess.post(url,json=body,headers=hdr,timeout=25)
+    r=_sess.post(url,json=body,headers=hdr,timeout=8)
     if r.status_code!=200: return None
     return r.json()["choices"][0]["message"]["content"]
 def build_risk_prompt(ctx):
@@ -207,28 +208,31 @@ def build_risk_prompt(ctx):
             "\"veto_reason\":\"...\",\"key_factors\":[\"...\"],\"summary\":\"1-2 предложения\"}")
 def llm_risk(ctx,meta):
     prompt=build_risk_prompt(ctx)
-    for fn,key in ((llm_gemini,meta.get("gemini_key","")),(llm_grok,meta.get("grok_key",""))):
-        if not key: continue
+    for name,fn,key in (("gemini",llm_gemini,meta.get("gemini_key","")),
+                        ("grok",llm_grok,meta.get("grok_key",""))):
+        if not key or name in _LLM_BAD: continue
         try:
             txt=fn(prompt,key)
             if txt:
                 d=json.loads(txt)
-                return {"source":fn.__name__,"risk":int(d.get("risk_pick",50)),
+                return {"source":name,"risk":int(d.get("risk_pick",50)),
                         "conf":int(d.get("confidence",50)),"veto":bool(d.get("veto",False)),
                         "veto_reason":d.get("veto_reason",""),"factors":d.get("key_factors",[]),
                         "summary":d.get("summary","")}
+            _LLM_BAD.add(name)
         except Exception as e:
-            log_err("llm",e)
+            log_err("llm",e); _LLM_BAD.add(name)
     return None
 def heuristic_risk(ctx):
     r=30
-    r+=max(0,(0.60-ctx.get("prob",0.5))*-100+60)*0
-    r+=max(0,(0.60-ctx.get("prob",0.5)))*100
-    r+=(1 if ctx.get("games",0)<5 else 0)*15
+    r+=max(0.0,(0.60-ctx.get("prob",0.5)))*100
+    if ctx.get("games",0)<5: r+=10
     r+=max(0,(ctx.get("rh",14)-ctx.get("ra",14)))*3
     r+=ctx.get("gap",0)*30
-    return {"source":"heuristic","risk":int(max(5,min(95,r))),"conf":40,
-            "veto":(ctx.get("games",0)<4),"veto_reason":"мало данных" if ctx.get("games",0)<4 else "",
+    risk=int(max(5,min(95,r)))
+    return {"source":"heuristic","risk":risk,"conf":40,
+            "veto":(ctx.get("games",0)<2),
+            "veto_reason":"слишком мало данных" if ctx.get("games",0)<2 else "",
             "factors":[],"summary":"Эвристическая оценка (LLM недоступен)."}
 
 # ============= LIVE MODEL =============
@@ -670,6 +674,20 @@ def load_fixtures():
             if n: break
         except Exception as e: log_err("load_fixtures",e); rep.append(f"{u.split('/')[-1]}: {type(e).__name__}")
     return rows,rep
+def load_tsdb():
+    rep=[]; rows=[]
+    for lid,name in TSDB_LEAGUES.items():
+        try:
+            r=_sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",timeout=15)
+            ev=(r.json() or {}).get("events") or []
+            for e in ev:
+                rows.append({"Div":"TSDB","League":name,"Date":e.get("dateEvent",""),
+                             "Time":(e.get("strTime") or "")[:5],"HomeTeam":e.get("strHomeTeam",""),
+                             "AwayTeam":e.get("strAwayTeam","")})
+            rep.append(f"TSDB {name}: {len(ev)}")
+        except Exception as e:
+            log_err(f"tsdb {name}",e); rep.append(f"TSDB {name}: ошибка")
+    return rows,rep
 def load_livescores():
     try:
         r=_sess.get("https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",timeout=10)
@@ -790,7 +808,7 @@ div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;border
 .teams span{color:#8b93a7;font-weight:400}
 .verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}
 .verdict b.y{color:#fbbf24}.verdict b.g{color:#34d399}.verdict b.r{color:#f87171}
-.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e6eaf2;}
+.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e2e8f0;}
 .ok{color:#34d399;font-weight:800}.nok{color:#64748b}
 .evpos{color:#34d399;font-weight:700}.evneg{color:#f87171;font-weight:700}
 .mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
@@ -970,6 +988,27 @@ def bet_sort_key(pair,key):
         if b["status"]=="lost": return -b["stake"]
         return 0.0
     return b.get("prob",0)
+def tsdb_upcoming(engine,PR,blacklist,today,limit):
+    out=[]
+    try:
+        raw=load_tsdb()[0]
+    except Exception:
+        return out
+    for r in raw:
+        d=parse_date(r.get("Date",""))
+        if not d or not (today<=d<=limit): continue
+        h=(r.get("HomeTeam") or "").strip(); a=(r.get("AwayTeam") or "").strip()
+        if not h or not a: continue
+        try:
+            P=engine.predict(h,a,"G",match_date=d)
+        except Exception:
+            continue
+        Pb=blend_market(P,None,0)
+        rows,best,hot,clv,gap=evaluate_rows(build_candidates(Pb,r,PR,blacklist),Pb,None,PR,engine,False,row=r)
+        out.append({"r":r,"d":d,"tm":(r.get("Time") or "").strip(),"h":h,"a":a,"lg":"TSDB",
+                    "league":r.get("League") or "Матч","P":Pb,"rows":rows,"best":best,"hot":hot,
+                    "clv":clv,"gap":gap,"advance":(d.date()>today.date())})
+    return out
 def render_match_card(c,thr,PR):
     val=c.get("best") is not None
     hot=any(r["prob"]>=thr for r in c["rows"]) and not val
@@ -1038,7 +1077,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v9.1 · LLM риск-слой (Gemini→Grok→эвристика) · квота ≥5/день · ярусы T1/T2/T3 · зелёные/жёлтые · live-движок</p>
+ <p>v9.2 · LLM риск (Gemini→Grok→эвристика, circuit-breaker) · квота ≥5/день + добор TSDB · ярусы T1/T2/T3 · зелёные/жёлтые · live-движок</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -1096,7 +1135,7 @@ with st.sidebar:
 <a class="side-link" href="https://understat.com/" target="_blank">📉 understat.com</a>
 <a class="side-link" href="https://fbref.com/" target="_blank">📋 fbref.com</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 Версия: <b>9.1</b></span>
+<span class="side-link" style="cursor:default">🧠 Версия: <b>9.2</b></span>
 <span class="side-link" style="cursor:default">🤖 LLM: Gemini→Grok→эвристика</span>
 <span class="side-link" style="cursor:default">📅 Квота: ≥<b>"""+str(quota_base)+"""</b>/день</span></div>
 """, unsafe_allow_html=True)
@@ -1162,6 +1201,8 @@ with tab1:
             advance=d.date()>today.date()
             cands_all.append({"r":r,"d":d,"tm":tm,"h":h,"a":a,"lg":lg,"league":league,"P":Pb,"rows":rows,
                               "best":best,"hot":hot,"clv":card_clv,"gap":gap,"advance":advance})
+        if len([c for c in cands_all if not c["advance"]])<quota_base:
+            cands_all+=tsdb_upcoming(engine,PR,blacklist,today,limit)
         def tier_of(cand):
             b=cand["best"]
             if b and b[3]>0 and 1.6<=b[2]<=2.6 and b[4]>=0.55: return 1
