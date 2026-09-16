@@ -1,6 +1,6 @@
-"""NEURO BET PRO v9 — LLM risk layer (Gemini/Grok) + quota >=5/day + tiers."""
+"""NEURO BET PRO v9.1 — LLM risk layer + quota >=5/day + tiers + live engine."""
 import streamlit as st
-import requests, csv, io, os, math, re, pickle, json
+import requests, csv, io, os, math, re, pickle, json, html
 from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -10,9 +10,9 @@ try:
 except Exception:
     Retry=None
 
-st.set_page_config(page_title="NEURO BET PRO v9", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NEURO BET PRO v9.1", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
 HISTORY_FILE="neuro_bet_pro.json"
-esc=html_esc=__import__("html").escape
+esc=html.escape
 AVG_GOALS=2.75
 TOTAL_MIN=95.0
 MATRIX_N=9
@@ -26,7 +26,7 @@ ML_LR=0.05
 ML_L2=0.001
 ML_ITERS=300
 NFEAT_ML=12
-ENGINE_CACHE_VERSION="9.0"
+ENGINE_CACHE_VERSION="9.1"
 LIVE_MODEL_FILE="live_model.json"
 UA={"User-Agent":"Mozilla/5.0"}
 CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
@@ -34,10 +34,10 @@ ERR=[]
 ERR_FILE="neuro_errors.log"
 ENGINE_CACHE="neuro_engine.pkl"
 API_LG={"R1":235,"T1":203,"C1":2,"EL":3,"EC":848,"RUS_CUP":233}
-API_NAMES={235:"🇷 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
-DIV_NAMES={"E0":"🏴󠁢 АПЛ","E1":"🏴󠁢󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁴󠁿 Шотландия",
+API_NAMES={235:"🇷🇺 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
+DIV_NAMES={"E0":"🏴󠁢󠁮 АПЛ","E1":"🏴󠁥󠁿 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
  "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
  "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
@@ -222,12 +222,13 @@ def llm_risk(ctx,meta):
     return None
 def heuristic_risk(ctx):
     r=30
-    r+=max(0,(0.60-ctx["prob"])*100)
-    r+=(1 if ctx["games"]<5 else 0)*15
-    r+=max(0,(ctx["rh"]-ctx["ra"]))*3
-    r+=ctx["gap"]*30
+    r+=max(0,(0.60-ctx.get("prob",0.5))*-100+60)*0
+    r+=max(0,(0.60-ctx.get("prob",0.5)))*100
+    r+=(1 if ctx.get("games",0)<5 else 0)*15
+    r+=max(0,(ctx.get("rh",14)-ctx.get("ra",14)))*3
+    r+=ctx.get("gap",0)*30
     return {"source":"heuristic","risk":int(max(5,min(95,r))),"conf":40,
-            "veto":(ctx["games"]<4),"veto_reason":"мало данных" if ctx["games"]<4 else "",
+            "veto":(ctx.get("games",0)<4),"veto_reason":"мало данных" if ctx.get("games",0)<4 else "",
             "factors":[],"summary":"Эвристическая оценка (LLM недоступен)."}
 
 # ============= LIVE MODEL =============
@@ -281,8 +282,7 @@ def live_refit_temp(live_model,window=500):
             y=1.0 if sig.get("had_goal") else 0.0
             s-=math.log(min(max(p_c if y>0.5 else 1-p_c,1e-9),1-1e-9))
         return s
-    best_T,best_ll=live_model.get("temp",1.0),nll(live_model.get("temp",1.0))
-    T=0.5
+    best_T,best_ll=live_model.get("temp",1.0),nll(live_model.get("temp",1.0)); T=0.5
     while T<=3.0001:
         ll=nll(T)
         if ll<best_ll-1e-9: best_ll,best_T=ll,T
@@ -497,6 +497,10 @@ class Engine:
         if n<5: return lh,la,n
         shrink=min(1.0,(n-4)/6.0); shift=(sum(hist)/n)*0.08*shrink
         return max(0.3,lh+shift/2),max(0.25,la-shift/2),n
+    def h2h_text(self,h,a):
+        hist=self.h2h.get((h,a),[])[-5:]
+        if not hist: return "нет данных"
+        return ", ".join(f"{d:+.0f}" for d in hist)
     def predict(self,h,a,lg="G",match_date=None,cup=False):
         P0=self.lp[lg]; ws=P0["w_shots"]
         lh_g=max(0.05,self._m(self.hg,1.5)); la_g=max(0.05,self._m(self.ag,1.2))
@@ -571,10 +575,6 @@ class Engine:
         if len(self.hist[lg])%REFIT_STRUCT_EVERY==0: self._fit_league(lg); self._fit_ml(lg)
         self.add(h,a,hg,ag,row,match_num=match_num,total=total,match_date=match_date)
         return P
-    def h2h_text(self,h,a):
-        hist=self.h2h.get((h,a),[])[-5:]
-        if not hist: return "нет данных"
-        return ", ".join(f"{d:+.0f}" for d in hist)
 
 def build_candidates(P,row,PR,blacklist=()):
     probs={"П1":P["p1"],"X":P["x"],"П2":P["p2"],"ТБ 2.5":P["over"],"ТМ 2.5":1-P["over"],
@@ -891,6 +891,31 @@ def stars_for(rw,thr):
     if rw["prob"]>=thr:
         return "⭐⭐⭐⭐⭐" if rw["prob"]>=0.70 else ("⭐⭐⭐⭐" if rw["prob"]>=0.65 else "⭐⭐⭐")
     return ""
+def build_picks(cards,thr,bank,kf):
+    picks=[]
+    for c in cards:
+        row=None; ptype=None
+        if c.get("best"):
+            ok=[r for r in c["rows"] if r["ok"]]
+            row=max(ok,key=lambda r:r["ev"]) if ok else None
+            ptype="value"
+        if row is None:
+            hot=[r for r in c["rows"] if r["prob"]>=thr]
+            if hot:
+                row=max(hot,key=lambda r:r["prob"]); ptype="hot"
+        if row is None:
+            continue
+        main,alt,avoid,text=ai_verdict(c)
+        if c.get("risk") and c["risk"].get("summary"):
+            text+=f" | 🤖 {c['risk']['summary']} (риск {c['risk'].get('risk','?')}/100)"
+        stake=kelly(row["prob"],row["odd"],bank,kf) if row["odd"] else round(bank*0.01,2)
+        picks.append({"league":c["league"],"match":c["match"],"date":c["date"],"when":c["when"],
+                      "pick":row["pick"],"prob":row["prob"],"odd":row["odd"],"odd_s":_odd_s(row),
+                      "stake":stake,"stars":stars_for(row,thr),"type":ptype,"verdict":text,
+                      "main":main,"alt":alt,"avoid":avoid,"clv":c.get("clv"),
+                      "score":(row["ev"] if ptype=="value" else 0)+row["prob"]})
+    picks.sort(key=lambda p:(p["type"]=="value",p["score"]),reverse=True)
+    return picks[:10]
 def strat_stats(bets):
     out={}
     for s in ("VALUE","HOT"):
@@ -952,6 +977,7 @@ def render_match_card(c,thr,PR):
     chips=f"<span class='chip'>{esc(c['league'])}</span><span class='chip when'>📅 {esc(c['date'])} · {esc(c['when'])}</span>"
     if c["games"]<PR["min_games"]: chips+="<span class='chip warn'>⚠️ мало данных</span>"
     if c.get("cup"): chips+="<span class='chip warn'>🏆 Кубок</span>"
+    if c.get("risk"): chips+=f"<span class='chip'>🤖 риск {c['risk'].get('risk','?')}/100</span>"
     main,alt,avoid,vtext=ai_verdict(c)
     m_s=f"✅ <b class='y'>{esc(main['pick'])}</b> @ {main['odd_s']} (P {main['prob']*100:.0f}%)" if main else ""
     a_s=f"🔁 <b class='g'>{esc(alt['pick'])}</b> (P {alt['prob']*100:.0f}%)" if alt else ""
@@ -1012,7 +1038,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v9 · LLM риск-слой (Gemini→Grok→эвристика) · квота ≥5/день · ярусы T1/T2/T3 · зелёные/жёлтые · live-движок</p>
+ <p>v9.1 · LLM риск-слой (Gemini→Grok→эвристика) · квота ≥5/день · ярусы T1/T2/T3 · зелёные/жёлтые · live-движок</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -1070,7 +1096,7 @@ with st.sidebar:
 <a class="side-link" href="https://understat.com/" target="_blank">📉 understat.com</a>
 <a class="side-link" href="https://fbref.com/" target="_blank">📋 fbref.com</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 Версия: <b>9.0</b></span>
+<span class="side-link" style="cursor:default">🧠 Версия: <b>9.1</b></span>
 <span class="side-link" style="cursor:default">🤖 LLM: Gemini→Grok→эвристика</span>
 <span class="side-link" style="cursor:default">📅 Квота: ≥<b>"""+str(quota_base)+"""</b>/день</span></div>
 """, unsafe_allow_html=True)
@@ -1115,12 +1141,10 @@ with tab1:
               "wall":D.get("meta",{}).get("wall",""),"gemini_key":D.get("meta",{}).get("gemini_key",""),
               "grok_key":D.get("meta",{}).get("grok_key",""),"api_key":D.get("meta",{}).get("api_key",""),
               "lp":{k:{**v,"temp":round(engine.temp,3)} for k,v in list(engine.lp.items())[:15]}}
-        # --- кандидаты за сегодня и завтра (для квоты) ---
         cands_all=[]
         for r in fix:
             d=parse_date(r.get("Date",""))
-            if not d: continue
-            if not (today<=d<=limit): continue
+            if not d or not (today<=d<=limit): continue
             tm=(r.get("Time") or "").strip()
             if tm:
                 try:
@@ -1135,10 +1159,9 @@ with tab1:
             league=r.get("League") or DIV_NAMES.get(lg,"Лига "+str(lg))
             cc=build_candidates(Pb,r,PR,blacklist)
             rows,best,hot,card_clv,gap=evaluate_rows(cc,Pb,mkt,PR,engine,use_dis,row=r)
-            advance = d.date()>today.date()
+            advance=d.date()>today.date()
             cands_all.append({"r":r,"d":d,"tm":tm,"h":h,"a":a,"lg":lg,"league":league,"P":Pb,"rows":rows,
                               "best":best,"hot":hot,"clv":card_clv,"gap":gap,"advance":advance})
-        # --- ярусы и квота ---
         def tier_of(cand):
             b=cand["best"]
             if b and b[3]>0 and 1.6<=b[2]<=2.6 and b[4]>=0.55: return 1
@@ -1159,7 +1182,7 @@ with tab1:
                      "pick":(cand["best"][1] if cand["best"] else (cand["hot"][0][0] if cand["hot"] else "П1")),
                      "odd":(cand["best"][2] if cand["best"] else 1.8),
                      "prob":(cand["best"][4] if cand["best"] else (cand["hot"][0][1] if cand["hot"] else 0.5)),
-                     "h2h":engine.h2h_text(cand["h"],cand["a"]),"fh":cand["P"].get("fh","—") if "fh" in cand["P"] else engine.form_str(cand["h"]),
+                     "h2h":engine.h2h_text(cand["h"],cand["a"]),"fh":engine.form_str(cand["h"]),
                      "fa":engine.form_str(cand["a"]),"lh":cand["P"]["lams"][0],"la":cand["P"]["lams"][1],
                      "rh":14,"ra":14,"mkt_p":(1/(cand["best"][2]) if cand["best"] else 0.5),
                      "gap":cand["gap"] or 0,"games":cand["P"]["games"]}
@@ -1168,7 +1191,6 @@ with tab1:
                 risk=heuristic_risk({"prob":(cand["best"][4] if cand["best"] else 0.5),"games":cand["P"]["games"],"rh":14,"ra":14,"gap":cand["gap"] or 0})
             if risk.get("veto"): continue
             cand["risk"]=risk; sel.append(cand)
-        # ставки по ярусам
         new_bets=[]; existing={b["match"]+"|"+b["pick"] for b in D["bets"]}
         for cand in sel:
             b=cand["best"]
@@ -1182,11 +1204,10 @@ with tab1:
             if key in existing: continue
             new_bets.append({"match":f"{cand['h']} vs {cand['a']}","div":cand["lg"],"league":cand["league"],
                 "market":b[0],"pick":b[1],"odds":b[2],"stake":stake,"prob":b[4],"clv":cand["clv"],
-                "status":"pending","strat":("VALUE" if t in (1,2) else "HOT"),
-                "tier":t,"risk":cand["risk"].get("risk"),"llm":cand["risk"].get("summary",""),
+                "status":"pending","strat":("VALUE" if t in (1,2) else "HOT"),"tier":t,
+                "risk":cand["risk"].get("risk"),"llm":cand["risk"].get("summary",""),
                 "date":cand["d"].strftime("%d.%m.%Y"),"date_iso":cand["d"].strftime("%Y-%m-%d"),"score":None})
             existing.add(key)
-        # карточки для ленты = sel (квота) + все валуи
         cards=[]
         for cand in sel:
             P=cand["P"]
@@ -1218,7 +1239,7 @@ with tab1:
         st.markdown(f"### 🎯 НА ЧТО СТАВИТЬ (квота ≥{quota_base}/день)")
         pv=sorted(picks,key=lambda p: pick_sort_val(p,sort_key),reverse=eff_desc)
         for i,p in enumerate(pv,1):
-            green = p["type"]=="value" or p["prob"]>=0.60
+            green=p["type"]=="value" or p["prob"]>=0.60
             cls="value" if green else "hot"
             btype="🟢 ВАЛУЙ" if p["type"]=="value" else ("🟢 высокая P" if green else "🟡 добивка квоты")
             m,alt,av=p["main"],p["alt"],p["avoid"]
