@@ -32,7 +32,8 @@ def _session():
     s=requests.Session()
     if Retry:
         r=Retry(total=3,backoff_factor=1,status_forcelist=[429,500,502,503,504])
-        s.mount("https://",HTTPAdapter(max_retries=r)); s.mount("http://",HTTPAdapter(max_retries=r))
+        s.mount("https://",HTTPAdapter(max_retries=r))
+        s.mount("http://",HTTPAdapter(max_retries=r))
     return s
 _sess=_session()
 
@@ -51,7 +52,6 @@ def parse_date(s):
         except Exception: continue
     return None
 def is_half_line(x):
-    """Фора с шагом 0.5: дробная часть v*2 равна 0.5 (устойчиво к float-шуму)."""
     v=_f(x)
     return v is not None and abs((v*2)%1-0.5)<1e-9
 def is_cup(row):
@@ -67,7 +67,6 @@ def settle_ah(pick,hg,ag):
     if abs(res)<=0.001: return "push"
     return False
 def determine_outcome(market,pick,hg,ag):
-    """Единая правда об исходе: 1X2 / OU / AH / BTTS / двойной шанс + legacy HOT/STAT по тексту пика."""
     m=(market or "").upper(); p=(pick or "").strip()
     if m in ("","HOT","STAT"):
         if p in ("П1","X","П2"): m="1X2"
@@ -115,7 +114,6 @@ def market_probs(row):
     i1,ix,ia=1/ph,1/px,1/pa; s=i1+ix+ia
     return (i1/s,ix/s,ia/s)
 def clv_for(pick,odd,mkt,row):
-    """Перевес взятого кэфа над ОТКРЫТИЕМ Pinnacle (не настоящий closing CLV)."""
     if not odd: return None
     if mkt:
         idx={"П1":0,"X":1,"П2":2}.get(pick)
@@ -171,7 +169,6 @@ class Engine:
             s-=math.log(min(max(p if y>0.5 else 1-p,1e-9),1-1e-9))
         return s
     def refit_temp(self):
-        """Temperature scaling: p=sigmoid(z/T). Детерминированный grid search по NLL."""
         if len(self.calib)<60: return
         data=self.calib[-3000:]
         best_T,best_ll=self.temp,self._nll_T(data,self.temp)
@@ -266,7 +263,7 @@ class Engine:
         self.ml_w[lg]=W
     def record_market(self,mkt,won,odd):
         r=self.market_roi[mkt]; r["n"]+=1
-        r["profit"]=0.9*r["profit"]+0.1*((odd-1) if won else -1)  # EMA PнЛ на ставку, без /n
+        r["profit"]=0.9*r["profit"]+0.1*((odd-1) if won else -1)
     def market_adjust(self,mkt):
         r=self.market_roi.get(mkt)
         if not r or r["n"]<40: return 0.0
@@ -274,7 +271,7 @@ class Engine:
     def add(self,h,a,hg,ag,row=None,k=None,match_num=None,total=None,match_date=None):
         if k is None:
             prog=min(1.0,match_num/total) if (match_num is not None and total) else 0.5
-            k=16+32*prog  # меньше K в начале сезона, больше к концу
+            k=16+32*prog
         rh,ra=self.elo.get(h,1500),self.elo.get(a,1500)
         eh=1/(1+10**((ra-(rh+60))/400)); s=1.0 if hg>ag else (0.5 if hg==ag else 0.0)
         self.elo[h]=rh+k*(s-eh); self.elo[a]=ra+k*((1-s)-(1-eh))
@@ -322,10 +319,10 @@ class Engine:
         lam_s_h=max(0.3,min(5.0,lh_s*conv_h*ash_h*dsh_a*(0.85+0.30*fh)))
         lam_s_a=max(0.25,min(4.5,la_s*conv_a*ash_a*dsh_h*(0.85+0.30*fa)))
         lam_h=(1-ws)*lam_g_h+ws*lam_s_h; lam_a=(1-ws)*lam_g_a+ws*lam_s_a
-        if cup:  # кубковая поправка ВНУТРИ: матрица/ТБ/BTTS считаются уже по скорректированным λ
+        if cup:
             lam_h=max(0.3,lam_h-0.15); lam_a=max(0.25,lam_a-0.15)
         lam_h,lam_a,h2h_n=self.h2h_adjust(h,a,lam_h,lam_a)
-        agree=(lam_h-lam_a)*(lam_g_h-lam_g_a)>0  # после всех поправок
+        agree=(lam_h-lam_a)*(lam_g_h-lam_g_a)>0
         e=1/(1+10**((self.elo.get(a,1500)-self.elo.get(h,1500)-60)/400))
         pde=0.20+0.12*(1-abs(e-0.5)*2)
         p1,px,M=self._p1px(lam_h,lam_a,P0["rho"])
@@ -351,7 +348,7 @@ class Engine:
         if lg in self.ml_w and w_ml>0:
             f1=(1-w_ml)*f1+w_ml*mp1; fd=(1-w_ml)*fd+w_ml*mx; f2=(1-w_ml)*f2+w_ml*mp2
         tt=f1+fd+f2 or 1.0; f1,fd,f2=f1/tt,fd/tt,f2/tt
-        raw=(f1,fd,f2)  # ДО калибровки — честные raw для calib-лога и UI
+        raw=(f1,fd,f2)
         c1,cx,c2=self.calibrate(f1),self.calibrate(fd),self.calibrate(f2)
         ct=c1+cx+c2 or 1.0; c1,cx,c2=c1/ct,cx/ct,c2/ct
         over=1-sum(self._p(lam_h+lam_a,k) for k in range(3))
@@ -366,7 +363,6 @@ class Engine:
     def learn_step(self,h,a,hg,ag,row=None,lg="G",match_num=None,total=None,match_date=None):
         P=self.predict(h,a,lg,match_date=match_date,cup=is_cup(row))
         out=0 if hg>ag else (1 if hg==ag else 2)
-        # калибруем по RAW (одинарная калибровка, без дрейфа)
         self.calib+=[(self._logit(P["p1_raw"]),1.0 if out==0 else 0.0),
                      (self._logit(P["x_raw"]),1.0 if out==1 else 0.0),
                      (self._logit(P["p2_raw"]),1.0 if out==2 else 0.0)]
@@ -463,4 +459,90 @@ def backtest(div,season,PR,use_dis=True,stake_mode="Flat"):
         except Exception as e: log_err("bt learn",e)
     return log,eng
 
-@st_cache_safe=None  # placeholder removed below
+def find_season():
+    for s in ["2627","2526","2425"]:
+        try:
+            r=_sess.head(f"https://www.football-data.co.uk/mmz4281/{s}/E0.csv",timeout=8)
+            if r.status_code==200: return s
+        except Exception as e: log_err("find_season",e)
+    return "2526"
+def prev_season(s):
+    try: return f"{int(s[:2])-1:02d}{int(s[2:])-1:02d}"
+    except Exception: return s
+def load_seasonal(div,season):
+    try:
+        r=_sess.get(f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv",timeout=20,headers=UA)
+        if r.status_code!=200: return []
+        return list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
+    except Exception as e:
+        log_err(f"load_seasonal {div}",e); return []
+def load_many(divs,season):
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return dict(zip(divs,ex.map(lambda d: load_seasonal(d,season),divs)))
+def load_fixtures():
+    rep=[]; rows=[]; seen=set()
+    for u in ["https://www.football-data.co.uk/mmz4281/fixtures.csv",
+              "https://www.football-data.co.uk/fixtures.csv"]:
+        try:
+            r=_sess.get(u,timeout=25,headers=UA)
+            if r.status_code!=200: rep.append(f"{u.split('/')[-1]}: HTTP {r.status_code}"); continue
+            rd=list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
+            n=0
+            for x in rd:
+                k=(x.get("Div"),x.get("Date"),x.get("HomeTeam"),x.get("AwayTeam"))
+                if k in seen or not x.get("HomeTeam"): continue
+                seen.add(k); rows.append(x); n+=1
+            rep.append(f"{u.split('/')[-1]}: OK,{n}")
+            if n: break
+        except Exception as e:
+            log_err("load_fixtures",e); rep.append(f"{u.split('/')[-1]}: {type(e).__name__}")
+    return rows,rep
+TSDB_LEAGUES={"432":"АПЛ","434":"Ла Лига","435":"Серия A","436":"Бундеслига",
+              "437":"Лига 1","448":"ЛЧ","442":"MLS","439":"Примейра"}
+def load_tsdb():
+    rep=[]; rows=[]
+    for lid,name in TSDB_LEAGUES.items():
+        try:
+            r=_sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",timeout=15)
+            ev=(r.json() or {}).get("events") or []
+            for e in ev:
+                rows.append({"Div":"TSDB","League":name,"Date":e.get("dateEvent",""),
+                             "Time":(e.get("strTime") or "")[:5],"HomeTeam":e.get("strHomeTeam",""),
+                             "AwayTeam":e.get("strAwayTeam","")})
+            rep.append(f"TSDB {name}: {len(ev)}")
+        except Exception as e:
+            log_err(f"tsdb {name}",e); rep.append(f"TSDB {name}: ошибка")
+    return rows,rep
+def _norm_team(s): return re.sub(r"[^a-zа-я0-9]","",(s or "").lower())
+def load_livescores():
+    try:
+        r=_sess.get("https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",timeout=10)
+        out={}
+        for e in (r.json() or {}).get("events") or []:
+            key=(_norm_team(e.get("strHomeTeam","")),_norm_team(e.get("strAwayTeam","")))
+            out[key]={"home":e.get("intHomeScore"),"away":e.get("intAwayScore"),
+                      "status":(e.get("strStatus") or "").strip(),
+                      "progress":(e.get("strProgress") or "").strip()}
+        return out
+    except Exception as e:
+        log_err("livescores",e); return {}
+def match_live(live,home,away):
+    if not live: return None
+    hk,ak=_norm_team(home),_norm_team(away)
+    for (lh,la),v in live.items():
+        if (lh==hk and la==ak) or (hk in lh and ak in la) or (lh in hk and la in ak): return v
+    return None
+FINISHED_STATUSES={"match finished","ft","aet","ap","finished","full time"}
+
+def engine_fingerprint(season,div_counts):
+    return (season,tuple(sorted(div_counts.items())))
+def engine_cache_get(fp):
+    try:
+        with open(ENGINE_CACHE,"rb") as f: d=pickle.load(f)
+        if d.get("fp")==fp: return d.get("engine")
+    except Exception: pass
+    return None
+def engine_cache_put(fp,eng):
+    try:
+        with open(ENGINE_CACHE,"wb") as f: pickle.dump({"fp":fp,"engine":eng},f)
+    except Exception as e: log_err("cache_put",e)
