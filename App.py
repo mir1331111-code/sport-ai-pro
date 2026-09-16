@@ -4,15 +4,15 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import nb_engine as E
 
-st.set_page_config(page_title="NEURO BET PRO v8.3.1", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.4", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 
-DIV_NAMES={"E0":"🏴󠁧󠁢󠁧 АПЛ","E1":"🏴󠁧󠁢󠁿 Чемпионшип","SC0":"🏴󠁢󠁣󠁴󠁿 Шотландия",
- "D1":"🇩 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+DIV_NAMES={"E0":"🏴󠁢󠁥󠁮 АПЛ","E1":"🏴󠁢󠁮 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
@@ -20,48 +20,73 @@ GOALS={
 
 st.markdown("""
 <style>
-html,body,.stApp{background:#070b14 !important;}
-.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e2e8f0;}
-.stCaption,.stCaption *{color:#94a3b8 !important;}
-div[data-testid="stMetricValue"]{color:#f8fafc !important;}
-div[data-testid="stMetricLabel"] p{color:#94a3b8 !important;}
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
+html,body,.stApp{
+ background:
+  radial-gradient(1100px 600px at 8% -10%, rgba(34,211,238,.16), transparent 60%),
+  radial-gradient(1000px 520px at 92% 6%, rgba(167,139,250,.15), transparent 62%),
+  radial-gradient(900px 620px at 50% 112%, rgba(52,211,153,.13), transparent 60%),
+  #05070f !important;}
+.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
+.stCaption,.stCaption *{color:#8b93a7 !important;}
+div[data-testid="stMetricValue"]{color:#f8fafc !important;font-family:'Unbounded',sans-serif;font-size:1.3rem;}
+div[data-testid="stMetricLabel"] p{color:#8b93a7 !important;}
 header,#MainMenu,footer{visibility:hidden}
-section[data-testid="stSidebar"]{background:#0b0f1a !important;}
-section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e2e8f0 !important;}
-.hero{padding:20px 26px;border-radius:22px;margin-bottom:16px;border:1px solid rgba(56,189,248,.35);
- background:linear-gradient(120deg,rgba(2,6,23,.96),rgba(6,78,59,.80) 55%,rgba(120,53,15,.75));}
-.hero h1{margin:0;font-size:2.3rem;font-weight:900;color:#fff}
-.hero p{margin:4px 0 0;color:#dbeafe;font-size:.92rem}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
-.kpi{background:rgba(2,6,23,.92);border:1px solid rgba(148,163,184,.28);border-radius:14px;padding:12px 16px}
-.kpi .t{color:#7dd3fc;font-size:.68rem;text-transform:uppercase;letter-spacing:1.2px}
-.kpi .v{font-size:1.45rem;font-weight:800;color:#fff}
-.kpi .v.g{color:#4ade80}.kpi .v.y{color:#facc15}.kpi .v.r{color:#f87171}
-.mcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px 18px;margin-bottom:12px}
-.mcard.value{border-color:rgba(16,185,129,.65)}
-.mcard.hot{border-color:rgba(250,204,21,.6)}
-.chip{background:rgba(56,189,248,.18);color:#bae6fd;border:1px solid rgba(56,189,248,.45);padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px}
-.chip.when{background:rgba(250,204,21,.16);color:#fde68a;border-color:rgba(250,204,21,.45)}
-.chip.warn{background:rgba(248,113,113,.18);color:#fecaca;border-color:rgba(248,113,113,.5)}
-.badge{float:right;padding:4px 12px;border-radius:999px;font-size:.72rem;font-weight:800}
-.badge.val{background:rgba(16,185,129,.22);color:#86efac;border:1px solid rgba(16,185,129,.6)}
-.badge.hot{background:rgba(250,204,21,.2);color:#fde68a;border:1px solid rgba(250,204,21,.6)}
-.badge.no{background:rgba(100,116,139,.2);color:#cbd5e1;border:1px solid rgba(100,116,139,.4)}
-.teams{font-size:1.25rem;font-weight:800;color:#fff;margin:8px 0 2px}
-.teams span{color:#94a3b8;font-weight:400}
-.verdict{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:12px;padding:10px 14px;margin:8px 0;color:#e2e8f0;font-size:.88rem}
-.verdict b.y{color:#facc15}.verdict b.g{color:#4ade80}.verdict b.r{color:#f87171}
-.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:5px 0;border-top:1px solid rgba(148,163,184,.12);font-size:.82rem;color:#e2e8f0}
-.ok{color:#4ade80;font-weight:800}.nok{color:#64748b}
-.evpos{color:#4ade80;font-weight:700}.evneg{color:#f87171;font-weight:700}
-.mfoot{margin-top:8px;color:#cbd5e1;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap}
-.mfoot b{color:#facc15}
-.betcard{background:rgba(8,12,24,.96);border:1px solid rgba(148,163,184,.22);border-left:4px solid rgba(148,163,184,.4);border-radius:12px;padding:10px 14px;margin-bottom:8px;font-size:.86rem;color:#e2e8f0}
-.betcard.pending{border-left-color:#facc15}.betcard.won{border-left-color:#22c55e}
-.betcard.lost{border-left-color:#ef4444}.betcard.push{border-left-color:#64748b}
-.betcard .score{font-weight:900;padding:2px 9px;border-radius:8px;margin-left:6px}
-.betcard.won .score{background:rgba(34,197,94,.25);color:#86efac}
-.betcard.lost .score{background:rgba(239,68,68,.25);color:#fca5a5}
+section[data-testid="stSidebar"]{background:rgba(8,11,20,.85);backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
+section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2 !important;}
+section.stButton>button{
+ background:linear-gradient(135deg,#0ea5e9 0%,#8b5cf6 55%,#ec4899 110%);
+ color:#fff;border:none;border-radius:14px;font-weight:800;font-family:'Inter',sans-serif;
+ letter-spacing:.3px;box-shadow:0 8px 26px rgba(139,92,246,.35);transition:.18s;}
+section.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(14,165,233,.45);}
+div[data-baseweb="select"]>div,div[data-baseweb="radio"] label>div{
+ background:rgba(255,255,255,.05)!important;border:1px solid rgba(255,255,255,.10)!important;border-radius:12px;}
+.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;position:relative;overflow:hidden;
+ border:1px solid rgba(255,255,255,.10);
+ background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16) 45%,rgba(236,72,153,.14));
+ backdrop-filter:blur(20px);}
+.hero h1{margin:0;font-size:2.5rem;font-weight:800;font-family:'Unbounded',sans-serif;
+ background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);
+ -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero p{margin:6px 0 0;color:#c9d2e3;font-size:.93rem}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+.kpi{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.10);
+ border-radius:18px;padding:14px 16px;}
+.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.4px;font-weight:700}
+.kpi .v{font-size:1.5rem;font-weight:800;font-family:'Unbounded',sans-serif;color:#fff}
+.kpi .v.g{color:#34d399}.kpi .v.y{color:#fbbf24}.kpi .v.r{color:#f87171}
+.mcard{background:rgba(255,255,255,.045);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.09);
+ border-radius:20px;padding:18px 20px;margin-bottom:14px;transition:.2s;}
+.mcard:hover{border-color:rgba(34,211,238,.45);box-shadow:0 10px 40px rgba(34,211,238,.12);}
+.mcard.value{border-color:rgba(52,211,153,.55);box-shadow:0 0 34px rgba(52,211,153,.14);}
+.mcard.hot{border-color:rgba(251,191,36,.5);box-shadow:0 0 30px rgba(251,191,36,.10);}
+.chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);
+ padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
+.chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
+.chip.warn{background:rgba(248,113,113,.15);color:#fecaca;border-color:rgba(248,113,113,.4);}
+.badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
+.badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
+.badge.hot{background:linear-gradient(135deg,rgba(251,191,36,.25),rgba(245,158,11,.15));color:#fde68a;border:1px solid rgba(251,191,36,.55);}
+.badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;font-family:'Inter',sans-serif;}
+.teams span{color:#8b93a7;font-weight:400}
+.verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;
+ padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}
+.verdict b.y{color:#fbbf24}.verdict b.g{color:#34d399}.verdict b.r{color:#f87171}
+.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;
+ border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e6eaf2;}
+.ok{color:#34d399;font-weight:800}.nok{color:#64748b}
+.evpos{color:#34d399;font-weight:700}.evneg{color:#f87171;font-weight:700}
+.mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
+.mfoot b{color:#fbbf24}
+.betcard{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.09);
+ border-left:4px solid rgba(148,163,184,.4);border-radius:16px;padding:11px 15px;margin-bottom:9px;
+ font-size:.87rem;color:#e6eaf2;}
+.betcard.pending{border-left-color:#fbbf24}.betcard.won{border-left-color:#34d399}
+.betcard.lost{border-left-color:#f87171}.betcard.push{border-left-color:#94a3b8}
+.betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}
+.betcard.won .score{background:rgba(52,211,153,.25);color:#6ee7b7}
+.betcard.lost .score{background:rgba(248,113,113,.25);color:#fca5a5}
 </style>""", unsafe_allow_html=True)
 
 def new_data():
@@ -236,6 +261,21 @@ def weekly_rows(bets):
     return [{"Неделя":f"{y}-W{w:02d}","Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"}
             for (y,w),v in sorted(wk.items())]
 
+# ---------- СОРТИРОВКА ЛЕНТЫ ----------
+SORT_OPTIONS=["По EV (валуи сверху)","По вероятности","По дате (ближайшие)","По коэффициенту","По лиге (А→Я)"]
+def card_sort_val(c,key):
+    if key.startswith("По EV"):
+        if c.get("best"): return c["best"][3]
+        return max([r["ev"] for r in c["rows"] if r["ev"] is not None],default=-1)
+    if key.startswith("По вероятности"):
+        return max([r["prob"] for r in c["rows"]],default=0)
+    if key.startswith("По дате"):
+        return c.get("dt","9999-99-99")
+    if key.startswith("По коэффициенту"):
+        if c.get("best"): return c["best"][2]
+        return max([r["odd"] for r in c["rows"] if r["odd"]],default=0)
+    return c.get("league","")
+
 def render_match_card(c,thr,PR):
     val=c.get("best") is not None
     hot=any(r["prob"]>=thr for r in c["rows"]) and not val
@@ -253,8 +293,8 @@ def render_match_card(c,thr,PR):
         ev_s=f"<span class='{'evpos' if rw['ev']>0 else 'evneg'}'>{rw['ev']*100:+.1f}%</span>" if rw["ev"] is not None else "<span style='color:#64748b'>—</span>"
         be_s=f"{rw['be']*100:.1f}%" if rw["be"] else "—"
         mk="<span class='ok'>✅</span>" if rw["ok"] else ("<span style='color:#fde047;font-weight:800'>🔥</span>" if rw["prob"]>=thr else "<span class='nok'>·</span>")
-        rows_html+=(f"<div class='mrow'><span style='color:#94a3b8'>{rw['mkt']}</span><b style='color:#facc15'>{esc(rw['pick'])}</b>"
-                    f"<span style='color:#4ade80;font-weight:700'>{rw['prob']*100:.1f}%</span>"
+        rows_html+=(f"<div class='mrow'><span style='color:#8b93a7'>{rw['mkt']}</span><b style='color:#fbbf24'>{esc(rw['pick'])}</b>"
+                    f"<span style='color:#34d399;font-weight:700'>{rw['prob']*100:.1f}%</span>"
                     f"<span style='color:#f87171'>{be_s}</span>"
                     f"<span style='color:#fff;font-weight:700'>{rw['odd'] if rw['odd'] else '—'}</span>{ev_s}{mk}</div>")
     ch,ca=c["corners"]; yh,ya=c["yellows"]
@@ -265,7 +305,7 @@ def render_match_card(c,thr,PR):
 <div class="mcard {'value' if val else ('hot' if hot else '')}">
  <div>{chips}{badge}</div>
  <div class="teams">{esc(h)} <span>—</span> {esc(a)}</div>
- <div class="verdict">🤖 <b>Вердикт:</b> {m_s} · {a_s} · {v_s}<br><span style="color:#cbd5e1">{esc(vtext)}</span></div>
+ <div class="verdict">🤖 <b>Вердикт:</b> {m_s} · {a_s} · {v_s}<br><span style="color:#c9d2e3">{esc(vtext)}</span></div>
  {rows_html}
  <div class="mfoot"><span>xG: <b>{c['lams'][0]:.2f}–{c['lams'][1]:.2f}</b></span>
   <span>🚩 угл <b>{ch+ca:.1f}</b></span><span>🟨 жёл <b>{yh+ya:.1f}</b></span>
@@ -278,11 +318,11 @@ def bet_card_html(b,live=None):
     strat=f"<span style='color:#7dd3fc;font-size:.72rem;margin-left:6px'>[{esc(b.get('strat','VALUE'))}]</span>"
     if live and st_=="pending" and (live.get("status") or "").strip().lower() not in E.FINISHED_STATUSES and live.get("home") not in (None,""):
         prog=f" {live['progress']}" if live.get("progress") else ""
-        score=f"<span class='score' style='background:rgba(239,68,68,.3);color:#fecaca'>🔴 LIVE {esc(str(live['home']))}:{esc(str(live['away']))}{esc(prog)}</span>"
+        score=f"<span class='score' style='background:rgba(248,113,113,.3);color:#fecaca'>🔴 LIVE {esc(str(live['home']))}:{esc(str(live['away']))}{esc(prog)}</span>"
     pin=f" · 📏 {b['clv']*100:+.1f}%" if b.get("clv") is not None else ""
     return (f"<div class='betcard {st_}'>{icon} <b>{esc(b['match'])}</b>{score}{strat}<br>"
-            f"<span style='color:#94a3b8'>{esc(b.get('market',''))}</span> "
-            f"<b style='color:#facc15'>{esc(b['pick'])}</b> @ <b>{b['odds']:.2f}</b> · "
+            f"<span style='color:#8b93a7'>{esc(b.get('market',''))}</span> "
+            f"<b style='color:#fbbf24'>{esc(b['pick'])}</b> @ <b>{b['odds']:.2f}</b> · "
             f"{b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{pin}</div>")
 
 if "data" not in st.session_state: st.session_state.data=load_data()
@@ -308,8 +348,8 @@ if not st.session_state.get("_auto_settled_done"):
 
 st.markdown(f"""
 <div class="hero">
- <h1>🏟 NEURO BET PRO v8.3.1</h1>
- <p>Футбол · temperature scaling · raw до калибровки · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · retry · лог в файл · фикс clv_for(None)</p>
+ <h1>NEURO BET PRO</h1>
+ <p>v8.4 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · сортировка ленты</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -410,6 +450,7 @@ with tab1:
                 when="сегодня" if nd==0 else ("завтра" if nd==1 else f"через {nd} дн")
                 cards.append({"div":lg,"league":league,"match":f"{h} vs {a}",
                     "date":d.strftime("%d.%m")+(f" {tm}" if tm else ""),"when":when,
+                    "dt":d.strftime("%Y-%m-%d %H:%M"),
                     "rows":rows,"best":best,"hot":hot[:3],"tag":tag,"lams":Pb["lams"],
                     "lams_g":Pb["lams_g"],"lams_s":Pb["lams_s"],"mkt":mkt,"raw":raw,"gap":gap,
                     "agree":Pb["agree"],"clv":card_clv,"p1":Pb["p1"],"px":Pb["x"],"p2":Pb["p2"],
@@ -432,7 +473,6 @@ with tab1:
                             "date":d.strftime("%d.%m.%Y"),"date_iso":d.strftime("%Y-%m-%d"),"score":None})
                         existing.add(key)
             except Exception as e: E.log_err("scan row",e)
-        cards.sort(key=lambda c:(c["tag"]=="value",c["tag"]=="hot",c["date"]),reverse=True)
         picks=build_picks(cards,thr,D["bank"],kelly_frac)
         D2=clone(D)
         D2["cards"]=cards; D2["picks"]=picks; D2["report"]=rep1+rep2; D2["meta"]=meta
@@ -444,6 +484,11 @@ with tab1:
     if fn: st.caption(f"Обучено {fn['trained']} · расписание {fn['fix']}+{fn['tsdb']} · в окне {fn['inwin']} · валуев {fn['passed']} · в портфель +{fn['added']}")
     with st.expander("🔌 Диагностика источников"):
         for line in D.get("report",[]): st.text(line)
+
+    sc1,sc2=st.columns([3,1])
+    sort_key=sc1.selectbox("Сортировка ленты",SORT_OPTIONS,index=0)
+    sort_desc=sc2.checkbox("Обратный порядок",value=False)
+
     picks=D.get("picks",[])
     if picks:
         st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
@@ -462,10 +507,11 @@ with tab1:
  <div class="teams">{i}. {esc(p['match'])}</div>
  <div class="verdict">🤖 {m_s} · {a_s} · {v_s}<br>➤ Ставь <b class="y">{esc(p['pick'])}</b> @ <b class="y">{p['odd_s']}</b> ·
   P <b class="g">{p['prob']*100:.0f}%</b> · сумма <b class="y">{p['stake']:.2f} у.е.</b> · {btype}{pin}<br>
-  <span style="color:#cbd5e1">{esc(p['verdict'])}</span></div>
+  <span style="color:#c9d2e3">{esc(p['verdict'])}</span></div>
 </div>""",unsafe_allow_html=True)
+    cards_view=sorted(D.get("cards",[]),key=lambda c: card_sort_val(c,sort_key),reverse=sort_desc)
     shown=0
-    for c in D.get("cards",[]):
+    for c in cards_view:
         if mode=="🎯 Высокая проходимость" and not (c["hot"] or c["tag"]): continue
         if mode=="💰 Валуи (EV)" and not c["best"]: continue
         st.markdown(render_match_card(c,thr,PR0),unsafe_allow_html=True); shown+=1
