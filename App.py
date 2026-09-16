@@ -4,91 +4,28 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import nb_engine as E
 
-st.set_page_config(page_title="NEURO BET PRO v8.4", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.5", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 
-DIV_NAMES={"E0":"🏴󠁢󠁥󠁮 АПЛ","E1":"🏴󠁢󠁮 Чемпионшип","SC0":"🏴󠁢󠁣󠁿 Шотландия",
+DIV_NAMES={"E0":"🏴󠁥󠁧 АПЛ","E1":"🏴󠁢󠁥󠁮󠁿 Чемпионшип","SC0":"🏴󠁳󠁣󠁴󠁿 Шотландия",
  "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+ "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
  "💰 Value":dict(w_market=0.20,thr=0.45,dis=True,edge=0.03,ev=0.02,corr=(1.40,4.20),min_games=6)}
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
-html,body,.stApp{
- background:
-  radial-gradient(1100px 600px at 8% -10%, rgba(34,211,238,.16), transparent 60%),
-  radial-gradient(1000px 520px at 92% 6%, rgba(167,139,250,.15), transparent 62%),
-  radial-gradient(900px 620px at 50% 112%, rgba(52,211,153,.13), transparent 60%),
-  #05070f !important;}
-.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
-.stCaption,.stCaption *{color:#8b93a7 !important;}
-div[data-testid="stMetricValue"]{color:#f8fafc !important;font-family:'Unbounded',sans-serif;font-size:1.3rem;}
-div[data-testid="stMetricLabel"] p{color:#8b93a7 !important;}
-header,#MainMenu,footer{visibility:hidden}
-section[data-testid="stSidebar"]{background:rgba(8,11,20,.85);backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
-section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2 !important;}
-section.stButton>button{
- background:linear-gradient(135deg,#0ea5e9 0%,#8b5cf6 55%,#ec4899 110%);
- color:#fff;border:none;border-radius:14px;font-weight:800;font-family:'Inter',sans-serif;
- letter-spacing:.3px;box-shadow:0 8px 26px rgba(139,92,246,.35);transition:.18s;}
-section.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(14,165,233,.45);}
-div[data-baseweb="select"]>div,div[data-baseweb="radio"] label>div{
- background:rgba(255,255,255,.05)!important;border:1px solid rgba(255,255,255,.10)!important;border-radius:12px;}
-.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;position:relative;overflow:hidden;
- border:1px solid rgba(255,255,255,.10);
- background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16) 45%,rgba(236,72,153,.14));
- backdrop-filter:blur(20px);}
-.hero h1{margin:0;font-size:2.5rem;font-weight:800;font-family:'Unbounded',sans-serif;
- background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);
- -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.hero p{margin:6px 0 0;color:#c9d2e3;font-size:.93rem}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
-.kpi{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.10);
- border-radius:18px;padding:14px 16px;}
-.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.4px;font-weight:700}
-.kpi .v{font-size:1.5rem;font-weight:800;font-family:'Unbounded',sans-serif;color:#fff}
-.kpi .v.g{color:#34d399}.kpi .v.y{color:#fbbf24}.kpi .v.r{color:#f87171}
-.mcard{background:rgba(255,255,255,.045);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.09);
- border-radius:20px;padding:18px 20px;margin-bottom:14px;transition:.2s;}
-.mcard:hover{border-color:rgba(34,211,238,.45);box-shadow:0 10px 40px rgba(34,211,238,.12);}
-.mcard.value{border-color:rgba(52,211,153,.55);box-shadow:0 0 34px rgba(52,211,153,.14);}
-.mcard.hot{border-color:rgba(251,191,36,.5);box-shadow:0 0 30px rgba(251,191,36,.10);}
-.chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);
- padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
-.chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
-.chip.warn{background:rgba(248,113,113,.15);color:#fecaca;border-color:rgba(248,113,113,.4);}
-.badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
-.badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
-.badge.hot{background:linear-gradient(135deg,rgba(251,191,36,.25),rgba(245,158,11,.15));color:#fde68a;border:1px solid rgba(251,191,36,.55);}
-.badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
-.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;font-family:'Inter',sans-serif;}
-.teams span{color:#8b93a7;font-weight:400}
-.verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;
- padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}
-.verdict b.y{color:#fbbf24}.verdict b.g{color:#34d399}.verdict b.r{color:#f87171}
-.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;
- border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e6eaf2;}
-.ok{color:#34d399;font-weight:800}.nok{color:#64748b}
-.evpos{color:#34d399;font-weight:700}.evneg{color:#f87171;font-weight:700}
-.mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
-.mfoot b{color:#fbbf24}
-.betcard{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.09);
- border-left:4px solid rgba(148,163,184,.4);border-radius:16px;padding:11px 15px;margin-bottom:9px;
- font-size:.87rem;color:#e6eaf2;}
-.betcard.pending{border-left-color:#fbbf24}.betcard.won{border-left-color:#34d399}
-.betcard.lost{border-left-color:#f87171}.betcard.push{border-left-color:#94a3b8}
-.betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}
-.betcard.won .score{background:rgba(52,211,153,.25);color:#6ee7b7}
-.betcard.lost .score{background:rgba(248,113,113,.25);color:#fca5a5}
-</style>""", unsafe_allow_html=True)
+WALLS={
+ "🌃 Неон-стадион":"linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover",
+ "🕹 Synthwave":"linear-gradient(rgba(6,3,20,.82),rgba(6,3,20,.92)),url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') center/cover",
+ "🌌 Aurora":"radial-gradient(1100px 620px at 10% -10%, rgba(34,211,238,.20), transparent 60%),radial-gradient(950px 540px at 90% 8%, rgba(167,139,250,.20), transparent 62%),radial-gradient(900px 640px at 50% 112%, rgba(52,211,153,.16), transparent 60%),#05070f",
+ "⚫ Минимализм":"linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)",
+}
 
+# ---------- данные (раньше стилей, чтобы обои читались из meta) ----------
 def new_data():
     return {"version":3,"bank":10000.0,"bets":[],"cards":[],"picks":[],"funnel":None,
             "report":[],"meta":{},"stats":{"won":0,"lost":0,"profit":0,"push":0}}
@@ -120,6 +57,86 @@ def save_data(d):
     try: json.dump(d,open(HISTORY_FILE,"w",encoding="utf-8"),indent=2,ensure_ascii=False)
     except Exception as e: E.log_err("save_data",e)
 def clone(D): return json.loads(json.dumps(D))
+
+if "data" not in st.session_state: st.session_state.data=load_data()
+D=st.session_state.data
+
+wall_key=D.get("meta",{}).get("wall","🌃 Неон-стадион")
+if wall_key not in WALLS: wall_key="🌃 Неон-стадион"
+WALL_CSS=WALLS[wall_key]
+
+st.markdown("<style>"+"""
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
+html,body,#root,
+div[data-testid="stAppViewContainer"],
+div[data-testid="stAppViewContainer"]>div,
+section.main,.stApp{
+ background: __WALL__ !important;
+ background-attachment: fixed !important;
+}
+.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
+.stCaption,.stCaption *{color:#8b93a7 !important;}
+div[data-testid="stMetricValue"]{color:#f8fafc !important;font-family:'Unbounded',sans-serif;font-size:1.3rem;}
+div[data-testid="stMetricLabel"] p{color:#8b93a7 !important;}
+header,#MainMenu,footer{visibility:hidden}
+section[data-testid="stSidebar"]{background:rgba(8,11,20,.72);backdrop-filter:blur(18px);
+ border-right:1px solid rgba(255,255,255,.07);}
+section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2 !important;}
+section.stButton>button{
+ background:linear-gradient(135deg,#0ea5e9 0%,#8b5cf6 55%,#ec4899 110%);
+ color:#fff;border:none;border-radius:14px;font-weight:800;font-family:'Inter',sans-serif;
+ box-shadow:0 8px 26px rgba(139,92,246,.35);transition:.18s;}
+section.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(14,165,233,.45);}
+div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;
+ border:1px solid rgba(255,255,255,.10)!important;border-radius:12px;}
+.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;position:relative;overflow:hidden;
+ border:1px solid rgba(255,255,255,.10);
+ background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16) 45%,rgba(236,72,153,.14));
+ backdrop-filter:blur(20px);}
+.hero h1{margin:0;font-size:2.5rem;font-weight:800;font-family:'Unbounded',sans-serif;
+ background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);
+ -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero p{margin:6px 0 0;color:#c9d2e3;font-size:.93rem}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+.kpi{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.10);
+ border-radius:18px;padding:14px 16px;}
+.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.4px;font-weight:700}
+.kpi .v{font-size:1.5rem;font-weight:800;font-family:'Unbounded',sans-serif;color:#fff}
+.kpi .v.g{color:#34d399}.kpi .v.y{color:#fbbf24}.kpi .v.r{color:#f87171}
+.mcard{background:rgba(10,14,24,.72);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.09);
+ border-radius:20px;padding:18px 20px;margin-bottom:14px;transition:.2s;}
+.mcard:hover{border-color:rgba(34,211,238,.45);box-shadow:0 10px 40px rgba(34,211,238,.12);}
+.mcard.value{border-color:rgba(52,211,153,.55);box-shadow:0 0 34px rgba(52,211,153,.14);}
+.mcard.hot{border-color:rgba(251,191,36,.5);box-shadow:0 0 30px rgba(251,191,36,.10);}
+.chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);
+ padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
+.chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
+.chip.warn{background:rgba(248,113,113,.15);color:#fecaca;border-color:rgba(248,113,113,.4);}
+.badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
+.badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
+.badge.hot{background:linear-gradient(135deg,rgba(251,191,36,.25),rgba(245,158,11,.15));color:#fde68a;border:1px solid rgba(251,191,36,.55);}
+.badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;}
+.teams span{color:#8b93a7;font-weight:400}
+.verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;
+ padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}
+.verdict b.y{color:#fbbf24}.verdict b.g{color:#34d399}.verdict b.r{color:#f87171}
+.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;
+ border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e6eaf2;}
+.ok{color:#34d399;font-weight:800}.nok{color:#64748b}
+.evpos{color:#34d399;font-weight:700}.evneg{color:#f87171;font-weight:700}
+.mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
+.mfoot b{color:#fbbf24}
+.betcard{background:rgba(10,14,24,.72);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.09);
+ border-left:4px solid rgba(148,163,184,.4);border-radius:16px;padding:11px 15px;margin-bottom:9px;
+ font-size:.87rem;color:#e6eaf2;}
+.betcard.pending{border-left-color:#fbbf24}.betcard.won{border-left-color:#34d399}
+.betcard.lost{border-left-color:#f87171}.betcard.push{border-left-color:#94a3b8}
+.betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}
+.betcard.won .score{background:rgba(52,211,153,.25);color:#6ee7b7}
+.betcard.lost .score{background:rgba(248,113,113,.25);color:#fca5a5}
+</style>""".replace("__WALL__",WALL_CSS), unsafe_allow_html=True)
+
 def apply_settle(D,idx,outcome,score=None):
     D2=clone(D); b=D2["bets"][idx]
     if b["status"]!="pending": return D
@@ -261,7 +278,6 @@ def weekly_rows(bets):
     return [{"Неделя":f"{y}-W{w:02d}","Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"}
             for (y,w),v in sorted(wk.items())]
 
-# ---------- СОРТИРОВКА ЛЕНТЫ ----------
 SORT_OPTIONS=["По EV (валуи сверху)","По вероятности","По дате (ближайшие)","По коэффициенту","По лиге (А→Я)"]
 def card_sort_val(c,key):
     if key.startswith("По EV"):
@@ -325,9 +341,6 @@ def bet_card_html(b,live=None):
             f"<b style='color:#fbbf24'>{esc(b['pick'])}</b> @ <b>{b['odds']:.2f}</b> · "
             f"{b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{pin}</div>")
 
-if "data" not in st.session_state: st.session_state.data=load_data()
-D=st.session_state.data
-
 if not st.session_state.get("_auto_settled_done"):
     if sum(1 for b in D["bets"] if b["status"]=="pending")>0:
         D2=clone(D); upd=0
@@ -349,7 +362,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v8.4 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · сортировка ленты</p>
+ <p>v8.5 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · сортировка ленты · переключаемые обои</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -360,6 +373,10 @@ st.markdown(f"""
 
 with st.sidebar:
     st.header("⚙️ Настройки")
+    new_wall=st.selectbox("🖼 Обои",list(WALLS.keys()),index=list(WALLS.keys()).index(wall_key))
+    if new_wall!=wall_key:
+        D.setdefault("meta",{})["wall"]=new_wall
+        save_data(D); st.rerun()
     goal=st.selectbox("🎯 Цель стратегии",list(GOALS.keys()),index=0)
     PR0=GOALS[goal]
     kelly_frac=st.slider("Келли (дробь)",0.10,0.40,0.25,0.05)
@@ -420,6 +437,7 @@ with tab1:
             E.engine_cache_put(fp,engine)
         PR=dict(PR0); PR.update(thr=thr,edge=min_edge,ev=min_ev,bank=D["bank"],kelly=kelly_frac)
         meta={"temp":round(engine.temp,3),"blacklist":D.get("meta",{}).get("blacklist",[]),
+              "wall":D.get("meta",{}).get("wall","🌃 Неон-стадион"),
               "lp":{k:{**v,"temp":round(engine.temp,3)} for k,v in list(engine.lp.items())[:15]}}
         cards=[]; passed=0; inwin=0; withodds=0; new_bets=[]
         existing={b["match"]+"|"+b["pick"] for b in D["bets"]}
@@ -523,140 +541,4 @@ with tab2:
     if cbtn1.button("🔄 Автосинхронизация"):
         D2=clone(D); upd=w=l=pu=0
         for idx,b in enumerate(D["bets"]):
-            if b["status"]!="pending" or b.get("div") in (None,"TSDB"): continue
-            bd=E.parse_date(b.get("date_iso","")) if b.get("date_iso") else None
-            h,a=b["match"].split(" vs ")
-            res=find_result(b.get("div"),h,a,bd)
-            if not res: continue
-            rd,hg,ag=res
-            out=E.determine_outcome(b.get("market"),b.get("pick"),hg,ag)
-            if out:
-                D2=apply_settle(D2,idx,out,score=f"{int(hg)}:{int(ag)}"); upd+=1
-                if out=="won": w+=1
-                elif out=="lost": l+=1
-                else: pu+=1
-        st.session_state.data=D2; save_data(D2)
-        st.toast(f"Закрыто {upd}: ✅{w} ❌{l} ⚪{pu}",icon="🔄")
-        st.rerun()
-    if cbtn2.button("🧐 Перепроверить все счета"):
-        D2=clone(D); fixed=checked=0
-        for idx,b in enumerate(D["bets"]):
-            if b.get("div") in (None,"TSDB"): continue
-            bd=E.parse_date(b.get("date_iso","")) if b.get("date_iso") else None
-            h,a=b["match"].split(" vs ")
-            res=find_result(b.get("div"),h,a,bd)
-            if not res: continue
-            checked+=1
-            rd,hg,ag=res; sc=f"{int(hg)}:{int(ag)}"
-            if b.get("status")=="pending" or b.get("score")!=sc:
-                D2=recompute_bet(D2,idx,hg,ag,sc); fixed+=1
-        st.session_state.data=D2; save_data(D2)
-        st.success(f"Проверено: {checked} · исправлено: {fixed}"); st.rerun()
-    live=None
-    if cbtn3.button("🔴 Проверить LIVE"):
-        live=E.load_livescores(); st.session_state["_live"]=live
-        if not live: st.caption("Live-данных сейчас нет.")
-    live=live or st.session_state.get("_live")
-    if not D["bets"]: st.info("Пусто.")
-    for i,b in enumerate(D["bets"]):
-        lv=None
-        if b["status"]=="pending" and live:
-            h,a=b["match"].split(" vs "); lv=E.match_live(live,h,a)
-        st.markdown(bet_card_html(b,lv),unsafe_allow_html=True)
-        if b["status"]=="pending" and lv and (lv.get("status") or "").strip().lower() in E.FINISHED_STATUSES \
-           and lv.get("home") not in (None,"") and lv.get("away") not in (None,""):
-            hg,ag=E._f(lv["home"]),E._f(lv["away"])
-            if hg is not None and ag is not None:
-                out=E.determine_outcome(b.get("market"),b.get("pick"),hg,ag)
-                if out:
-                    st.session_state.data=apply_settle(D,i,out,score=f"{int(hg)}:{int(ag)}")
-                    D=st.session_state.data
-                    save_data(D)
-                    st.toast(f"LIVE закрыто: {b['match'][:25]}… {int(hg)}:{int(ag)}",icon="🔴")
-                    st.rerun()
-        if b["status"]=="pending":
-            cc=st.columns([1,1,1])
-            sin=cc[0].text_input("Счёт",key=f"sc{i}",label_visibility="collapsed",placeholder="2:1")
-            sc=sin.strip() if re.match(r"^\d+\s*:\s*\d+$",sin.strip()) else None
-            if cc[1].button("✅ Зашло",key=f"w{i}"):
-                st.session_state.data=apply_settle(D,i,"won",score=sc); save_data(st.session_state.data)
-                st.toast(f"🟢 {b['match'][:25]}… +{b['stake']*(b['odds']-1):.0f} у.е.",icon="✅"); st.rerun()
-            if cc[2].button("❌ Мимо",key=f"l{i}"):
-                st.session_state.data=apply_settle(D,i,"lost",score=sc); save_data(st.session_state.data)
-                st.toast(f"🔴 {b['match'][:25]}… -{b['stake']:.0f} у.е.",icon="❌"); st.rerun()
-
-with tab3:
-    st.header("📈 Статистика")
-    s=D["stats"]; tot=s["won"]+s["lost"]
-    m1,m2,m3,m4=st.columns(4)
-    m1.metric("Банк",f"{D['bank']:.2f}"); m2.metric("Ставок",tot)
-    m3.metric("WinRate",f"{(s['won']/tot*100) if tot else 0:.1f}%"); m4.metric("Profit",f"{s['profit']:+.2f}")
-    clvs=[b["clv"] for b in D["bets"] if b.get("clv") is not None]
-    if clvs:
-        avg=sum(clvs)/len(clvs); pos=sum(1 for x in clvs if x>0)/len(clvs)*100
-        st.markdown(f"**📏 Средний перевес над открытием Pinnacle:** {avg*100:+.2f}% · доля >0: {pos:.0f}% "
-                    +"(это не closing CLV: для настоящего CLV нужны closing odds)")
-    settled=[b for b in D["bets"] if b.get("status") in ("won","lost","push")]
-    if settled:
-        curve=[]; run=0.0
-        for b in settled:
-            run+= b["stake"]*(b["odds"]-1) if b["status"]=="won" else (0.0 if b["status"]=="push" else -b["stake"])
-            curve.append(run)
-        st.line_chart(curve,height=180)
-        st.subheader("🎯 По стратегиям: VALUE vs HOT")
-        ss=strat_stats(D["bets"]); cA,cB=st.columns(2)
-        for col,strat in ((cA,"VALUE"),(cB,"HOT")):
-            v=ss[strat]
-            with col:
-                st.markdown(f"**{'🟢 VALUE (Kelly)' if strat=='VALUE' else '🔥 HOT (флэт 1%)'}**")
-                st.metric("Ставок",v["n"]); st.metric("WinRate",f"{v['wr']:.1f}%")
-                st.metric("PnL",f"{v['pnl']:+.1f}"); st.metric("ROI",f"{v['roi']:+.2f}%")
-        cal=calibration_rows(D["bets"])
-        if cal:
-            st.subheader("🧪 Калибровка (P vs факт WR)")
-            st.dataframe(cal,use_container_width=True,hide_index=True)
-        wk=weekly_rows(D["bets"])
-        if wk:
-            st.subheader("📅 По неделям")
-            st.dataframe(wk,use_container_width=True,hide_index=True)
-
-with tab4:
-    st.header("🧮 EV-калькулятор")
-    q1,q2,q3=st.columns(3)
-    p=q1.number_input("Вероятность, %",1,99,60); o=q2.number_input("Кэф",1.01,30.0,1.80); bk=q3.number_input("Банк",100.0,1e6,float(D["bank"]))
-    ev=(p/100)*o-1
-    st.markdown(f"**EV:** {ev*100:+.1f}% · **Безубыточность:** {100/o:.1f}% · **Келли:** {E.kelly(p/100,o,bk,kelly_frac):.2f} у.е.")
-    if ev>0.02: st.success("✅ Можно ставить")
-    else: st.warning("⛔ EV мал")
-
-with tab5:
-    st.header("🧪 Бэктест (walk-forward, match_date внутри)")
-    b1,b2,b3,b4=st.columns(4)
-    bt_div=b1.selectbox("Лига",list(DIV_NAMES.keys()),format_func=lambda k:DIV_NAMES[k])
-    bt_season=b2.selectbox("Сезон",["2526","2425","2324"],index=1)
-    bt_edge=b3.slider("Edge, п.п.",0,8,int(PR0["edge"]*100),key="bte")/100
-    bt_mode=b4.selectbox("Стейк",["Flat","Kelly"])
-    if st.button("▶️ Прогнать",type="primary"):
-        PRb=dict(PR0); PRb.update(thr=thr,edge=bt_edge,ev=min_ev,bank=10000.0,kelly=0.25)
-        log,eng=E.backtest(bt_div,bt_season,PRb,use_dis,bt_mode)
-        bl=[k for k,v in eng.market_roi.items() if v["n"]>=30 and v["profit"]<-0.02]
-        D2=clone(D); D2["meta"]["blacklist"]=bl
-        D2["meta"]["lp"]={k:{**v,"temp":round(eng.temp,3)} for k,v in list(eng.lp.items())[:15]}
-        st.session_state.data=D2; save_data(D2)
-        if not log: st.warning("Нет сигналов: снизь edge или смени цель.")
-        else:
-            n=len(log); wins=sum(1 for x in log if x["won"])
-            profit=sum(x["pnl"] for x in log); staked=sum(x["stake"] for x in log)
-            roi=profit/staked*100 if staked else 0
-            curve=0; peak=0; mdd=0
-            for x in log:
-                curve+=x["pnl"]; peak=max(peak,curve); mdd=max(mdd,peak-curve)
-            mean_p=profit/n
-            std_p=(sum((x["pnl"]-mean_p)**2 for x in log)/max(1,n-1))**0.5
-            sharpe=mean_p/std_p if std_p else 0
-            cl=[x["clv"] for x in log if x.get("clv") is not None]
-            avg_clv=sum(cl)/len(cl) if cl else 0
-            k1,k2,k3,k4,k5=st.columns(5)
-            k1.metric("Ставок",n); k2.metric("WinRate",f"{wins/n*100:.1f}%")
-            k3.metric("ROI",f"{roi:+.2f}%"); k4.metric("MaxDD",f"{mdd:.1f}"); k5.metric("Sharpe",f"{sharpe:.2f}")
-            st.markdown(f"**📏 Перевес над Pinnacle (открытие): {avg_clv*100:+.2f}%** · T={eng.temp:.2f}")
+            if b["status"]!="pending" or b.get("div") in (None,"TSDB"):
