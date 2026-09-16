@@ -4,15 +4,15 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import nb_engine as E
 
-st.set_page_config(page_title="NEURO BET PRO v8.5.1", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.6", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 
-DIV_NAMES={"E0":"🏴󠁢󠁥󠁧󠁿 АПЛ","E1":"🏴󠁢󠁮 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
- "SP1":"🇪 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+DIV_NAMES={"E0":"🏴󠁥󠁮 АПЛ","E1":"🏴󠁥󠁮 Чемпионшип","SC0":"🏴󠁳󠁣󠁴󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮 Серия A","I2":"🇮🇹 Серия B",
+ "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
+ "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
@@ -24,6 +24,13 @@ WALLS={
  "🌌 Aurora":"radial-gradient(1100px 620px at 10% -10%, rgba(34,211,238,.20), transparent 60%),radial-gradient(950px 540px at 90% 8%, rgba(167,139,250,.20), transparent 62%),radial-gradient(900px 640px at 50% 112%, rgba(52,211,153,.16), transparent 60%),#05070f",
  "⚫ Минимализм":"linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)",
 }
+
+SORT_OPTIONS=["По EV (валуи сверху)","По вероятности","По дате (ближайшие)","По коэффициенту","По лиге (А→Я)"]
+SORT_DEFAULT_DESC={"По EV (валуи сверху)":True,"По вероятности":True,"По дате (ближайшие)":False,
+                   "По коэффициенту":True,"По лиге (А→Я)":False}
+PORT_SORT=["⏳ Сначала активные","📅 По дате (новые сверху)","💰 По сумме ставки","📈 По PnL","🎯 По вероятности"]
+PORT_DEFAULT_DESC={"⏳ Сначала активные":False,"📅 По дате (новые сверху)":True,"💰 По сумме ставки":True,
+                   "📈 По PnL":True,"🎯 По вероятности":True}
 
 def new_data():
     return {"version":3,"bank":10000.0,"bets":[],"cards":[],"picks":[],"funnel":None,
@@ -283,9 +290,17 @@ def ai_verdict(c):
 def stars_for(rw,thr):
     if rw["ok"]:
         ev=rw["ev"]
-        return "⭐⭐⭐⭐⭐" if ev>=0.10 else ("⭐⭐⭐⭐" if ev>=0.06 else "⭐⭐⭐")
+        if ev>=0.10:
+            return "⭐⭐⭐⭐⭐"
+        if ev>=0.06:
+            return "⭐⭐⭐⭐"
+        return "⭐⭐⭐"
     if rw["prob"]>=thr:
-        return "⭐⭐⭐⭐⭐" if rw["prob"]>=0.70 else ("⭐⭐⭐⭐" if rw["prob"]>=0.65 else "⭐⭐⭐")
+        if rw["prob"]>=0.70:
+            return "⭐⭐⭐⭐⭐"
+        if rw["prob"]>=0.65:
+            return "⭐⭐⭐⭐"
+        return "⭐⭐⭐"
     return ""
 
 def build_picks(cards,thr,bank,kf):
@@ -359,8 +374,6 @@ def weekly_rows(bets):
         out.append({"Неделя":f"{y}-W{w:02d}","Ставок":v[0],"WR":f"{v[1]/v[0]*100:.0f}%","PnL":f"{v[2]:+.1f}"})
     return out
 
-SORT_OPTIONS=["По EV (валуи сверху)","По вероятности","По дате (ближайшие)","По коэффициенту","По лиге (А→Я)"]
-
 def card_sort_val(c,key):
     if key.startswith("По EV"):
         if c.get("best"):
@@ -375,6 +388,22 @@ def card_sort_val(c,key):
             return c["best"][2]
         return max([r["odd"] for r in c["rows"] if r["odd"]],default=0)
     return c.get("league","")
+
+def bet_sort_key(pair,key):
+    i,b=pair
+    if key.startswith("⏳"):
+        return (0 if b["status"]=="pending" else 1, b.get("date_iso","9999"))
+    if key.startswith("📅"):
+        return b.get("date_iso","9999")
+    if key.startswith("💰"):
+        return b.get("stake",0)
+    if key.startswith("📈"):
+        if b["status"]=="won":
+            return b["stake"]*(b["odds"]-1)
+        if b["status"]=="lost":
+            return -b["stake"]
+        return 0.0
+    return b.get("prob",0)
 
 def render_match_card(c,thr,PR):
     val=c.get("best") is not None
@@ -484,7 +513,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v8.5.1 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · кэш движка · сортировка ленты · переключаемые обои</p>
+ <p>v8.6 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · версионированный кэш движка · сортировки ленты и портфеля · переключаемые обои</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -669,8 +698,11 @@ with tab1:
             st.text(line)
 
     sc1,sc2=st.columns([3,1])
-    sort_key=sc1.selectbox("Сортировка ленты",SORT_OPTIONS,index=0)
-    sort_desc=sc2.checkbox("Обратный порядок",value=False)
+    sort_key=sc1.selectbox("Сортировка ленты",SORT_OPTIONS,index=0,key="sort_key")
+    invert=sc2.checkbox("🔄 Инвертировать",value=False,key="sort_inv")
+    base_desc=SORT_DEFAULT_DESC.get(sort_key,True)
+    eff_desc=base_desc if not invert else (not base_desc)
+    st.caption(f"Порядок: {'убывание' if eff_desc else 'возрастание'} · {sort_key}")
 
     picks=D.get("picks",[])
     if picks:
@@ -694,7 +726,7 @@ with tab1:
   P <b class="g">{p['prob']*100:.0f}%</b> · сумма <b class="y">{p['stake']:.2f} у.е.</b> · {btype}{pin}<br>
   <span style="color:#c9d2e3">{esc(p['verdict'])}</span></div>
 </div>""",unsafe_allow_html=True)
-    cards_view=sorted(D.get("cards",[]),key=lambda c: card_sort_val(c,sort_key),reverse=sort_desc)
+    cards_view=sorted(D.get("cards",[]),key=lambda c: card_sort_val(c,sort_key),reverse=eff_desc)
     shown=0
     for c in cards_view:
         if mode=="🎯 Высокая проходимость" and not (c["hot"] or c["tag"]):
@@ -769,9 +801,17 @@ with tab2:
         if not live:
             st.caption("Live-данных сейчас нет.")
     live=live or st.session_state.get("_live")
+
+    ps1,ps2=st.columns([3,1])
+    port_sort=ps1.selectbox("Сортировка портфеля",PORT_SORT,index=0,key="port_sort")
+    port_invert=ps2.checkbox("🔄 Инвертировать",value=False,key="port_inv")
+    p_base=PORT_DEFAULT_DESC.get(port_sort,False)
+    p_desc=p_base if not port_invert else (not p_base)
+
     if not D["bets"]:
         st.info("Пусто.")
-    for i,b in enumerate(D["bets"]):
+    pairs=sorted(enumerate(D["bets"]),key=lambda pr: bet_sort_key(pr,port_sort),reverse=p_desc)
+    for i,b in pairs:
         lv=None
         if b["status"]=="pending" and live:
             h,a=b["match"].split(" vs ")
