@@ -1,18 +1,21 @@
 import streamlit as st
-import json, os, re, html
+import json, os, re, html, math
 from datetime import datetime, timedelta
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import nb_engine as E
 
-st.set_page_config(page_title="NEURO BET PRO v8.6", page_icon="🏟", layout="wide")
+st.set_page_config(page_title="NEURO BET PRO v8.7", page_icon="🏟", layout="wide")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
+AVG_GOALS=2.75
+TOTAL_MIN=95.0
 
-DIV_NAMES={"E0":"🏴󠁥󠁮 АПЛ","E1":"🏴󠁥󠁮 Чемпионшип","SC0":"🏴󠁳󠁣󠁴󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮 Серия A","I2":"🇮🇹 Серия B",
+DIV_NAMES={"E0":"🏴󠁢󠁮 АПЛ","E1":"🏴󠁢󠁮 Чемпионшип","SC0":"🏴󠁧󠁳󠁴 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
- "N1":"🇳 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
- "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+ "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵 Примейра","T1":"🇹🇷 Суперлига",
+ "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
@@ -135,14 +138,17 @@ div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;
 .mcard:hover{border-color:rgba(34,211,238,.45);box-shadow:0 10px 40px rgba(34,211,238,.12);}
 .mcard.value{border-color:rgba(52,211,153,.55);box-shadow:0 0 34px rgba(52,211,153,.14);}
 .mcard.hot{border-color:rgba(251,191,36,.5);box-shadow:0 0 30px rgba(251,191,36,.10);}
+.mcard.live{border-color:rgba(248,113,113,.55);box-shadow:0 0 30px rgba(248,113,113,.14);}
 .chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);
  padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
 .chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
 .chip.warn{background:rgba(248,113,113,.15);color:#fecaca;border-color:rgba(248,113,113,.4);}
+.chip.live{background:rgba(248,113,113,.2);color:#fecaca;border-color:rgba(248,113,113,.5);}
 .badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
 .badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
 .badge.hot{background:linear-gradient(135deg,rgba(251,191,36,.25),rgba(245,158,11,.15));color:#fde68a;border:1px solid rgba(251,191,36,.55);}
 .badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.badge.live{background:linear-gradient(135deg,rgba(248,113,113,.3),rgba(239,68,68,.18));color:#fecaca;border:1px solid rgba(248,113,113,.6);}
 .teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;}
 .teams span{color:#8b93a7;font-weight:400}
 .verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;
@@ -274,17 +280,29 @@ def ai_verdict(c):
     lg=c.get("lams_g",(0,0))
     ls=c.get("lams_s",(0,0))
     lh,la=c.get("lams",(0,0))
-    parts=[f"Движок голов {lg[0]:.1f}–{lg[1]:.1f}, движок ударов {ls[0]:.1f}–{ls[1]:.1f} → итог xG {lh:.1f}–{la:.1f}."]
-    if not c.get("agree",True):
-        parts.append("⚠️ Движки не согласны о фаворите — 1X2 пропущен.")
-    if c.get("fh","—")!="—":
-        parts.append(f"Форма {c['fh']} против {c['fa']}.")
+    parts=[]
+    parts.append(f"Атака/оборона: движок голов даёт xG {lg[0]:.2f}–{lg[1]:.2f}, движок ударов {ls[0]:.2f}–{ls[1]:.2f}; итоговая ожидаемая результативность {lh:.2f}–{la:.2f} голов.")
+    if c.get("fh","—")!="—" and c.get("fa","—")!="—":
+        parts.append(f"Форма последних 5: хозяева {c['fh']}, гости {c['fa']}.")
+    if c.get("h2h_n",0)>=5:
+        parts.append(f"Личные встречи: {c['h2h_n']} последних учтены, перевес H2H слабый, но учтён в λ.")
     m=c.get("mkt")
     if m:
         gap=max(abs(c.get("p1",0)-m[0]),abs(c.get("px",c.get("x",0))-m[1]),abs(c.get("p2",0)-m[2]))
-        parts.append(f"Pinnacle: П1 {m[0]*100:.0f}/X {m[1]*100:.0f}/П2 {m[2]*100:.0f}%; расхождение {gap*100:.0f} п.п.")
+        if gap>=0.03:
+            parts.append(f"Рынок (Pinnacle) расходится с моделью на {gap*100:.0f} п.п. — это потенциальный источник перевеса.")
+        else:
+            parts.append(f"Рынок (Pinnacle) согласен с моделью (расхождение {gap*100:.0f} п.п.) — перевес здесь маловероятен.")
     if c.get("cup"):
-        parts.append("Кубковый матч: λ снижены внутри модели.")
+        parts.append("Кубковый формат: ротация и осторожность, λ снижены внутри модели.")
+    if c.get("games",0)<8:
+        parts.append("Мало сыгранных матчей у команд — уверенность модели снижена.")
+    if c.get("best"):
+        parts.append(f"Вывод: основная ставка {c['best'][1]} @ {c['best'][2]:.2f} (EV {c['best'][3]*100:+.1f}%).")
+    elif c.get("hot"):
+        parts.append(f"Вывод: валуя нет, но высокая проходимость на {c['hot'][0][0]} ({c['hot'][0][1]*100:.0f}%) — ставка только флэтом.")
+    else:
+        parts.append("Вывод: ни валуя, ни высокой проходимости — матч для наблюдения.")
     return main,alt,avoid," ".join(parts)
 
 def stars_for(rw,thr):
@@ -322,7 +340,8 @@ def build_picks(cards,thr,bank,kf):
         main,alt,avoid,text=ai_verdict(c)
         stake=E.kelly(row["prob"],row["odd"],bank,kf) if row["odd"] else round(bank*0.01,2)
         picks.append({"league":c["league"],"match":c["match"],"date":c["date"],"when":c["when"],
-                      "pick":row["pick"],"prob":row["prob"],"odd":row["odd"],"odd_s":_odd_s(row),
+                      "dt":c.get("dt","9999"),"pick":row["pick"],"prob":row["prob"],
+                      "odd":row["odd"],"odd_s":_odd_s(row),"ev":row.get("ev"),
                       "stake":stake,"stars":stars_for(row,thr),"type":ptype,"verdict":text,
                       "main":main,"alt":alt,"avoid":avoid,"clv":c.get("clv"),
                       "score":(row["ev"] if ptype=="value" else 0)+row["prob"]})
@@ -388,6 +407,17 @@ def card_sort_val(c,key):
             return c["best"][2]
         return max([r["odd"] for r in c["rows"] if r["odd"]],default=0)
     return c.get("league","")
+
+def pick_sort_val(p,key):
+    if key.startswith("По EV"):
+        return p.get("ev") if p.get("ev") is not None else -1
+    if key.startswith("По вероятности"):
+        return p.get("prob",0)
+    if key.startswith("По дате"):
+        return p.get("dt","9999-99-99")
+    if key.startswith("По коэффициенту"):
+        return p.get("odd") or 0
+    return p.get("league","")
 
 def bet_sort_key(pair,key):
     i,b=pair
@@ -484,6 +514,57 @@ def bet_card_html(b,live=None):
             f"<b style='color:#fbbf24'>{esc(b['pick'])}</b> @ <b>{b['odds']:.2f}</b> · "
             f"{b['stake']:.2f} у.е. · P={b.get('prob',0)*100:.0f}%{pin}</div>")
 
+def live_signal(minute,cur_total):
+    remaining=max(1.0,TOTAL_MIN-float(minute))
+    lam_rem=AVG_GOALS*(remaining/TOTAL_MIN)
+    p_goal=1.0-math.exp(-lam_rem)
+    proj=cur_total+lam_rem
+    return p_goal,proj
+
+@st.cache_data(ttl=86400)
+def soccer_league_ids():
+    try:
+        r=E._sess.get("https://www.thesportsdb.com/api/v1/json/3/all_leagues.php",timeout=20)
+        out=[]
+        for l in (r.json() or {}).get("leagues") or []:
+            if (l.get("strSport") or "")=="Soccer":
+                out.append((l.get("idLeague"),l.get("strLeague")))
+        return out
+    except Exception as e:
+        E.log_err("all_leagues",e)
+        return []
+
+def load_tsdb_dynamic():
+    rep=[]
+    rows=[]
+    ids=soccer_league_ids()
+    if not ids:
+        rep.append("TSDB: список лиг недоступен")
+        return rows,rep
+    keys=["Premier","La Liga","Serie","Bundes","Ligue","Eredivisie","Primeira","Süper","Champions","Europa",
+          "MLS","Primeira Liga","Championship","Scottish","Belgian","Greek","Russian","Brazil"]
+    pick_ids=[(i,n) for (i,n) in ids if any(k.lower() in (n or "").lower() for k in keys)][:20]
+    def fetch(one):
+        lid,name=one
+        try:
+            r=E._sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",timeout=15)
+            ev=(r.json() or {}).get("events") or []
+            out=[]
+            for e in ev:
+                out.append({"Div":"TSDB","League":name,"Date":e.get("dateEvent",""),
+                            "Time":(e.get("strTime") or "")[:5],"HomeTeam":e.get("strHomeTeam",""),
+                            "AwayTeam":e.get("strAwayTeam","")})
+            return name,len(ev),out
+        except Exception as e:
+            return name,0,[]
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for name,n,out in ex.map(fetch,pick_ids):
+            rep.append(f"TSDB {name}: {n}")
+            rows+=out
+    if all(n==0 for _,n,_ in [ (0,0,0) ]) or not rows:
+        rep.append("TSDB: нет ближайших событий (международная пауза или кэш источника пуст)")
+    return rows,rep
+
 if not st.session_state.get("_auto_settled_done"):
     if sum(1 for b in D["bets"] if b["status"]=="pending")>0:
         D2=clone(D)
@@ -513,7 +594,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v8.6 · футбол · temperature scaling · match_date в predict · кубок внутри модели · BTTS/DC в settle · версионированный кэш движка · сортировки ленты и портфеля · переключаемые обои</p>
+ <p>v8.7 · футбол · temperature scaling · авто-счёт в портфеле · улучшенный ИИ-вердикт · вкладка Онлайн с сигналом гола · сортировки везде · обои</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -555,7 +636,7 @@ with st.sidebar:
         save_data(st.session_state.data)
         st.rerun()
 
-tab1,tab2,tab3,tab4,tab5=st.tabs(["🏟 Сканер","💼 Портфель","📈 Статистика","🧮 Калькулятор","🧪 Бэктест"])
+tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["🏟 Сканер","💼 Портфель","📈 Статистика","🧮 Калькулятор","🧪 Бэктест","🔴 Онлайн"])
 
 with tab1:
     c1,c2=st.columns([4,1])
@@ -570,6 +651,13 @@ with tab1:
         limit=today+timedelta(days=days)
         fix,rep1=E.load_fixtures()
         tsd,rep2=E.load_tsdb()
+        tsd2,rep3=load_tsdb_dynamic()
+        seen_keys=set((x.get("Div"),x.get("Date"),x.get("HomeTeam"),x.get("AwayTeam")) for x in tsd)
+        for x in tsd2:
+            k=(x.get("Div"),x.get("Date"),x.get("HomeTeam"),x.get("AwayTeam"))
+            if k not in seen_keys:
+                tsd.append(x)
+                seen_keys.add(k)
         train_divs=sorted({r.get("Div") for r in fix if r.get("Div")}) or ["E0","SP1","I1","D1","F1"]
         dp=E.load_many(train_divs,pseason)
         dc=E.load_many(train_divs,season)
@@ -682,7 +770,7 @@ with tab1:
         D2=clone(D)
         D2["cards"]=cards
         D2["picks"]=picks
-        D2["report"]=rep1+rep2
+        D2["report"]=rep1+rep2+rep3
         D2["meta"]=meta
         D2["bets"]=D2["bets"]+new_bets
         D2["funnel"]={"trained":trained,"fix":len(fix),"tsdb":len(tsd),"inwin":inwin,
@@ -696,9 +784,10 @@ with tab1:
     with st.expander("🔌 Диагностика источников"):
         for line in D.get("report",[]):
             st.text(line)
+        st.caption("fixtures.csv = только ближайшие матчи основных лиг (30 строк — норма). TSDB 0 = международная пауза или пустой кэш источника.")
 
     sc1,sc2=st.columns([3,1])
-    sort_key=sc1.selectbox("Сортировка ленты",SORT_OPTIONS,index=0,key="sort_key")
+    sort_key=sc1.selectbox("Сортировка ленты и рекомендаций",SORT_OPTIONS,index=0,key="sort_key")
     invert=sc2.checkbox("🔄 Инвертировать",value=False,key="sort_inv")
     base_desc=SORT_DEFAULT_DESC.get(sort_key,True)
     eff_desc=base_desc if not invert else (not base_desc)
@@ -707,7 +796,8 @@ with tab1:
     picks=D.get("picks",[])
     if picks:
         st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
-        for i,p in enumerate(picks,1):
+        picks_view=sorted(picks,key=lambda p: pick_sort_val(p,sort_key),reverse=eff_desc)
+        for i,p in enumerate(picks_view,1):
             cls="value" if p["type"]=="value" else "hot"
             btype="🟢 ВАЛУЙ" if p["type"]=="value" else "🔥 Проходимость"
             m,alt,av=p["main"],p["alt"],p["avoid"]
@@ -740,6 +830,29 @@ with tab1:
 
 with tab2:
     st.header("💼 Портфель")
+    auto_changed=False
+    for idx,b in enumerate(D["bets"]):
+        if b["status"]!="pending":
+            continue
+        if b.get("div") in (None,"TSDB"):
+            continue
+        bd=E.parse_date(b.get("date_iso","")) if b.get("date_iso") else None
+        if not bd or bd.date()>=datetime.now().date():
+            continue
+        h,a=b["match"].split(" vs ")
+        res=find_result(b.get("div"),h,a,bd)
+        if not res:
+            continue
+        rd,hg,ag=res
+        out=E.determine_outcome(b.get("market"),b.get("pick"),hg,ag)
+        if out:
+            st.session_state.data=apply_settle(st.session_state.data,idx,out,score=f"{int(hg)}:{int(ag)}")
+            D=st.session_state.data
+            auto_changed=True
+    if auto_changed:
+        save_data(D)
+        st.toast("Счета подставлены автоматически, ставки закрыты",icon="🔄")
+        st.rerun()
     cbtn1,cbtn2,cbtn3=st.columns(3)
     if cbtn1.button("🔄 Автосинхронизация"):
         D2=clone(D)
@@ -951,3 +1064,48 @@ with tab5:
             k4.metric("MaxDD",f"{mdd:.1f}")
             k5.metric("Sharpe",f"{sharpe:.2f}")
             st.markdown(f"**📏 Перевес над Pinnacle (открытие): {avg_clv*100:+.2f}%** · T={eng.temp:.2f}")
+
+with tab6:
+    st.header("🔴 Онлайн-матчи и сигналы гола")
+    st.caption("Источник: TheSportsDB livescore. Сигнал «возможен гол» = вероятность ≥1 гола до финала по среднему темпу лиги и оставшемуся времени.")
+    if st.button("🔴 Обновить live"):
+        st.session_state["_live"]=E.load_livescores()
+        st.rerun()
+    live=st.session_state.get("_live")
+    if live is None:
+        live=E.load_livescores()
+        st.session_state["_live"]=live
+    if not live:
+        st.info("Сейчас нет живых матчей в источнике (или международная пауза). Попробуй обновить позже.")
+    else:
+        st.caption(f"Живых матчей: {len(live)}")
+        sig_count=0
+        for key,v in live.items():
+            try:
+                minute=v.get("progress") or ""
+                mm=re.search(r"(\d+)",str(minute))
+                minute_n=int(mm.group(1)) if mm else 45
+                hs=int(v.get("home") or 0)
+                as_=int(v.get("away") or 0)
+                cur_total=hs+as_
+                p_goal,proj=live_signal(minute_n,cur_total)
+                league=v.get("league") or v.get("status") or "Матч"
+                strong=p_goal>=0.60
+                if strong:
+                    sig_count+=1
+                badge="<span class='badge live'>⚡ ВОЗМОЖЕН ГОЛ</span>" if strong else "<span class='badge no'>наблюдение</span>"
+                st.markdown(f"""
+<div class="mcard {'live' if strong else ''}">
+ <span class='chip live'>🔴 {esc(str(minute))}'</span><span class='chip'>{esc(str(league))}</span>
+ {badge}
+ <div class="teams">{esc(str(v.get('home',''))) } <span>{hs}:{as_}</span> {esc(str(v.get('away','')))}</div>
+ <div class="verdict">🤖 Темп: {cur_total} голов за {minute_n}'. Прогноз тотала к финалу ≈ <b class="y">{proj:.1f}</b>.
+  Вероятность ещё гола до финала: <b class="{'g' if strong else 'y'}">{p_goal*100:.0f}%</b>.
+  {'Сигнал: высокий шанс гола в оставшееся время — рынок ТБ может быть ценен.' if strong else 'Сигнала нет: темп низкий или время почти вышло.'}</div>
+</div>""",unsafe_allow_html=True)
+            except Exception as e:
+                E.log_err("live card",e)
+        if sig_count:
+            st.success(f"Сигналов «возможен гол»: {sig_count}")
+        else:
+            st.info("Сейчас нет матчей с сильным сигналом гола.")
