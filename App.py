@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.3 — CSS gradients for leagues + card filter + throttle."""
+"""NEURO BET PRO v12.4 — CSS gradients + RU team translations."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
 from datetime import datetime, timedelta
@@ -17,11 +17,11 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.3", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.4", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.3"
-DATA_VERSION = 14
+APP_VERSION = "12.4"
+DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
 API_USAGE_FILE = "api_usage.json"
@@ -51,7 +51,6 @@ DIV_NAMES = {
     "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ",
 }
 
-# [v12.3] CSS-градиенты по лигам (вместо внешних картинок)
 STADIUM_WALLS = {
     "E0":  "linear-gradient(135deg, rgba(30,64,175,.55), rgba(15,23,42,.95))",
     "E1":  "linear-gradient(135deg, rgba(37,99,235,.45), rgba(15,23,42,.95))",
@@ -74,6 +73,180 @@ STADIUM_WALLS = {
     "EC":  "linear-gradient(135deg, rgba(34,197,94,.55), rgba(15,23,42,.95))",
     "DEFAULT": "linear-gradient(135deg, rgba(71,85,105,.55), rgba(15,23,42,.95))",
 }
+
+# ============= [v12.4] ПЕРЕВОД КОМАНД =============
+TEAM_TRANSLATIONS = {
+    # АПЛ
+    "Manchester United": "Манчестер Юнайтед", "Manchester City": "Манчестер Сити",
+    "Liverpool": "Ливерпуль", "Liverpool FC": "Ливерпуль",
+    "Arsenal": "Арсенал", "Arsenal FC": "Арсенал",
+    "Chelsea": "Челси", "Chelsea FC": "Челси",
+    "Tottenham": "Тоттенхэм", "Tottenham Hotspur": "Тоттенхэм",
+    "Newcastle": "Ньюкасл", "Newcastle United": "Ньюкасл",
+    "Aston Villa": "Астон Вилла", "Brighton": "Брайтон",
+    "Brighton & Hove Albion": "Брайтон", "Brighton and Hove Albion": "Брайтон",
+    "West Ham": "Вест Хэм", "West Ham United": "Вест Хэм",
+    "Everton": "Эвертон", "Everton FC": "Эвертон",
+    "Fulham": "Фулхэм", "Fulham FC": "Фулхэм",
+    "Crystal Palace": "Кристал Пэлас",
+    "Brentford": "Брентфорд", "Brentford FC": "Брентфорд",
+    "Nottingham Forest": "Ноттингем Форест",
+    "Wolverhampton": "Вулверхэмптон", "Wolverhampton Wanderers": "Вулверхэмптон",
+    "Wolves": "Вулверхэмптон",
+    "Bournemouth": "Борнмут", "AFC Bournemouth": "Борнмут",
+    "Leicester": "Лестер", "Leicester City": "Лестер",
+    "Southampton": "Саутгемптон",
+    "Ipswich": "Ипсвич", "Ipswich Town": "Ипсвич",
+    "Sheffield United": "Шеффилд Юнайтед",
+    "Sheffield Wednesday": "Шеффилд Уэнсдей",
+    "Leeds United": "Лидс Юнайтед", "Leeds": "Лидс",
+    "Burnley": "Бёрнли", "Watford": "Уотфорд",
+    "Norwich": "Норвич", "Norwich City": "Норвич",
+    "Middlesbrough": "Мидлсбро", "Sunderland": "Сандерленд",
+    "West Bromwich Albion": "Вест Бромвич", "West Brom": "Вест Бромвич",
+    "Stoke City": "Сток Сити", "Stoke": "Сток",
+    "Hull City": "Халл Сити", "Hull": "Халл",
+    "Coventry": "Ковентри", "Coventry City": "Ковентри",
+    "Preston": "Престон", "Preston North End": "Престон",
+    "Blackburn": "Блэкберн", "Blackburn Rovers": "Блэкберн",
+    "Bristol City": "Бристоль Сити",
+    "Swansea": "Суонси", "Swansea City": "Суонси",
+    "Cardiff": "Кардифф", "Cardiff City": "Кардифф",
+    # Ла Лига
+    "Real Madrid": "Реал Мадрид", "Real Madrid CF": "Реал Мадрид",
+    "Barcelona": "Барселона", "FC Barcelona": "Барселона",
+    "Atletico Madrid": "Атлетико Мадрид", "Atletico de Madrid": "Атлетико Мадрид",
+    "Sevilla": "Севилья", "Sevilla FC": "Севилья",
+    "Real Betis": "Бетис", "Real Sociedad": "Реал Сосьедад",
+    "Athletic Bilbao": "Атлетик Бильбао", "Athletic Club": "Атлетик Бильбао",
+    "Valencia": "Валенсия", "Valencia CF": "Валенсия",
+    "Villarreal": "Вильярреал", "Villarreal CF": "Вильярреал",
+    "Celta Vigo": "Сельта", "Celta": "Сельта",
+    "Rayo Vallecano": "Райо Вальекано",
+    "Getafe": "Хетафе", "Getafe CF": "Хетафе",
+    "Osasuna": "Осасуна", "Mallorca": "Мальорка",
+    "Girona": "Жирона", "Las Palmas": "Лас-Пальмас",
+    "Alaves": "Алавес", "Deportivo Alaves": "Алавес",
+    "Espanyol": "Эспаньол", "Leganes": "Леганес",
+    "Valladolid": "Вальядолид", "Real Valladolid": "Вальядолид",
+    # Серия A
+    "Inter": "Интер", "Inter Milan": "Интер", "Internazionale": "Интер",
+    "AC Milan": "Милан", "Milan": "Милан",
+    "Juventus": "Ювентус", "Napoli": "Наполи",
+    "Roma": "Рома", "AS Roma": "Рома",
+    "Lazio": "Лацио", "SS Lazio": "Лацио",
+    "Atalanta": "Аталанта", "Fiorentina": "Фиорентина",
+    "Bologna": "Болонья", "Torino": "Торино",
+    "Udinese": "Удинезе", "Sassuolo": "Сассуоло",
+    "Empoli": "Эмполи", "Verona": "Верона", "Hellas Verona": "Верона",
+    "Lecce": "Лечче", "Cagliari": "Кальяри",
+    "Genoa": "Дженоа", "Monza": "Монца",
+    "Frosinone": "Фрозиноне", "Salernitana": "Салернитана",
+    "Parma": "Парма", "Como": "Комо", "Venezia": "Венеция",
+    # Бундеслига
+    "Bayern Munich": "Бавария", "Bayern München": "Бавария",
+    "FC Bayern München": "Бавария", "Bayern": "Бавария",
+    "Borussia Dortmund": "Боруссия Дортмунд",
+    "RB Leipzig": "РБ Лейпциг",
+    "Bayer Leverkusen": "Байер Леверкузен",
+    "Bayer 04 Leverkusen": "Байер Леверкузен",
+    "Eintracht Frankfurt": "Айнтрахт Франкфурт",
+    "Borussia Mönchengladbach": "Боруссия Мёнхенгладбах",
+    "VfB Stuttgart": "Штутгарт", "Stuttgart": "Штутгарт",
+    "VfL Wolfsburg": "Вольфсбург", "Wolfsburg": "Вольфсбург",
+    "SC Freiburg": "Фрайбург", "Freiburg": "Фрайбург",
+    "Union Berlin": "Унион Берлин", "1. FC Union Berlin": "Унион Берлин",
+    "Werder Bremen": "Вердер",
+    "Mainz 05": "Майнц", "1. FSV Mainz 05": "Майнц",
+    "FC Augsburg": "Аугсбург", "Augsburg": "Аугсбург",
+    "TSG Hoffenheim": "Хоффенхайм", "Hoffenheim": "Хоффенхайм",
+    "VfL Bochum": "Бохум", "Bochum": "Бохум",
+    "1. FC Köln": "Кёльн", "FC Cologne": "Кёльн",
+    "1. FC Heidenheim": "Хайденхайм", "Heidenheim": "Хайденхайм",
+    "SV Darmstadt 98": "Дармштадт", "Darmstadt": "Дармштадт",
+    "Holstein Kiel": "Хольштайн", "St. Pauli": "Санкт-Паули",
+    # Лига 1
+    "Paris Saint-Germain": "Пари Сен-Жермен",
+    "Paris Saint Germain": "Пари Сен-Жермен", "PSG": "ПСЖ",
+    "Marseille": "Марсель", "Olympique Marseille": "Марсель",
+    "Lyon": "Лион", "Olympique Lyonnais": "Лион",
+    "Monaco": "Монако", "AS Monaco": "Монако",
+    "Lille": "Лилль", "LOSC Lille": "Лилль",
+    "Nice": "Ницца", "OGC Nice": "Ницца",
+    "Rennes": "Ренн", "Stade Rennais": "Ренн",
+    "Lens": "Ланс", "RC Lens": "Ланс",
+    "Nantes": "Нант", "Strasbourg": "Страсбург",
+    "Montpellier": "Монпелье", "Toulouse": "Тулуза",
+    "Reims": "Реймс", "Brest": "Брест",
+    "Le Havre": "Гавр", "Metz": "Мец",
+    "Lorient": "Лорьян", "Clermont": "Клермон", "Clermont Foot": "Клермон",
+    "Auxerre": "Осер", "Angers": "Анже", "Saint-Etienne": "Сент-Этьен",
+    # РПЛ
+    "Zenit": "Зенит", "Zenit St. Petersburg": "Зенит",
+    "Spartak Moscow": "Спартак", "Spartak": "Спартак",
+    "CSKA Moscow": "ЦСКА", "CSKA": "ЦСКА",
+    "Lokomotiv Moscow": "Локомотив", "Lokomotiv": "Локомотив",
+    "Dynamo Moscow": "Динамо", "Dinamo Moscow": "Динамо",
+    "Krasnodar": "Краснодар", "FC Krasnodar": "Краснодар",
+    "Rostov": "Ростов", "FC Rostov": "Ростов",
+    "Rubin Kazan": "Рубин", "Rubin": "Рубин",
+    "Krylia Sovetov": "Крылья Советов",
+    "Akhmat": "Ахмат", "Akhmat Grozny": "Ахмат",
+    "Sochi": "Сочи", "PFC Sochi": "Сочи",
+    "Ural": "Урал", "Orenburg": "Оренбург",
+    "Fakel": "Факел", "Baltika": "Балтика",
+    "Pari NN": "Пари НН", "Nizhny Novgorod": "Пари НН",
+    "Torpedo Moscow": "Торпедо", "Khimki": "Химки",
+    # ЛЧ / ЛЕ / ЛК — популярные
+    "FC Porto": "Порту", "Porto": "Порту",
+    "Benfica": "Бенфика", "SL Benfica": "Бенфика",
+    "Sporting CP": "Спортинг", "Sporting": "Спортинг",
+    "Ajax": "Аякс", "Ajax Amsterdam": "Аякс",
+    "PSV": "ПСВ", "PSV Eindhoven": "ПСВ",
+    "Feyenoord": "Фейеноорд",
+    "Celtic": "Селтик", "Rangers": "Рейнджерс",
+    "Galatasaray": "Галатасарай", "Fenerbahce": "Фенербахче",
+    "Besiktas": "Бешикташ",
+    "Olympiacos": "Олимпиакос", "Panathinaikos": "Панатинаикос",
+    "AEK Athens": "АЕК Афины",
+    "Shakhtar Donetsk": "Шахтёр", "Shakhtar": "Шахтёр",
+    "Dinamo Zagreb": "Динамо Загреб",
+    "Red Star Belgrade": "Црвена Звезда", "Crvena Zvezda": "Црвена Звезда",
+    "Salzburg": "Зальцбург", "RB Salzburg": "Зальцбург",
+    "Young Boys": "Янг Бойз",
+    "Copenhagen": "Копенгаген", "FC Copenhagen": "Копенгаген",
+    "Bodo/Glimt": "Будё-Глимт", "Bodø/Glimt": "Будё-Глимт",
+    "Club Brugge": "Брюгге", "Anderlecht": "Андерлехт",
+    "Shakhtar": "Шахтёр",
+}
+
+
+def translate_team(name):
+    """Переводит название команды на русский."""
+    if not name:
+        return name
+    name = str(name).strip()
+    if name in TEAM_TRANSLATIONS:
+        return TEAM_TRANSLATIONS[name]
+    low = name.lower()
+    for eng, rus in TEAM_TRANSLATIONS.items():
+        if low == eng.lower():
+            return rus
+    for eng, rus in TEAM_TRANSLATIONS.items():
+        e = eng.lower()
+        if low.startswith(e + " ") or low.endswith(" " + e) or low == e:
+            return rus
+    return name
+
+
+def translate_match(match_str):
+    """'Team A vs Team B' → 'Команда А — Команда Б'."""
+    if not match_str or " vs " not in match_str:
+        return match_str or "—"
+    parts = match_str.split(" vs ")
+    if len(parts) == 2:
+        return f"{translate_team(parts[0])} — {translate_team(parts[1])}"
+    return match_str
 
 
 def _get_secret(key, default=""):
@@ -289,36 +462,14 @@ def _usage_reset(filename):
     return d
 
 
-def api_usage_load():
-    return _usage_load(API_USAGE_FILE)
-
-
-def api_usage_increment(n=1):
-    return _usage_increment(API_USAGE_FILE, n)
-
-
-def api_usage_remaining():
-    return _usage_remaining(API_USAGE_FILE, API_LIMIT_DAILY)
-
-
-def api_usage_reset():
-    return _usage_reset(API_USAGE_FILE)
-
-
-def settle_usage_load():
-    return _usage_load(SETTLE_USAGE_FILE)
-
-
-def settle_usage_increment(n=1):
-    return _usage_increment(SETTLE_USAGE_FILE, n)
-
-
-def settle_usage_remaining():
-    return _usage_remaining(SETTLE_USAGE_FILE, AUTO_SETTLE_LIMIT)
-
-
-def settle_usage_reset():
-    return _usage_reset(SETTLE_USAGE_FILE)
+def api_usage_load(): return _usage_load(API_USAGE_FILE)
+def api_usage_increment(n=1): return _usage_increment(API_USAGE_FILE, n)
+def api_usage_remaining(): return _usage_remaining(API_USAGE_FILE, API_LIMIT_DAILY)
+def api_usage_reset(): return _usage_reset(API_USAGE_FILE)
+def settle_usage_load(): return _usage_load(SETTLE_USAGE_FILE)
+def settle_usage_increment(n=1): return _usage_increment(SETTLE_USAGE_FILE, n)
+def settle_usage_remaining(): return _usage_remaining(SETTLE_USAGE_FILE, AUTO_SETTLE_LIMIT)
+def settle_usage_reset(): return _usage_reset(SETTLE_USAGE_FILE)
 
 
 def _new_team():
@@ -1044,6 +1195,7 @@ def stadium_bg(div):
     return STADIUM_WALLS.get(div, STADIUM_WALLS["DEFAULT"])
 
 
+# [v12.4] Применяем переводы в рендере карточек
 def render_verdict_card(c, thr):
     v = c.get("verdict") or {}
     if not v:
@@ -1059,8 +1211,9 @@ def render_verdict_card(c, thr):
 
     match_str = c.get("match", "— vs —")
     parts = match_str.split(" vs ")
-    h = parts[0] if len(parts) > 0 else "—"
-    a = parts[1] if len(parts) > 1 else "—"
+    # [v12.4] Перевод команд для отображения
+    h = translate_team(parts[0]) if len(parts) > 0 else "—"
+    a = translate_team(parts[1]) if len(parts) > 1 else "—"
     bg_grad = stadium_bg(c.get("div", ""))
 
     if is_action:
@@ -1197,7 +1350,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🤖 AI-вердикт · 🎨 цветные лиги · 🎯 фильтр карточек · ⏱ throttle</p>
+ <p>v{APP_VERSION} · 🇷🇺 команды по-русски · 🎨 цветные лиги · 🎯 фильтр · ⏱ throttle</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1340,5 +1493,301 @@ with tab1:
                     update_loader(f"Сбор матчей [{idx + 1}/{total}] — {name}",
                                   (idx + 1) / total * 0.3, logs)
 
-                update_loader
-                       
+                update_loader("Запуск...", 0.0, logs)
+                api_rows_raw, api_rep = api_fixtures_by_league(ak_, d_from, d_to, fixture_progress)
+                api_rows = safe_filter(api_rows_raw)
+                for line in api_rep:
+                    logs.append(f"📡 {line}")
+
+                day_list = [(today + timedelta(days=off)).strftime("%Y-%m-%d") for off in range(0, min(days, 7))]
+                tsdb_rows = safe_filter(tsdb_days_parallel(day_list))
+                logs.append(f"📡 TSDB-day: {len(tsdb_rows)}")
+
+                seen = set()
+                src_rows = []
+                for r in (api_rows + tsdb_rows):
+                    h = r.get("HomeTeam")
+                    a = r.get("AwayTeam")
+                    if not h or not a:
+                        continue
+                    k = (h, a, r.get("Date"))
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    src_rows.append(r)
+                logs.append(f"🔗 Уникальных: {len(src_rows)}")
+
+                cur_year = today.year if today.month >= 7 else today.year - 1
+                prev_year = cur_year - 1
+                fp = engine_cache_fp(f"{cur_year}", {"all": len(src_rows)})
+                engine = engine_cache_get(fp)
+                trained = 0
+                if engine is None:
+                    train_divs = ["E0", "SP1", "I1", "D1", "F1", "E1", "SP2", "I2", "D2", "F2", "N1", "B1", "P1", "T1", "R1"]
+                    engine = Engine()
+                    dp, dc = {}, {}
+                    for i, dv in enumerate(train_divs):
+                        pct = 0.3 + (i + 1) / len(train_divs) * 0.35
+                        update_loader(f"История [{i + 1}/{len(train_divs)}] — {DIV_NAMES.get(dv, dv)}", pct, logs)
+                        dp[dv] = api_season_history(ak_, dv, prev_year)
+                        dc[dv] = api_season_history(ak_, dv, cur_year)
+                        n = len(dp[dv]) + len(dc[dv])
+                        logs.append(f"✅ {DIV_NAMES.get(dv, dv)}: {n}")
+                    total_matches = sum(len(dp.get(dv, [])) + len(dc.get(dv, [])) for dv in train_divs)
+                    processed = 0
+                    for dv in train_divs:
+                        for src in (dp.get(dv, []), dc.get(dv, [])):
+                            for r in src:
+                                try:
+                                    engine.learn_step(r["HomeTeam"], r["AwayTeam"],
+                                                      float(r["FTHG"]), float(r["FTAG"]), r,
+                                                      lg=dv, match_num=processed,
+                                                      total=total_matches,
+                                                      match_date=parse_date(r.get("Date", "")))
+                                    trained += 1
+                                except Exception as e:
+                                    log_err(f"train {dv}", e)
+                                processed += 1
+                                if processed % 50 == 0:
+                                    pct = 0.65 + processed / max(1, total_matches) * 0.30
+                                    update_loader(f"Обучение [{processed}/{total_matches}]", pct, logs)
+                    engine.trained_n = trained
+                    engine_cache_put(fp, engine)
+                    logs.append(f"🧠 Обучено: {trained}")
+                else:
+                    logs.append(f"💾 Engine из кэша (обучено {getattr(engine, 'trained_n', '?')})")
+
+                update_loader("Анализ матчей...", 0.97, logs)
+
+                cards = []
+                matches_with_best = 0
+                for r in src_rows:
+                    d = parse_date(r.get("Date", ""))
+                    if not d or not (today <= d <= limit):
+                        continue
+                    # [v12.4] Передаём ПЕРЕВЕДЁННЫЕ имена для вердикта
+                    h_en = (r.get("HomeTeam") or "").strip()
+                    a_en = (r.get("AwayTeam") or "").strip()
+                    if not h_en or not a_en:
+                        continue
+                    h_ru = translate_team(h_en)
+                    a_ru = translate_team(a_en)
+                    lg = r.get("Div", "G")
+                    P = engine.predict(h_en, a_en, lg, match_date=d, cup=is_cup(r))
+                    fh = engine.form_str(h_en)
+                    fa = engine.form_str(a_en)
+                    verdict, rows, best = build_verdict(
+                        P, min_prob, D["bank"], kelly_frac,
+                        h_ru, a_ru, fh, fa, P.get("h2h_n", 0))
+                    if best and best[4] >= min_prob:
+                        matches_with_best += 1
+                    else:
+                        best = None
+                    cards.append({
+                        "div": lg,
+                        "league": r.get("League") or DIV_NAMES.get(lg, "Лига"),
+                        "match": f"{h_en} vs {a_en}",  # оригинал сохраняется для API
+                        "match_ru": f"{h_ru} — {a_ru}",  # [v12.4] русский вариант
+                        "date": d.strftime("%d.%m") + (f" {r.get('Time', '')}" if r.get("Time") else ""),
+                        "when": "сегодня" if d.date() == today.date() else "скоро",
+                        "verdict": verdict,
+                        "best": best,
+                        "games": P["games"],
+                        "fh": fh, "fa": fa,
+                        "fixture_id": r.get("fixture_id"),
+                        "date_iso": d.strftime("%Y-%m-%d"),
+                    })
+
+                logs.append(f"🎯 Найдено с P≥{min_prob * 100:.0f}%: {matches_with_best}")
+
+                new_bets = []
+                existing = {f"{b['match']}|{b['pick']}" for b in D["bets"]
+                            if isinstance(b, dict) and b.get("status") == "pending"}
+                for c in cards:
+                    b = c.get("best")
+                    if not b:
+                        continue
+                    mkt, pick, odd, ev, prob, stake = b
+                    stake = round(min(max(stake, 1.0), D["bank"] * 0.05), 2)
+                    if stake <= 0:
+                        continue
+                    bet_key = f"{c['match']}|{pick}"
+                    if bet_key in existing:
+                        continue
+                    new_bets.append({
+                        "match": c["match"],          # оригинал для API
+                        "match_ru": c["match_ru"],    # [v12.4] для отображения
+                        "div": c["div"],
+                        "league": c["league"],
+                        "market": "STAT",
+                        "pick": pick,
+                        "odds": odd,
+                        "stake": stake,
+                        "prob": prob,
+                        "status": "pending",
+                        "strat": "HOT",
+                        "mode": D.get("mode", "paper"),
+                        "date": datetime.now().strftime("%d.%m.%Y"),
+                        "date_iso": c.get("date_iso", datetime.now().strftime("%Y-%m-%d")),
+                        "date_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "fixture_id": c.get("fixture_id"),
+                        "score": None,
+                    })
+                    existing.add(bet_key)
+
+                D2 = clone(D)
+                D2["cards"] = cards
+                D2["report"] = api_rep + [f"TSDB: {len(tsdb_rows)}"]
+                D2["bets"] = D2["bets"] + new_bets
+                total_stake = sum(b["stake"] for b in new_bets)
+                D2["bank"] = max(0.0, D2["bank"] - total_stake)
+                D2["funnel"] = {
+                    "trained": trained, "src": len(src_rows),
+                    "found": matches_with_best, "added": len(new_bets),
+                    "frozen": total_stake,
+                }
+                st.session_state.data = D2
+                save_data(D2)
+
+                update_loader(f"✅ Готово! +{len(new_bets)} ставок", 1.0, logs)
+                time.sleep(1.5)
+                loader_ph.empty()
+                log_ph.empty()
+        finally:
+            st.session_state["_scan_in_progress"] = False
+        st.rerun()
+
+    fn = D.get("funnel")
+    if fn:
+        st.success(f"🧠 Обучено {fn.get('trained', 0)} · "
+                   f"🔗 источников {fn.get('src', 0)} · "
+                   f"🎯 найдено {fn.get('found', 0)} · "
+                   f"➕ в портфель {fn.get('added', 0)} · "
+                   f"💰 заморожено {fn.get('frozen', 0):.0f}")
+    with st.expander("🔌 Диагностика"):
+        for line in D.get("report", []):
+            st.text(line)
+
+    all_cards = D.get("cards", [])
+    cards_view = sorted(
+        [c for c in all_cards if isinstance(c, dict)],
+        key=lambda c: (c.get("verdict", {}).get("prob") or 0),
+        reverse=True,
+    )
+    shown = 0
+    hidden = 0
+    for c in cards_view:
+        v = c.get("verdict") or {}
+        if not v.get("is_action", False):
+            hidden += 1
+            continue
+        st.markdown(render_verdict_card(c, min_prob), unsafe_allow_html=True)
+        shown += 1
+
+    if shown == 0 and hidden == 0:
+        st.info("Нажми ⚡ СКАН.")
+    elif shown == 0 and hidden > 0:
+        st.warning(
+            f"⚠️ Ни один матч не прошёл порог **{min_prob * 100:.0f}%**. "
+            f"Скрыто **{hidden}** слабых матчей. "
+            f"Попробуй понизить порог до **55%** или обожди следующий скан."
+        )
+        with st.expander(f"👀 Показать {hidden} скрытых матчей"):
+            for c in cards_view:
+                v = c.get("verdict") or {}
+                if v.get("is_action", False):
+                    continue
+                st.markdown(render_verdict_card(c, min_prob), unsafe_allow_html=True)
+    elif hidden > 0:
+        st.caption(f"✅ Показано **{shown}** матчей с P ≥ {min_prob * 100:.0f}% · "
+                   f"скрыто **{hidden}** слабых")
+
+with tab2:
+    st.header("💼 Портфель")
+    if not D["bets"]:
+        st.warning("Пусто. После СКАНа ставки появятся здесь автоматически.")
+    else:
+        st.caption(f"Всего: {len(D['bets'])} · В работе: {pending_count}")
+
+        if st.button("📥 Экспорт CSV"):
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(["Match", "League", "Pick", "Odds", "Stake", "Prob", "Status", "Score", "Date"])
+            for b in D["bets"]:
+                if not isinstance(b, dict):
+                    continue
+                # [v12.4] В CSV экспортируем русское название
+                match_display = b.get("match_ru") or translate_match(b.get("match", ""))
+                w.writerow([match_display, b.get("league", ""), b.get("pick", ""),
+                            b.get("odds", ""), b.get("stake", ""), b.get("prob", ""),
+                            b.get("status", ""), b.get("score", ""), b.get("date", "")])
+            st.download_button("⬇️ Скачать neuro_bets.csv", buf.getvalue(),
+                               file_name=f"neuro_bets_{datetime.now():%Y%m%d_%H%M}.csv",
+                               mime="text/csv")
+
+        for i, b in enumerate(D["bets"]):
+            if not isinstance(b, dict):
+                continue
+            st_ = b.get("status", "pending")
+            icon = {"pending": "⏳", "won": "🟢", "lost": "🔴", "push": "⚪"}.get(st_, "⏳")
+            score = f" — счёт {b.get('score', '')}" if b.get("score") else ""
+            prob = float(b.get("prob") or 0)
+            odds = float(b.get("odds") or 1.0)
+            stake = float(b.get("stake") or 0.0)
+            pick_label = b.get("pick", "—")
+            # [v12.4] Показываем по-русски
+            match_display = b.get("match_ru") or translate_match(b.get("match", "—"))
+            st.markdown(f"""
+<div class="betcard {st_}" style="padding:14px 18px;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+      <div style="font-size:1rem;font-weight:800;color:#fff;">{icon} {esc(match_display)}{score}</div>
+      <div style="color:#8b93a7;font-size:.78rem;margin-top:4px;">{esc(str(b.get('league', '—')))} · {esc(str(b.get('date', '—')))}</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="color:#fbbf24;font-size:1.1rem;font-weight:800;">{esc(str(pick_label))}</div>
+      <div style="color:#34d399;font-weight:700;">P {prob * 100:.0f}%</div>
+    </div>
+  </div>
+  <div style="color:#c9d2e3;font-size:.82rem;margin-top:8px;">
+    Кэф: <b>{odds:.2f}</b> · Ставка: <b>{stake:.2f} у.е.</b>
+  </div>
+</div>""", unsafe_allow_html=True)
+            if b.get("status") == "pending":
+                cc = st.columns([1, 1, 1, 1])
+                sin = cc[0].text_input("Счёт", key=f"sc{i}", label_visibility="collapsed", placeholder="2:1")
+                sc = sin.strip() if re.match(r"^\d+\s*:\s*\d+$", sin.strip()) else None
+                if cc[1].button("✅", key=f"w{i}"):
+                    st.session_state.data = apply_settle(D, i, "won", score=sc)
+                    save_data(st.session_state.data)
+                    st.rerun()
+                if cc[2].button("❌", key=f"l{i}"):
+                    st.session_state.data = apply_settle(D, i, "lost", score=sc)
+                    save_data(st.session_state.data)
+                    st.rerun()
+                if cc[3].button("🚫", key=f"c{i}"):
+                    st.session_state.data = cancel_bet(D, i)
+                    save_data(st.session_state.data)
+                    st.toast("Ставка отменена, stake возвращён", icon="🚫")
+                    st.rerun()
+
+with tab3:
+    st.header("📈 Статистика")
+    s = D["stats"]
+    tot = s["won"] + s["lost"]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Банк", f"{D['bank']:.2f}")
+    m2.metric("Ставок всего", len(D["bets"]))
+    m3.metric("WinRate", f"{(s['won'] / tot * 100) if tot else 0:.1f}%")
+    m4.metric("Profit", f"{s['profit']:+.2f}")
+    if s.get("push", 0) > 0:
+        st.caption(f"🔄 Возвратов (push): {s['push']} — stake возвращён")
+
+with tab4:
+    st.header("🧮 EV-калькулятор")
+    q1, q2, q3 = st.columns(3)
+    p = q1.number_input("P, %", 1, 99, 60)
+    o = q2.number_input("Кэф", 1.01, 30.0, 1.80)
+    bk = q3.number_input("Банк", 100.0, 1e6, float(D["bank"]))
+    ev = (p / 100) * o - 1
+    st.markdown(f"**EV:** {ev * 100:+.1f}% · **Келли:** {kelly(p / 100, o, bk, kelly_frac):.2f}")
