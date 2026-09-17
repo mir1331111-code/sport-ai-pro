@@ -1,7 +1,7 @@
-"""NEURO BET PRO v11.3 — animated loading + stadium card + fixed API fixtures."""
+"""NEURO BET PRO v11.4 — fixed dict check + animated loader + stadium cards."""
 import streamlit as st
-import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
-from datetime import datetime, timedelta, timezone
+import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip
+from datetime import datetime, timedelta
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -18,15 +18,11 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v11.3", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v11.4", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "11.3"
-PROMPT_VERSION = "risk_v5"
+APP_VERSION = "11.4"
 HISTORY_FILE = "neuro_bet_pro.json"
-ERR_FILE = "neuro_errors.log"
-ENGINE_CACHE_KEY = "neuro_engine_v11_3"
-ENGINE_SNAPSHOT_FILE = "engine.pkl"
 DISK_CACHE_DIR = "neuro_cache"
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
 
@@ -36,16 +32,16 @@ TOTAL_MIN = 95.0
 MATRIX_N = 9
 
 HYPERPARAMS = {
-    "refit_temp_every": 150, "refit_struct_every": 300,
-    "ml_iters": 300, "ml_lr": 0.05, "ml_l2": 0.001,
-    "time_decay_tau_days": 180.0, "shr_bayes_k": 200.0,
-    "steam_threshold": 0.03, "steam_multiplier": 1.3,
-    "max_league_exposure": 0.15, "max_market_exposure": 0.25,
-    "max_day_exposure": 0.10, "max_match_exposure": 0.02,
-    "max_match_bets": 2, "max_day_bets": 10,
-    "llm_mult_min": 0.5, "llm_mult_max": 1.5,
-    "llm_veto_risk": 85, "llm_veto_conf": 70,
-    "live_beta_cap_matches": 100,
+    "refit_temp_every": 150,
+    "refit_struct_every": 300,
+    "time_decay_tau_days": 180.0,
+    "shr_bayes_k": 200.0,
+    "max_league_exposure": 0.15,
+    "max_market_exposure": 0.25,
+    "max_day_exposure": 0.10,
+    "max_match_exposure": 0.02,
+    "max_match_bets": 2,
+    "max_day_bets": 10,
 }
 
 DIV_TO_APILG = {
@@ -55,9 +51,7 @@ DIV_TO_APILG = {
     "P1": 94, "T1": 203, "R1": 235, "G1": 197,
 }
 
-API_LG = {"R1": 235, "T1": 203, "C1": 2, "EL": 3, "EC": 848, "RUS_CUP": 233}
-API_NAMES = {235: "🇷🇺 РПЛ", 203: "🇹🇷 Суперлига", 2: "🏆 ЛЧ", 3: "🏆 ЛЕ",
-             848: "🏆 ЛК", 233: "🏆 Кубок России"}
+API_NAMES = {2: "🏆 ЛЧ", 3: "🏆 ЛЕ", 848: "🏆 ЛК", 235: "🇷🇺 РПЛ", 203: "🇹🇷 Суперлига"}
 
 DIV_NAMES = {
     "E0": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип",
@@ -66,7 +60,6 @@ DIV_NAMES = {
     "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇳🇱 Эредивизи",
     "B1": "🇧🇪 Про-лига", "P1": "🇵🇹 Примейра", "T1": "🇹🇷 Суперлига",
     "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ",
-    "C1": "🏆 ЛЧ", "EL": "🏆 ЛЕ", "EC": "🏆 ЛК",
 }
 
 GOALS = {
@@ -78,14 +71,6 @@ GOALS = {
                             corr=(1.40, 4.20), min_games=6),
 }
 
-WALLS = {
-    "🌃 Неон-стадион": "linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
-    "🕹 Synthwave":    "linear-gradient(rgba(6,3,20,.82),rgba(6,3,20,.92)),url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
-    "🌌 Aurora":       "radial-gradient(1100px 620px at 10% -10%, rgba(34,211,238,.20), transparent 60%),radial-gradient(950px 540px at 90% 8%, rgba(167,139,250,.20), transparent 62%),radial-gradient(900px 640px at 50% 112%, rgba(52,211,153,.16), transparent 60%),#05070f",
-    "⚫ Минимализм":   "linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)",
-}
-
-# Атмосферные фоны для карточек матчей (по лиге)
 STADIUM_WALLS = {
     "E0":  "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
     "SP1": "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
@@ -93,8 +78,6 @@ STADIUM_WALLS = {
     "D1":  "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
     "F1":  "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1200",
     "R1":  "https://images.unsplash.com/photo-1551958219-acbc608c6377?q=80&w=1200",
-    "T1":  "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
-    "C1":  "https://images.unsplash.com/photo-1606925797300-0b35e9d1794e?q=80&w=1200",
     "DEFAULT": "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
 }
 
@@ -103,11 +86,6 @@ SORT_OPTIONS = ["По EV (валуи сверху)", "По вероятност�
 SORT_DEFAULT_DESC = {"По EV (валуи сверху)": True, "По вероятности": True,
                      "По дате (ближайшие)": False, "По коэффициенту": True,
                      "По лиге (А→Я)": False}
-PORT_SORT = ["⏳ Сначала активные", "📅 По дате (новые сверху)",
-             "💰 По сумме ставки", "📈 По PnL", "🎯 По вероятности"]
-PORT_DEFAULT_DESC = {"⏳ Сначала активные": False, "📅 По дате (новые сверху)": True,
-                     "💰 По сумме ставки": True, "📈 По PnL": True,
-                     "🎯 По вероятности": True}
 CORRIDORS = {"OU": (1.50, 2.80), "AH": (1.60, 2.60), "STAT": (1.40, 4.50)}
 
 
@@ -120,7 +98,6 @@ def _get_secret(key, default=""):
     return os.environ.get(key, default)
 
 
-CLOUD_GEMINI_KEY = _get_secret("GEMINI_KEY", "")
 CLOUD_API_FOOTBALL_KEY = _get_secret("API_FOOTBALL_KEY", "")
 CLOUD_GIST_ID = _get_secret("GIST_ID", "")
 CLOUD_GIST_TOKEN = _get_secret("GIST_TOKEN", "")
@@ -192,17 +169,14 @@ def disk_cache_put(key, value):
 
 
 # ============= GIST =============
-def _gist_url(gid):
-    return f"https://api.github.com/gists/{gid}"
-
-
 def _gist_load(gid, filename):
     if not gid or not CLOUD_GIST_TOKEN:
         return None
     try:
         headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
                    "Accept": "application/vnd.github+json"}
-        r = _sess.get(_gist_url(gid), headers=headers, timeout=15, proxies=NO_PROXY)
+        r = _sess.get(f"https://api.github.com/gists/{gid}",
+                      headers=headers, timeout=15, proxies=NO_PROXY)
         if r.status_code != 200:
             return None
         files = r.json().get("files", {})
@@ -227,49 +201,23 @@ def _gist_save(gid, filename, data):
         headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
                    "Accept": "application/vnd.github+json"}
         body = {"files": {filename: {"content": content}}}
-        r = _sess.patch(_gist_url(gid), headers=headers, json=body, timeout=20, proxies=NO_PROXY)
+        r = _sess.patch(f"https://api.github.com/gists/{gid}",
+                        headers=headers, json=body, timeout=20, proxies=NO_PROXY)
         return r.status_code in (200, 201)
     except Exception as e:
         log_err("gist_save", e)
         return False
 
 
-def engine_to_gist(fp, eng):
-    if not CLOUD_IS_CLOUD:
-        return False
-    try:
-        blob = base64.b64encode(pickle.dumps({"fp": fp, "engine": eng})).decode()
-        return _gist_save(CLOUD_GIST_ID, "engine.b64",
-                          {"data": blob, "fp": fp,
-                           "ts": datetime.now().isoformat(), "version": APP_VERSION})
-    except Exception as e:
-        log_err("engine_to_gist", e)
-        return False
-
-
-def engine_from_gist(fp):
-    if not CLOUD_IS_CLOUD:
-        return None
-    try:
-        d = _gist_load(CLOUD_GIST_ID, "engine.b64")
-        if not d or d.get("fp") != fp:
-            return None
-        return pickle.loads(base64.b64decode(d["data"]))["engine"]
-    except Exception as e:
-        log_err("engine_from_gist", e)
-        return None
-
-
 # ============= HELPERS =============
 def _new_team():
     return {"hs": [], "hc": [], "as": [], "ac": [], "form": [],
             "cfh": [], "cah": [], "cfa": [], "caa": [],
-            "yfh": [], "yah": [], "yfa": [], "yaa": [],
-            "hst_h": [], "hstc_h": [], "hst_a": [], "hstc_a": []}
+            "yfh": [], "yah": [], "yfa": [], "yaa": []}
 
 
 def _new_lp():
-    return {"w_shots": 0.35, "rho": -0.13, "w_dc": 0.72, "w_ml": 0.25, "n_train": 0}
+    return {"w_shots": 0.35, "rho": -0.13, "w_dc": 0.72, "n_train": 0}
 
 
 def _f(v):
@@ -297,7 +245,7 @@ def parse_date(s):
 
 
 def is_cup(row):
-    if not row:
+    if not isinstance(row, dict):
         return False
     dv = row.get("Div", "")
     lg = (row.get("League") or "").lower()
@@ -313,6 +261,8 @@ def kelly(prob, odds, bank, frac):
 
 
 def odd1(row, keys):
+    if not isinstance(row, dict):
+        return None
     for k in keys:
         v = _f(row.get(k))
         if v and v > 1.01:
@@ -369,15 +319,13 @@ def api_request(api_key, endpoint, params=None, timeout=15):
             return None, f"HTTP {r.status_code}"
         data = r.json()
         if data.get("errors"):
-            errs = data["errors"]
-            return None, str(errs)[:120]
+            return None, str(data["errors"])[:120]
         return data, None
     except Exception as e:
         return None, f"{type(e).__name__}"
 
 
 def api_season_history(api_key, div, season_year):
-    """История матчей лиги за сезон."""
     if not api_key:
         return []
     lid = DIV_TO_APILG.get(div)
@@ -386,7 +334,7 @@ def api_season_history(api_key, div, season_year):
     ck = f"api_hist_{div}_{season_year}"
     cached = disk_cache_get(ck, 86400 * 7)
     if cached is not None:
-        return cached
+        return cached if isinstance(cached, list) else []
     data, err = api_request(api_key, "fixtures",
                             {"league": lid, "season": season_year, "status": "FT"},
                             timeout=25)
@@ -395,6 +343,8 @@ def api_season_history(api_key, div, season_year):
         return []
     out = []
     for f in (data or {}).get("response") or []:
+        if not isinstance(f, dict):
+            continue
         fix = f.get("fixture") or {}
         teams = f.get("teams") or {}
         goals = f.get("goals") or {}
@@ -412,9 +362,9 @@ def api_season_history(api_key, div, season_year):
 
 
 def api_fixtures_by_league(api_key, d_from, d_to, progress_cb=None):
-    """Fixtures за период — по каждой лиге отдельно (free tier требует league)."""
+    """Fixtures по каждой лиге отдельно (API-Football Free требует league)."""
     if not api_key:
-        return [], ["API fixtures: нет ключа"]
+        return [], ["API: нет ключа"]
     out = []
     rep = []
     leagues = [(39, "АПЛ"), (140, "Ла Лига"), (135, "Серия A"),
@@ -426,7 +376,7 @@ def api_fixtures_by_league(api_key, d_from, d_to, progress_cb=None):
             progress_cb(idx, total, name)
         ck = f"api_fx_{lid}_{d_from}_{d_to}"
         cached = disk_cache_get(ck, 900)
-        if cached is not None:
+        if cached is not None and isinstance(cached, list):
             out += cached
             rep.append(f"API {name}: {len(cached)} (кэш)")
             continue
@@ -438,6 +388,8 @@ def api_fixtures_by_league(api_key, d_from, d_to, progress_cb=None):
             continue
         rows = []
         for f in (data or {}).get("response") or []:
+            if not isinstance(f, dict):
+                continue
             fix = f.get("fixture") or {}
             teams = f.get("teams") or {}
             lg = f.get("league") or {}
@@ -469,6 +421,8 @@ def api_live(api_key):
         return [], [f"API live: {err}"]
     out = []
     for f in (data or {}).get("response") or []:
+        if not isinstance(f, dict):
+            continue
         fix = f.get("fixture") or {}
         teams = f.get("teams") or {}
         goals = f.get("goals") or {}
@@ -490,7 +444,7 @@ def tsdb_day(dstr):
     ck = f"tsdb_day_{dstr}"
     cached = disk_cache_get(ck, 1800)
     if cached is not None:
-        return cached
+        return cached if isinstance(cached, list) else []
     try:
         r = _sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={dstr}&s=Soccer",
                       timeout=15, proxies=NO_PROXY)
@@ -499,6 +453,8 @@ def tsdb_day(dstr):
         ev = (r.json() or {}).get("events") or []
         out = []
         for e in ev:
+            if not isinstance(e, dict):
+                continue
             h = e.get("strHomeTeam")
             a = e.get("strAwayTeam")
             if not h or not a:
@@ -519,7 +475,9 @@ def tsdb_days_parallel(days_list):
         futs = {ex.submit(tsdb_day, d): d for d in days_list}
         for fut in as_completed(futs):
             try:
-                out += fut.result()
+                result = fut.result()
+                if isinstance(result, list):
+                    out += result
             except Exception:
                 pass
     return out
@@ -528,10 +486,9 @@ def tsdb_days_parallel(days_list):
 # ============= CALIBRATOR =============
 class Calibrator:
     def __init__(self):
-        self.method = "temperature"
         self.platt_a = [1.0, 1.0, 1.0]
         self.platt_b = [0.0, 0.0, 0.0]
-        self.temp = 1.0
+        self.method = "temperature"
 
     def fit(self, logits, outcomes):
         if len(logits) < 60:
@@ -558,12 +515,12 @@ class Calibrator:
         except Exception:
             pass
 
-    def calibrate(self, p, class_idx=0):
+    def calibrate(self, p, ci=0):
         p = min(max(p, 1e-6), 1 - 1e-6)
         if self.method == "platt":
             z = math.log(p / (1 - p))
-            a = self.platt_a[class_idx]
-            b = self.platt_b[class_idx]
+            a = self.platt_a[ci]
+            b = self.platt_b[ci]
             return 1 / (1 + math.exp(-max(-30, min(30, a * z + b))))
         return p
 
@@ -629,22 +586,6 @@ class Engine:
         px = sum(M[i][i] for i in range(N))
         return p1, px, M
 
-    def _loglik(self, rows, rho, w):
-        ll = 0.0
-        for lh, la, e, pde, out, wt in rows:
-            p1, px, _ = self._p1px(lh, la, rho)
-            f1 = w * p1 + (1 - w) * e * (1 - pde)
-            fd = w * px + (1 - w) * pde
-            f2 = max(1e-6, 1 - f1 - fd)
-            ll -= wt * math.log(min(max((f1, fd, f2)[out], 1e-6), 1 - 1e-6))
-        return ll
-
-    def _fit_league(self, lg):
-        win = self.hist[lg][-400:]
-        if len(win) < 200:
-            return
-        cur = self.lp[lg]
-
     def add(self, h, a, hg, ag, row=None, match_num=None, total=None, match_date=None):
         k = 16 + 32 * min(1.0, (match_num or 0) / max(1, total or 1))
         rh, ra = self.elo.get(h, 1500), self.elo.get(a, 1500)
@@ -653,11 +594,14 @@ class Engine:
         self.elo[h] = rh + k * (s - eh)
         self.elo[a] = ra + k * ((1 - s) - (1 - eh))
         t = self.st
-        t[h]["hs"].append(hg); t[h]["hc"].append(ag)
-        t[a]["as"].append(ag); t[a]["ac"].append(hg)
+        t[h]["hs"].append(hg)
+        t[h]["hc"].append(ag)
+        t[a]["as"].append(ag)
+        t[a]["ac"].append(hg)
         t[h]["form"].append(3 if hg > ag else (1 if hg == ag else 0))
         t[a]["form"].append(3 if ag > hg else (1 if hg == ag else 0))
-        self.hg.append(hg); self.ag.append(ag)
+        self.hg.append(hg)
+        self.ag.append(ag)
         self.h2h[(h, a)].append(hg - ag)
         self.h2h[(h, a)] = self.h2h[(h, a)][-8:]
         for team in (h, a):
@@ -711,7 +655,9 @@ class Engine:
         cx = self.calibrate(fd, 1)
         c2 = self.calibrate(f2, 2)
         ct = c1 + cx + c2 or 1.0
-        c1 /= ct; cx /= ct; c2 /= ct
+        c1 /= ct
+        cx /= ct
+        c2 /= ct
         over = 1 - sum(self._p(lam_h + lam_a, k) for k in range(3))
         btts = sum(M[i][j] for i in range(1, MATRIX_N) for j in range(1, MATRIX_N))
         return {"p1": c1, "x": cx, "p2": c2, "p1_raw": f1, "x_raw": fd, "p2_raw": f2,
@@ -827,11 +773,8 @@ def engine_cache_fp(season, div_counts):
 
 
 def engine_cache_get(fp):
-    eng = engine_from_gist(fp)
-    if eng:
-        return eng
     try:
-        key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
+        key = "neuro_engine_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         cached = disk_cache_get(key, 86400 * 14)
         if cached and cached.get("fp") == fp:
             return cached.get("engine")
@@ -842,11 +785,10 @@ def engine_cache_get(fp):
 
 def engine_cache_put(fp, eng):
     try:
-        key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
+        key = "neuro_engine_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         disk_cache_put(key, {"fp": fp, "engine": eng})
     except Exception:
         pass
-    engine_to_gist(fp, eng)
 
 
 def apply_settle(D, idx, outcome, score=None):
@@ -925,7 +867,7 @@ def build_picks(cards, thr, bank, kf):
                       "odd": odd, "odd_s": f"{odd:.2f}", "stake": stake,
                       "stars": stars_for({"ok": True, "ev": ev, "prob": prob}, thr),
                       "type": "value", "verdict": text,
-                      "main": main, "alt": alt, "avoid": avoid, "clv": None,
+                      "main": main, "alt": alt, "avoid": avoid,
                       "ev": ev, "score": ev + prob})
     picks.sort(key=lambda p: p["score"], reverse=True)
     return picks[:10]
@@ -953,23 +895,6 @@ def pick_sort_val(p, key):
     if key.startswith("По коэффициенту"):
         return p.get("odd") or 0
     return p.get("league", "")
-
-
-def bet_sort_key(pair, key):
-    i, b = pair
-    if key.startswith("⏳"):
-        return (0 if b["status"] == "pending" else 1, b.get("date_iso", "9999"))
-    if key.startswith("📅"):
-        return b.get("date_iso", "9999")
-    if key.startswith("💰"):
-        return b.get("stake", 0)
-    if key.startswith("📈"):
-        if b["status"] == "won":
-            return (1, b["stake"] * (b["odds"] - 1))
-        if b["status"] == "lost":
-            return (1, -b["stake"])
-        return (0, 0.0)
-    return (0, b.get("prob", 0))
 
 
 def stadium_bg(div):
@@ -1027,13 +952,13 @@ def bet_card_html(b):
             f"{b['stake']:.2f} у.е.</div>")
 
 
-# ============= CSS + ANIMATIONS =============
+# ============= CSS =============
 st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
 html,body,#root,.stApp,.stApp>div,
 [data-testid="stAppViewContainer"],[data-testid="stAppViewContainer"]>div,
-[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stBottom"],
-[data-testid="stBottom"]>div,[data-testid="stBottomBlockContainer"],
+[data-testid="stHeader"],[data-testid="stToolbar"],
+[data-testid="stBottom"],[data-testid="stBottom"]>div,
 [data-testid="stAppViewBlockContainer"],[data-testid="stVerticalBlock"],
 section.main,section.main>div,.main,.main>div,.block-container{
 background-color:#05070f!important;
@@ -1041,13 +966,12 @@ background-image:linear-gradient(180deg,#05070f 0%,#0b0f1a 50%,#05070f 100%)!imp
 background-attachment:fixed!important;}
 [data-testid="stHeader"],[data-testid="stToolbar"]{background:transparent!important;}
 .stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
-div[data-testid="stMetricValue"]{color:#f8fafc!important;}
 header,#MainMenu{visibility:hidden}
-section[data-testid="stSidebar"]{background:rgba(8,11,20,.85);backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
+section[data-testid="stSidebar"]{background:rgba(8,11,20,.85)!important;backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
 section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2!important;}
 section.stButton>button{background:linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec4899);color:#fff;border:none;border-radius:14px;font-weight:800;padding:10px 20px;transition:all .25s ease;}
 section.stButton>button:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 12px 40px rgba(139,92,246,.5);}
-.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16),rgba(236,72,153,.14));backdrop-filter:blur(20px);}
+.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16),rgba(236,72,153,.14));}
 .hero h1{margin:0;font-size:2.5rem;font-weight:800;background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-size:200% 200%;animation:shine 6s ease infinite;}
 @keyframes shine{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px;}
@@ -1055,21 +979,19 @@ section.stButton>button:hover{transform:translateY(-2px) scale(1.02);box-shadow:
 .kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;font-weight:700;letter-spacing:1.2px;}
 .kpi .v{font-size:1.5rem;font-weight:800;color:#fff;}
 .kpi .v.g{color:#34d399;}.kpi .v.y{color:#fbbf24;}.kpi .v.r{color:#f87171;}
-
-/* Match card with stadium bg */
-.mcard{background:rgba(10,14,24,.72);border:1px solid rgba(255,255,255,.09);border-radius:20px;padding:20px 22px;margin-bottom:14px;transition:all .3s ease;position:relative;overflow:hidden;}
+.mcard{background:rgba(10,14,24,.72);border:1px solid rgba(255,255,255,.09);border-radius:20px;padding:20px 22px;margin-bottom:14px;transition:all .3s ease;}
 .mcard:hover{transform:translateY(-2px);box-shadow:0 20px 60px rgba(0,0,0,.5);}
 .mcard.value{border-color:rgba(52,211,153,.55);}
 .chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
 .chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
 .chip.warn{background:rgba(248,113,113,.15);color:#fecaca;}
 .badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
-.badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
+.badge.val{background:rgba(52,211,153,.25);color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
 .badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
 .teams{font-size:1.4rem;font-weight:800;color:#fff;margin:12px 0 6px;text-shadow:0 2px 8px rgba(0,0,0,.8);}
 .teams span{color:#8b93a7;font-weight:400;}
-.verdict{background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.22);border-radius:14px;padding:12px 16px;margin:10px 0;color:#e6eaf2;font-size:.9rem;backdrop-filter:blur(6px);}
-.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e2e8f0;backdrop-filter:blur(4px);}
+.verdict{background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.22);border-radius:14px;padding:12px 16px;margin:10px 0;color:#e6eaf2;font-size:.9rem;}
+.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e2e8f0;}
 .ok{color:#34d399;font-weight:800;}.nok{color:#64748b;}
 .evpos{color:#34d399;font-weight:700;}.evneg{color:#f87171;font-weight:700;}
 .mfoot{margin-top:12px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
@@ -1079,23 +1001,16 @@ section.stButton>button:hover{transform:translateY(-2px) scale(1.02);box-shadow:
 .betcard.won{border-left-color:#34d399;}
 .betcard.lost{border-left-color:#f87171;}
 .betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;background:rgba(52,211,153,.25);color:#6ee7b7;}
-
-/* ANIMATED LOADER */
 .nbr-loader{display:flex;align-items:center;gap:14px;padding:20px;background:rgba(10,14,24,.72);border:1px solid rgba(34,211,238,.35);border-radius:16px;margin-bottom:14px;}
 .nbr-ring{width:38px;height:38px;border-radius:50%;border:3px solid rgba(34,211,238,.2);border-top-color:#22d3ee;animation:nbr-spin 1s linear infinite;flex-shrink:0;}
 @keyframes nbr-spin{to{transform:rotate(360deg);}}
-.nbr-loader .nbr-text{flex:1;color:#a5f3fc;font-family:'Inter',sans-serif;font-size:.95rem;}
-.nbr-loader .nbr-text b{color:#fff;}
-.nbr-dots{display:inline-block;}
+.nbr-text{flex:1;color:#a5f3fc;font-family:'Inter',sans-serif;font-size:.95rem;}
+.nbr-text b{color:#fff;}
 .nbr-dots::after{content:'';animation:nbr-dots 1.4s steps(4,end) infinite;}
 @keyframes nbr-dots{0%{content:'';}25%{content:'.';}50%{content:'..';}75%{content:'...';}}
 .nbr-bar{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-top:8px;}
 .nbr-bar-fill{height:100%;background:linear-gradient(90deg,#22d3ee,#a78bfa,#f472b6);background-size:200% 100%;animation:nbr-bar-move 2s linear infinite;border-radius:3px;transition:width .4s ease;}
 @keyframes nbr-bar-move{0%{background-position:0% 0%;}100%{background-position:200% 0%;}}
-
-/* Pulse dot */
-.nbr-pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:8px;animation:nbr-pulse 1.5s ease-in-out infinite;}
-@keyframes nbr-pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(1.3);}}
 </style>""", unsafe_allow_html=True)
 
 
@@ -1111,7 +1026,7 @@ if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · {'☁️ CLOUD' if CLOUD_IS_CLOUD else '💾 LOCAL'} · 🏟 Stadium backgrounds · 🎬 Animated loader</p>
+ <p>v{APP_VERSION} · {'☁️ CLOUD' if CLOUD_IS_CLOUD else '💾 LOCAL'} · 🏟 Stadium · 🎬 Animated loader</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status'] == 'pending')}</div></div>
@@ -1126,15 +1041,6 @@ with st.sidebar:
         st.success("☁️ Cloud mode", icon="✅")
     else:
         st.warning("💾 Local mode", icon="⚠️")
-    if st.checkbox("🔬 Network test"):
-        import socket
-        for host in ["api.github.com", "www.thesportsdb.com", "v3.football.api-sports.io"]:
-            try:
-                ip = socket.gethostbyname(host)
-                st.text(f"✅ {host} → {ip}")
-            except Exception as e:
-                st.text(f"❌ {host} → {type(e).__name__}")
-
     st.markdown("**🔑 Ключи**")
     ak = st.text_input("API-Football", value=D.get("meta", {}).get("api_key", ""), type="password")
     if ak != D.get("meta", {}).get("api_key", ""):
@@ -1172,9 +1078,7 @@ with tab1:
         if not ak_:
             st.error("❌ Нужен API-Football ключ")
         else:
-            # АНИМИРОВАННЫЙ LOADER
             loader_ph = st.empty()
-            bar_ph = st.empty()
             log_ph = st.empty()
 
             def update_loader(text, pct, logs=None):
@@ -1187,11 +1091,11 @@ with tab1:
  </div>
 </div>""", unsafe_allow_html=True)
                 if logs:
-                    log_html = "<br>".join(logs[-10:])
                     log_ph.markdown(
                         f"<div style='color:#8b93a7;font-family:Inter,sans-serif;"
                         f"font-size:.8rem;background:rgba(10,14,24,.6);padding:12px;"
-                        f"border-radius:10px;max-height:200px;overflow-y:auto'>{log_html}</div>",
+                        f"border-radius:10px;max-height:200px;overflow-y:auto'>"
+                        + "<br>".join(logs[-10:]) + "</div>",
                         unsafe_allow_html=True)
 
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1200,35 +1104,52 @@ with tab1:
             d_to = limit.strftime("%Y-%m-%d")
             logs = []
 
-            # ШАГ 1: Fixtures по лигам
+            # ФИКС: двойная защита от не-словарей
+            def safe_filter(rows):
+                out = []
+                if not isinstance(rows, list):
+                    return out
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    if not r.get("HomeTeam") or not r.get("AwayTeam"):
+                        continue
+                    out.append(r)
+                return out
+
             def fixture_progress(idx, total, name):
                 update_loader(f"Сбор матчей [{idx + 1}/{total}] — {name}",
                               (idx + 1) / total * 0.3, logs)
 
             update_loader("Запуск сканирования...", 0.0, logs)
-            api_rows, api_rep = api_fixtures_by_league(ak_, d_from, d_to, fixture_progress)
+            api_rows_raw, api_rep = api_fixtures_by_league(ak_, d_from, d_to, fixture_progress)
+            api_rows = safe_filter(api_rows_raw)
             for line in api_rep:
                 logs.append(f"📡 {line}")
             update_loader("Fixtures собраны", 0.3, logs)
 
-            # ШАГ 2: TheSportsDB
             day_list = [(today + timedelta(days=off)).strftime("%Y-%m-%d") for off in range(0, min(days, 7))]
-            tsdb_rows = tsdb_days_parallel(day_list)
+            tsdb_rows_raw = tsdb_days_parallel(day_list)
+            tsdb_rows = safe_filter(tsdb_rows_raw)
             logs.append(f"📡 TSDB-day: {len(tsdb_rows)}")
             update_loader("Дополнительные источники", 0.4, logs)
 
-            # Дедупликация
             seen = set()
             src_rows = []
             for r in (api_rows + tsdb_rows):
-                k = (r.get("HomeTeam"), r.get("AwayTeam"), r.get("Date"))
+                if not isinstance(r, dict):
+                    continue
+                h = r.get("HomeTeam")
+                a = r.get("AwayTeam")
+                if not h or not a:
+                    continue
+                k = (h, a, r.get("Date"))
                 if k in seen:
                     continue
                 seen.add(k)
                 src_rows.append(r)
             logs.append(f"🔗 Уникальных: {len(src_rows)}")
 
-            # ШАГ 3: Загрузка истории
             train_divs = ["E0", "SP1", "I1", "D1", "F1", "E1", "SP2", "I2", "D2", "F2", "N1", "B1", "P1", "T1", "R1"]
             cur_year = today.year if today.month >= 7 else today.year - 1
             prev_year = cur_year - 1
@@ -1256,7 +1177,8 @@ with tab1:
                             try:
                                 engine.learn_step(r["HomeTeam"], r["AwayTeam"],
                                                   float(r["FTHG"]), float(r["FTAG"]), r,
-                                                  lg=dv, match_num=processed, total=total_matches,
+                                                  lg=dv, match_num=processed,
+                                                  total=total_matches,
                                                   match_date=parse_date(r.get("Date", "")))
                                 trained += 1
                             except Exception as e:
@@ -1268,7 +1190,6 @@ with tab1:
                 engine_cache_put(fp, engine)
                 logs.append(f"🧠 Обучено: {trained}")
 
-            # ШАГ 4: Сканирование
             update_loader("Поиск валуев...", 0.97, logs)
             PR = dict(PR0)
             PR.update(thr=thr, edge=min_edge, ev=min_ev, bank=D["bank"], kelly=kelly_frac)
@@ -1343,7 +1264,6 @@ with tab1:
             update_loader("✅ Готово!", 1.0, logs)
             time.sleep(1.0)
             loader_ph.empty()
-            bar_ph.empty()
             log_ph.empty()
             st.rerun()
 
