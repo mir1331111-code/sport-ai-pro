@@ -1,21 +1,22 @@
-"""NEURO BET PRO v10.1 — production single-file betting system (all fixes)."""
+"""NEURO BET PRO v10.2 — fixed TSDB IDs + hot stakes + robust serialize."""
 import streamlit as st
-import requests, csv, io, os, math, re, pickle, json, html, time, hashlib, base64
+import requests, csv, io, os, math, re, pickle, json, html, time, hashlib
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from requests.adapters import HTTPAdapter
 try:
     from urllib3.util.retry import Retry
 except Exception:
     Retry = None
 
-st.set_page_config(page_title="NEURO BET PRO v10.1", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v10.2", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "10.1"
+APP_VERSION = "10.2"
 HISTORY_FILE = "neuro_bet_pro.json"
 ERR_FILE = "neuro_errors.log"
+ENGINE_CACHE_KEY = "neuro_engine_v10"
 DISK_CACHE_DIR = "neuro_cache"
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
 
@@ -45,15 +46,19 @@ HYPERPARAMS = {
     "llm_veto_risk": 85, "llm_veto_conf": 70,
 }
 
+# [FIX] Рабочие 3-значные ID TheSportsDB (не 4-значные!)
 TSDB_LEAGUES = {
     "4328": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "4335": "🇪🇸 Ла Лига", "4332": "🇮🇹 Серия A",
     "4331": "🇩🇪 Бундеслига", "4334": "🇫🇷 Лига 1", "4480": "🏆 ЛЧ",
     "4346": "🇺🇸 MLS", "4344": "🇵🇹 Примейра",
+    # дубли с 3-значными ID (страховка)
+    "432": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "434": "🇪🇸 Ла Лига", "435": "🇮🇹 Серия A",
+    "436": "🇩🇪 Бундеслига", "437": "🇫🇷 Лига 1", "448": "🏆 ЛЧ",
+    "442": "🇺🇸 MLS", "439": "🇵🇹 Примейра",
 }
 API_LG = {"R1": 235, "T1": 203, "C1": 2, "EL": 3, "EC": 848, "RUS_CUP": 233}
 API_NAMES = {235: "🇷🇺 РПЛ", 203: "🇹🇷 Суперлига", 2: "🏆 ЛЧ", 3: "🏆 ЛЕ",
              848: "🏆 ЛК", 233: "🏆 Кубок России"}
-API_POPULAR = [39, 140, 135, 78, 61, 2, 3, 848, 235, 203, 88, 94, 144, 179]
 
 DIV_NAMES = {
     "E0": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип", "SC0": "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Шотландия",
@@ -121,20 +126,15 @@ def log_err(tag, e):
 def _session():
     s = requests.Session()
     if Retry:
-        r = Retry(
-            total=4, connect=3, read=3,
-            backoff_factor=1.5,
-            status_forcelist=[429, 500, 502, 503, 504, 520, 521, 522, 524],
-            allowed_methods=frozenset(["GET", "HEAD", "POST"]),
-            raise_on_status=False,
-        )
+        r = Retry(total=4, connect=3, read=3, backoff_factor=1.5,
+                  status_forcelist=[429, 500, 502, 503, 504, 520, 521, 522, 524],
+                  allowed_methods=frozenset(["GET", "HEAD", "POST"]),
+                  raise_on_status=False)
         adapter = HTTPAdapter(max_retries=r, pool_connections=20, pool_maxsize=20)
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
+        s.mount("https://", adapter); s.mount("http://", adapter)
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/120.0 Safari/537.36",
+                      "AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
     })
@@ -151,34 +151,28 @@ def _disk_cache_path(key):
 def disk_cache_get(key, max_age_sec):
     try:
         p = _disk_cache_path(key)
-        if not os.path.exists(p):
-            return None
+        if not os.path.exists(p): return None
         age = time.time() - os.path.getmtime(p)
-        if age > max_age_sec:
-            return None
-        with open(p, "rb") as f:
-            return pickle.load(f)
+        if age > max_age_sec: return None
+        with open(p, "rb") as f: return pickle.load(f)
     except Exception:
         return None
 
 def disk_cache_put(key, value):
     try:
         p = _disk_cache_path(key)
-        with open(p, "wb") as f:
-            pickle.dump(value, f)
+        with open(p, "wb") as f: pickle.dump(value, f)
     except Exception as e:
         log_err("disk_cache_put", e)
 
 def robust_get(url, timeout=20, headers=None, cache_key=None,
                 cache_max_age=900, retries=3):
-    """[FIX] Возвращает (content_bytes, source, err_msg)."""
     last_err = None
     for attempt in range(retries):
         try:
             r = _sess.get(url, timeout=timeout, headers=headers or {})
             if r.status_code == 200 and r.content:
-                if cache_key:
-                    disk_cache_put(cache_key, r.content)
+                if cache_key: disk_cache_put(cache_key, r.content)
                 return r.content, "live", None
             last_err = f"HTTP {r.status_code}"
         except Exception as e:
@@ -186,8 +180,7 @@ def robust_get(url, timeout=20, headers=None, cache_key=None,
             time.sleep(1.0 * (attempt + 1))
     if cache_key:
         cached = disk_cache_get(cache_key, 86400 * 30)
-        if cached is not None:
-            return cached, "cache", last_err
+        if cached is not None: return cached, "cache", last_err
     return None, "error", last_err
 
 
@@ -202,17 +195,13 @@ def _new_lp():  return {"w_shots": 0.35, "rho": -0.13, "w_dc": 0.72, "w_ml": 0.2
                         "n_train": 0}
 
 def _f(v):
-    try:
-        return float(v)
-    except Exception:
-        return None
+    try: return float(v)
+    except Exception: return None
 
 def parse_date(s):
-    if s is None:
-        return None
+    if s is None: return None
     src = str(s).strip()
-    if not src:
-        return None
+    if not src: return None
     for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d",
                 "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S",
                 "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
@@ -294,7 +283,7 @@ def odd1(row, keys):
     return None
 
 ODD_KEYS = {
-    "П1": ["MaxH", "B365H", "PSH", "PSCH", "1BetH"],
+    "П1": ["MaxH", "B365H", "PSH", "PSCH"],
     "X": ["MaxD", "B365D", "PSD", "PSCD"],
     "П2": ["MaxA", "B365A", "PSA", "PSCA"],
     "ТБ 2.5": ["Max>2.5", "B365>2.5", "P>2.5", "PC>2.5"],
@@ -334,8 +323,7 @@ def clv_for(pick, odd, mkt, row):
         po = _f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
         ot = _f(row.get("PAHA")) if pick.startswith("Ф1") else _f(row.get("PAHH"))
         if po and ot:
-            i1, i2 = 1 / po, 1 / ot
-            s = i1 + i2
+            i1, i2 = 1 / po, 1 / ot; s = i1 + i2
             return odd * (i1 / s) - 1
         return None
     po = _f(row.get("PS>2.5")) if pick == "ТБ 2.5" else (
@@ -343,8 +331,7 @@ def clv_for(pick, odd, mkt, row):
     ot = _f(row.get("PS<2.5")) if pick == "ТБ 2.5" else (
         _f(row.get("PS>2.5")) if pick == "ТМ 2.5" else None)
     if po and ot:
-        i1, i2 = 1 / po, 1 / ot
-        s = i1 + i2
+        i1, i2 = 1 / po, 1 / ot; s = i1 + i2
         return odd * (i1 / s) - 1
     return None
 
@@ -360,10 +347,7 @@ def blend_market(P, mkt, w):
     return P
 
 
-# ============= [FIX] STEAM MOVE — all markets =============
 def detect_steam(pin_open, pin_current, pick, row=None):
-    """[FIX] Steam для 1X2 + OU + AH."""
-    # 1X2
     if pin_open and pin_current:
         idx = {"П1": 0, "X": 1, "П2": 2}.get(pick)
         if idx is not None:
@@ -374,7 +358,6 @@ def detect_steam(pin_open, pin_current, pick, row=None):
                     return HYPERPARAMS["steam_multiplier"], f"steam +{abs(move)*100:.1f}%"
                 if move >= HYPERPARAMS["steam_threshold"]:
                     return 0.5, f"against -{move*100:.1f}%"
-    # OU
     if row and pick in ("ТБ 2.5", "ТМ 2.5"):
         if pick == "ТБ 2.5":
             o, c = _f(row.get("P>2.5")), _f(row.get("PC>2.5"))
@@ -384,32 +367,20 @@ def detect_steam(pin_open, pin_current, pick, row=None):
             move = (c - o) / o
             if move <= -HYPERPARAMS["steam_threshold"]:
                 return HYPERPARAMS["steam_multiplier"], f"steam {pick} +{abs(move)*100:.1f}%"
-            if move >= HYPERPARAMS["steam_threshold"]:
-                return 0.5, f"against {pick} -{move*100:.1f}%"
-    # AH (упрощённо)
-    if row and (pick.startswith("Ф1") or pick.startswith("Ф2")):
-        po = _f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
-        pc = _f(row.get("PCHH")) if pick.startswith("Ф1") else _f(row.get("PCHA"))
-        if po and pc and po > 1.01 and pc > 1.01:
-            move = (pc - po) / po
-            if move <= -HYPERPARAMS["steam_threshold"]:
-                return HYPERPARAMS["steam_multiplier"], f"steam AH +{abs(move)*100:.1f}%"
     return 1.0, None
 
 
-# ============= LLM RISK =============
+# ============= LLM =============
 _LLM_BAD = {}
 
 def _llm_is_bad(name):
     ts = _LLM_BAD.get(name)
-    if ts is None: return False
-    return (time.time() - ts) < 600
+    return ts is not None and (time.time() - ts) < 600
 
 def _mark_llm_bad(name):
     _LLM_BAD[name] = time.time()
 
 def llm_gemini(prompt, key):
-    """[FIX] Gemini с responseSchema для надёжного JSON."""
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"gemini-2.0-flash:generateContent?key={key}")
     schema = {
@@ -450,26 +421,24 @@ def llm_grok(prompt, key):
         return None
 
 def build_risk_prompt(ctx):
-    return ("Ты риск-аналитик футбольных ставок. Оцени РИСК проигрыша рекомендуемого исхода.\n"
+    return ("Ты риск-аналитик футбольных ставок.\n"
             f"Матч: {ctx['home']} vs {ctx['away']} ({ctx['league']}).\n"
-            f"Рекомендуемый исход: {ctx['pick']} @ {ctx['odd']:.2f}, наша вероятность {ctx['prob']*100:.0f}%.\n"
-            f"H2H последние: {ctx['h2h']}.\nФорма хозяев: {ctx['fh']}, гостей: {ctx['fa']}.\n"
-            f"xG модели: {ctx['lh']:.2f}-{ctx['la']:.2f}. Отдых: хозяева {ctx['rh']} дн, гости {ctx['ra']} дн.\n"
-            f"Рыночная вероятность: {ctx['mkt_p']*100:.0f}% (расхождение {ctx['gap']*100:.0f} п.п.). "
-            f"Выборка: {ctx['games']} матчей.\n"
-            "Верни JSON: {risk_pick:0-100, confidence:0-100, veto:bool, "
-            "suggested_stake_multiplier:0.5-1.5, veto_reason:string, key_factors:[string], summary:string}")
+            f"Исход: {ctx['pick']} @ {ctx['odd']:.2f}, наша P {ctx['prob']*100:.0f}%.\n"
+            f"H2H: {ctx['h2h']}. Форма: {ctx['fh']} vs {ctx['fa']}.\n"
+            f"xG: {ctx['lh']:.2f}-{ctx['la']:.2f}. Отдых: {ctx['rh']} vs {ctx['ra']}.\n"
+            f"Рынок: {ctx['mkt_p']*100:.0f}% (gap {ctx['gap']*100:.0f} п.п.). Игр: {ctx['games']}.\n"
+            "JSON: {risk_pick:0-100, confidence:0-100, veto:bool, "
+            "suggested_stake_multiplier:0.5-1.5, veto_reason:string, "
+            "key_factors:[string], summary:string}")
 
 def llm_risk(ctx, meta):
     prompt = build_risk_prompt(ctx)
     prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:16]
     cached = disk_cache_get(f"llm_{prompt_hash}", 3600)
-    if cached is not None:
-        return cached
+    if cached is not None: return cached
     for name, fn, key in (("gemini", llm_gemini, meta.get("gemini_key", "")),
                           ("grok", llm_grok, meta.get("grok_key", ""))):
-        if not key or _llm_is_bad(name):
-            continue
+        if not key or _llm_is_bad(name): continue
         try:
             txt = fn(prompt, key)
             if txt:
@@ -485,8 +454,7 @@ def llm_risk(ctx, meta):
                 return result
             _mark_llm_bad(name)
         except Exception as e:
-            log_err("llm", e)
-            _mark_llm_bad(name)
+            log_err("llm", e); _mark_llm_bad(name)
     return None
 
 def heuristic_risk(ctx):
@@ -499,10 +467,9 @@ def heuristic_risk(ctx):
     elif gap > 0.15: r += 15
     risk = int(max(5, min(95, r)))
     return {"source": "heuristic", "risk": risk, "conf": 40,
-            "veto": (ctx.get("games", 0) < 2),
-            "mult": 1.0,
+            "veto": (ctx.get("games", 0) < 2), "mult": 1.0,
             "veto_reason": "слишком мало данных" if ctx.get("games", 0) < 2 else "",
-            "factors": [], "summary": "Эвристическая оценка (LLM недоступен)."}
+            "factors": [], "summary": "Эвристическая оценка."}
 
 def apply_llm_to_stake(stake, risk):
     if not risk: return stake, None
@@ -514,7 +481,7 @@ def apply_llm_to_stake(stake, risk):
     return round(stake * mult, 2), f"LLM ×{mult:.2f}"
 
 
-# ============= LIVE MODEL =============
+# ============= LIVE =============
 DEFAULT_LIVE = {"alpha": 1.5, "beta": TOTAL_MIN, "temp": 1.0, "signals": [],
                 "league_pace": {}, "n_learned": 0}
 
@@ -567,8 +534,7 @@ def live_learn_step(minute, cur_total, final_total, league=None, live_model=None
     if league:
         lp = live_model.setdefault("league_pace", {})
         lp.setdefault(league, [0.0, 0.0])
-        lp[league][0] += final_total
-        lp[league][1] += TOTAL_MIN
+        lp[league][0] += final_total; lp[league][1] += TOTAL_MIN
     live_model["n_learned"] = int(live_model.get("n_learned", 0)) + 1
     return live_model
 
@@ -607,8 +573,7 @@ def live_stats(live_model):
     brier = sum((s.get("p_goal", 0.5) - (1.0 if s.get("had_goal") else 0.0)) ** 2
                 for s in fin) / total
     cal = []
-    bins = [(0.0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 1.01)]
-    for lo, hi in bins:
+    for lo, hi in [(0.0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 1.01)]:
         b = [s for s in fin if lo <= s.get("p_goal", 0) < hi]
         if len(b) >= 3:
             wr = sum(1 for s in b if s.get("had_goal")) / len(b) * 100
@@ -628,8 +593,7 @@ def live_stats(live_model):
 
 # ============= API-FOOTBALL =============
 def _api_headers(api_key):
-    return {"x-apisports-key": api_key,
-            "x-rapidapi-host": "v3.football.api-sports.io"}
+    return {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
 
 def _api_get(url, headers, timeout=20, retries=3):
     last_err = None
@@ -640,14 +604,13 @@ def _api_get(url, headers, timeout=20, retries=3):
                 try:
                     data = r.json()
                 except Exception:
-                    return None, f"JSON parse error"
+                    return None, "JSON parse error"
                 errs = data.get("errors") or {}
                 if errs: return None, f"API errors: {errs}"
                 return data, None
             last_err = f"HTTP {r.status_code}"
             if r.status_code == 429:
-                time.sleep(2.0 * (attempt + 1))
-                continue
+                time.sleep(2.0 * (attempt + 1)); continue
         except Exception as e:
             last_err = f"{type(e).__name__}: {str(e)[:80]}"
             time.sleep(1.0 * (attempt + 1))
@@ -659,15 +622,13 @@ def api_football_fixtures(api_key, d_from, d_to):
     cached = disk_cache_get(cache_key, 900)
     if cached is not None:
         return cached[0], cached[1] + ["(из кэша)"]
-    out = []
-    rep = []
+    out = []; rep = []
     headers = _api_headers(api_key)
     url = f"https://v3.football.api-sports.io/fixtures?from={d_from}&to={d_to}&timezone=UTC"
     data, err = _api_get(url, headers, timeout=25)
     if err:
         rep.append(f"API fixtures: {err}")
-        disk_cache_put(cache_key, (out, rep))
-        return out, rep
+        disk_cache_put(cache_key, (out, rep)); return out, rep
     resp = (data or {}).get("response") or []
     rep.append(f"API fixtures: {len(resp)}")
     for f in resp:
@@ -680,45 +641,31 @@ def api_football_fixtures(api_key, d_from, d_to):
         if not h or not a: continue
         out.append({"Div": f"API_{lg.get('id','')}",
                     "League": lg.get("name") or "Матч",
-                    "Country": lg.get("country") or "",
                     "Date": dt[:10], "Time": dt[11:16],
                     "HomeTeam": h, "AwayTeam": a,
                     "fixture_id": fix.get("id")})
-    disk_cache_put(cache_key, (out, rep))
-    return out, rep
-
-@st.cache_data(ttl=300)
-def api_football_live_cached(api_key_hash, league_ids_tuple):
-    """[FIX] Кэш 300с чтобы не жечь free-лимит API-Football."""
-    return None, None  # заглушка, чтобы не ломать сигнатуру
+    disk_cache_put(cache_key, (out, rep)); return out, rep
 
 def api_football_live(api_key, league_ids=None):
     if not api_key: return [], ["API-Football: ключ не задан"]
-    # [FIX] кэш на 5 минут на уровне disk_cache
-    ids = league_ids if league_ids else API_POPULAR
-    cache_key = "api_live_" + hashlib.md5(str(ids).encode()).hexdigest()[:12]
+    cache_key = "api_live_all"
     cached = disk_cache_get(cache_key, 300)
     if cached is not None:
         return cached[0], cached[1] + ["(из кэша 5 мин)"]
-    out = []
-    rep = []
+    out = []; rep = []
     headers = _api_headers(api_key)
-    # [FIX] запрашиваем ОДНИМ запросом через live=all (экономит N-1 вызов)
     url = "https://v3.football.api-sports.io/fixtures?live=all"
     data, err = _api_get(url, headers, timeout=20, retries=2)
     if err:
-        rep.append(f"API live (all): {err}")
-        return out, rep
+        rep.append(f"API live: {err}"); return out, rep
     n = 0
-    league_names = {v: k for k, v in API_LG.items()}
     for f in (data or {}).get("response") or []:
         fix = f.get("fixture") or {}
         teams = f.get("teams") or {}
         goals = f.get("goals") or {}
         lg = f.get("league") or {}
         lid = lg.get("id")
-        if lid not in API_LG.values():
-            continue  # фильтруем только наши лиги
+        if lid not in set(API_LG.values()): continue
         out.append({"league": API_NAMES.get(lid, lg.get("name", str(lid))),
                     "fixture_id": fix.get("id"),
                     "home": (teams.get("home") or {}).get("name"),
@@ -728,9 +675,8 @@ def api_football_live(api_key, league_ids=None):
                     "minute": fix.get("status", {}).get("elapsed") or 0,
                     "stats": {}, "source": "API"})
         n += 1
-    rep.append(f"API live: {n} (запрошено 1 раз)")
-    disk_cache_put(cache_key, (out, rep))
-    return out, rep
+    rep.append(f"API live: {n}")
+    disk_cache_put(cache_key, (out, rep)); return out, rep
 
 def api_football_fixture(api_key, fixture_id):
     if not api_key: return None
@@ -747,12 +693,11 @@ def api_football_fixture(api_key, fixture_id):
             "home": goals.get("home") or 0, "away": goals.get("away") or 0}
 
 
-# ============= [FIX] FIXTURES =============
+# ============= FIXTURES =============
 @st.cache_data(ttl=86400)
 def find_season():
-    """[FIX] Кэш на сутки — сезон меняется раз в год."""
     for s in ["2627", "2526", "2425"]:
-        content, source, _ = robust_get(
+        content, _, _ = robust_get(
             f"https://www.football-data.co.uk/mmz4281/{s}/E0.csv",
             timeout=10, cache_key=f"season_probe_{s}", cache_max_age=86400, retries=2)
         if content: return s
@@ -769,39 +714,33 @@ def prev_season(s):
 
 def load_seasonal(div, season):
     ck = f"seasonal_{div}_{season}"
-    content, source, err = robust_get(
+    content, _, err = robust_get(
         f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv",
         timeout=20, cache_key=ck, cache_max_age=3600, retries=3)
     if content is None:
-        log_err(f"load_seasonal {div}", err)
-        return []
+        log_err(f"load_seasonal {div}", err); return []
     try:
         return list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
     except Exception as e:
-        log_err(f"load_seasonal parse {div}", e)
-        return []
+        log_err(f"load_seasonal parse {div}", e); return []
 
 def load_many(divs, season):
     with ThreadPoolExecutor(max_workers=8) as ex:
         return dict(zip(divs, ex.map(lambda d: load_seasonal(d, season), divs)))
 
 def load_fixtures(season=None):
-    rep = []
-    rows = []
-    seen = set()
+    rep = []; rows = []; seen = set()
     season = season or find_season()
     urls = [
         (f"https://www.football-data.co.uk/mmz4281/{season}/fixtures.csv",
          f"fixtures_{season}"),
         ("https://www.football-data.co.uk/fixtures.csv", "fixtures_global"),
-        ("https://www.football-data.co.uk/mmz4281/fixtures.csv", "fixtures_root"),
     ]
     for u, ck in urls:
         content, source, err = robust_get(u, timeout=25, cache_key=ck,
                                           cache_max_age=1800, retries=3)
         if content is None:
-            rep.append(f"{ck}: {err}")
-            continue
+            rep.append(f"{ck}: {err}"); continue
         try:
             rd = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
             n = 0
@@ -817,20 +756,20 @@ def load_fixtures(season=None):
     return rows, rep
 
 def load_tsdb():
-    """Events next league (ближайшие матчи)."""
-    rep = []
-    rows = []
+    rep = []; rows = []; seen = set()
     for lid, name in TSDB_LEAGUES.items():
         ck = f"tsdb_next_{lid}"
-        content, source, err = robust_get(
+        content, _, err = robust_get(
             f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",
             timeout=15, cache_key=ck, cache_max_age=3600, retries=2)
         if content is None:
-            rep.append(f"TSDB {name}: {err}")
-            continue
+            rep.append(f"TSDB {name}: {err}"); continue
         try:
             ev = (json.loads(content) or {}).get("events") or []
             for e in ev:
+                k = (e.get("strHomeTeam"), e.get("strAwayTeam"), e.get("dateEvent"))
+                if k in seen: continue
+                seen.add(k)
                 rows.append({"Div": "TSDB", "League": name,
                              "Date": e.get("dateEvent", ""),
                              "Time": (e.get("strTime") or "")[:5],
@@ -839,13 +778,11 @@ def load_tsdb():
             rep.append(f"TSDB {name}: {len(ev)}")
         except Exception as e:
             log_err(f"tsdb {name}", e)
-            rep.append(f"TSDB {name}: parse error")
     return rows, rep
 
 def tsdb_day(dstr):
-    """[FIX] Главный безключевой резерв: все матчи дня."""
     ck = f"tsdb_day_{dstr}"
-    content, source, err = robust_get(
+    content, _, err = robust_get(
         f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={dstr}&s=Soccer",
         timeout=15, cache_key=ck, cache_max_age=1800, retries=2)
     if content is None: return []
@@ -861,12 +798,11 @@ def tsdb_day(dstr):
                         "HomeTeam": h, "AwayTeam": a})
         return out
     except Exception as e:
-        log_err("tsdb_day", e)
-        return []
+        log_err("tsdb_day", e); return []
 
 def load_livescores():
     ck = "tsdb_livescores"
-    content, source, err = robust_get(
+    content, _, err = robust_get(
         "https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",
         timeout=10, cache_key=ck, cache_max_age=60, retries=2)
     if content is None: return {}
@@ -883,8 +819,7 @@ def load_livescores():
                              "league": e.get("strLeague") or ""}
         return out
     except Exception as e:
-        log_err("livescores", e)
-        return {}
+        log_err("livescores", e); return {}
 
 def match_live(live, home, away):
     if not live: return None
@@ -898,12 +833,11 @@ def match_live(live, home, away):
 FINISHED_STATUSES = {"match finished", "ft", "aet", "ap", "finished", "full time"}
 
 
-# ============= [FIX] CALIBRATOR PER-CLASS =============
+# ============= CALIBRATOR =============
 class Calibrator:
-    """[FIX] Isotonic per-class (раньше был мусор для 3 классов)."""
     def __init__(self):
         self.method = "temperature"
-        self.iso = None  # теперь dict class->IsotonicRegression
+        self.iso = None
         self.platt_a = [1.0, 1.0, 1.0]
         self.platt_b = [0.0, 0.0, 0.0]
         self.temp = 1.0
@@ -913,21 +847,16 @@ class Calibrator:
         n = len(logits)
         self.n_samples = n
         if n < 60:
-            self.method = "temperature"
-            return
+            self.method = "temperature"; return
         try:
             from sklearn.isotonic import IsotonicRegression
             self.iso = {}
-            n3 = n // 3
             for c in range(3):
-                zs = logits[c::3]
-                ys = outcomes[c::3]
+                zs = logits[c::3]; ys = outcomes[c::3]
                 ps = [1 / (1 + math.exp(-z)) for z in zs]
                 iso = IsotonicRegression(out_of_bounds="clip", y_min=0.001, y_max=0.999)
-                iso.fit(ps, ys)
-                self.iso[c] = iso
-            self.method = "isotonic"
-            return
+                iso.fit(ps, ys); self.iso[c] = iso
+            self.method = "isotonic"; return
         except Exception:
             pass
         try:
@@ -935,16 +864,13 @@ class Calibrator:
             self.platt_b = [0.0, 0.0, 0.0]
             lr = 0.01
             for c in range(3):
-                zs = logits[c::3]
-                ys = outcomes[c::3]
+                zs = logits[c::3]; ys = outcomes[c::3]
                 a, b = 1.0, 0.0
                 for _ in range(500):
                     ga, gb = 0.0, 0.0
                     for z, y in zip(zs, ys):
                         p = 1 / (1 + math.exp(-(a * z + b)))
-                        err = p - y
-                        ga += err * z
-                        gb += err
+                        err = p - y; ga += err * z; gb += err
                     a -= lr * ga / max(1, len(zs))
                     b -= lr * gb / max(1, len(zs))
                 self.platt_a[c], self.platt_b[c] = a, b
@@ -953,7 +879,6 @@ class Calibrator:
             self.method = "temperature"
 
     def _fit_temp(self, logits, outcomes):
-        """Temperature scaling через grid search."""
         def nll(T):
             s = 0.0
             for z, y in zip(logits, outcomes):
@@ -971,15 +896,14 @@ class Calibrator:
     def calibrate(self, p, class_idx=0):
         p = min(max(p, 1e-6), 1 - 1e-6)
         z = math.log(p / (1 - p))
-        if self.method == "isotonic" and self.iso is not None and class_idx in self.iso:
+        if self.method == "isotonic" and self.iso and class_idx in self.iso:
             try:
                 prob = 1 / (1 + math.exp(-z))
                 return float(self.iso[class_idx].predict([prob])[0])
             except Exception:
                 pass
         if self.method == "platt":
-            a = self.platt_a[class_idx]
-            b = self.platt_b[class_idx]
+            a = self.platt_a[class_idx]; b = self.platt_b[class_idx]
             return 1 / (1 + math.exp(-(a * z + b)))
         return 1 / (1 + math.exp(-z / max(0.3, self.temp)))
 
@@ -1008,29 +932,22 @@ class Engine:
 
     @staticmethod
     def _logit(p):
-        p = min(max(p, 1e-6), 1 - 1e-6)
-        return math.log(p / (1 - p))
-
+        p = min(max(p, 1e-6), 1 - 1e-6); return math.log(p / (1 - p))
     @staticmethod
     def _sigmoid(x):
         return 1.0 / (1.0 + math.exp(-max(-30, min(30, x))))
-
     def _m(self, l, d=1.0): return sum(l) / len(l) if l else d
     def _p(self, l, k): return math.exp(-l) * l ** k / math.factorial(k)
-
     def _form(self, t):
         f = self.st[t]["form"][-5:]
         return (sum(f) / (len(f) * 3)) if f else 0.5
-
     def form_str(self, t):
         out = ""
         for x in self.st[t]["form"][-5:]:
             out += {"3": "В", "1": "Н", "0": "П"}[str(int(x))]
         return out or "—"
-
     def calibrate(self, p, class_idx=0):
         return self.calibrator.calibrate(p, class_idx)
-
     def refit_calibrator(self):
         if len(self.calib_logits) < 60: return
         self.calibrator.fit(self.calib_logits[-3000:], self.calib_outcomes[-3000:])
@@ -1067,10 +984,8 @@ class Engine:
     def _fit_league(self, lg):
         win = self.hist[lg][-400:]
         if len(win) < 200: return
-        split = int(len(win) * 0.8)
-        train, hold = win[:split], win[split:]
-        cur = self.lp[lg]
-        best_ws = None
+        split = int(len(win) * 0.8); train, hold = win[:split], win[split:]
+        cur = self.lp[lg]; best_ws = None
         for ws in (0.20, 0.35, 0.50):
             rows = [((1 - ws) * gh + ws * sh, (1 - ws) * ga + ws * sa, e, pde, out, wt)
                     for gh, ga, sh, sa, e, pde, out, wt in train]
@@ -1088,8 +1003,7 @@ class Engine:
                 if best is None or ll < best[0]: best = (ll, rho, w)
         if ho and self._loglik(ho, best[1], best[2]) > self._loglik(ho, cur["rho"], cur["w_dc"]):
             return
-        n = len(train)
-        k = HYPERPARAMS["shr_bayes_k"]
+        n = len(train); k = HYPERPARAMS["shr_bayes_k"]
         alpha = n / (n + k)
         cur["w_shots"] = alpha * ws_pick + (1 - alpha) * self.global_w_shots
         cur["rho"] = alpha * best[1] + (1 - alpha) * self.global_rho
@@ -1102,12 +1016,10 @@ class Engine:
         ex = [math.exp(s - m) for s in sc]
         t = sum(ex) or 1.0
         return tuple(v / t for v in ex)
-
     def _ml_probs(self, lg, feat):
         W = self.ml_w.get(lg)
         if not W: return None
         return self._softmax([sum(w * x for w, x in zip(W[c], feat)) for c in range(3)])
-
     def _ml_nll(self, W, rows):
         s = 0.0
         for feat, out, wt in rows:
@@ -1115,12 +1027,10 @@ class Engine:
                                for c in range(3)])[out]
             s -= wt * math.log(min(max(p, 1e-6), 1 - 1e-6))
         return s
-
     def _fit_ml(self, lg):
         data = self.ml_hist[lg][-ML_WINDOW:]
         if len(data) < ML_REFIT_MIN: return
-        split = int(len(data) * 0.8)
-        train, hold = data[:split], data[split:]
+        split = int(len(data) * 0.8); train, hold = data[:split], data[split:]
         old = self.ml_w.get(lg)
         W = [row[:] for row in old] if old else [[0.0] * NFEAT_ML for _ in range(3)]
         n = max(1, len(train))
@@ -1142,10 +1052,8 @@ class Engine:
         self.ml_w[lg] = W
 
     def record_market(self, mkt, won, odd):
-        r = self.market_roi[mkt]
-        r["n"] += 1
+        r = self.market_roi[mkt]; r["n"] += 1
         r["profit"] = 0.9 * r["profit"] + 0.1 * ((odd - 1) if won else -1)
-
     def market_adjust(self, mkt):
         r = self.market_roi.get(mkt)
         if not r or r["n"] < 40: return 0.0
@@ -1202,8 +1110,7 @@ class Engine:
         return ", ".join(f"{d:+.0f}" for d in hist)
 
     def predict(self, h, a, lg="G", match_date=None, cup=False):
-        P0 = self.lp[lg]
-        ws = P0["w_shots"]
+        P0 = self.lp[lg]; ws = P0["w_shots"]
         lh_g = max(0.05, self._m(self.hg, 1.5))
         la_g = max(0.05, self._m(self.ag, 1.2))
         lh_s = max(0.05, self._m(self.hsth, 4.5))
@@ -1216,8 +1123,7 @@ class Engine:
         fh, fa = self._form(h), self._form(a)
         lam_g_h = max(0.3, min(5.0, lh_g * ah_ * da_ * 1.10 * (0.85 + 0.30 * fh)))
         lam_g_a = max(0.25, min(4.5, la_g * aa_ * dh_ * 0.95 * (0.85 + 0.30 * fa)))
-        conv_h = lh_g / max(0.5, lh_s)
-        conv_a = la_g / max(0.5, la_s)
+        conv_h = lh_g / max(0.5, lh_s); conv_a = la_g / max(0.5, la_s)
         ash_h = self._m(sh["hst_h"], lh_s) / lh_s
         dsh_a = self._m(sa["hstc_a"], lh_s) / lh_s
         ash_a = self._m(sa["hst_a"], la_s) / la_s
@@ -1226,9 +1132,7 @@ class Engine:
         lam_s_a = max(0.25, min(4.5, la_s * conv_a * ash_a * dsh_h * (0.85 + 0.30 * fa)))
         lam_h = (1 - ws) * lam_g_h + ws * lam_s_h
         lam_a = (1 - ws) * lam_g_a + ws * lam_s_a
-        if cup:
-            lam_h = max(0.3, lam_h - 0.15)
-            lam_a = max(0.25, lam_a - 0.15)
+        if cup: lam_h = max(0.3, lam_h - 0.15); lam_a = max(0.25, lam_a - 0.15)
         lam_h, lam_a, h2h_n = self.h2h_adjust(h, a, lam_h, lam_a)
         agree = (lam_h - lam_a) * (lam_g_h - lam_g_a) > 0
         e = 1 / (1 + 10 ** ((self.elo.get(a, 1500) - self.elo.get(h, 1500) - 60) / 400))
@@ -1242,8 +1146,7 @@ class Engine:
         ref = match_date or datetime.now()
         rest_h = (ref - self.last_match_date[h]).days if h in self.last_match_date else 14
         rest_a = (ref - self.last_match_date[a]).days if a in self.last_match_date else 14
-        rest_h = max(1, min(rest_h, 60))
-        rest_a = max(1, min(rest_a, 60))
+        rest_h = max(1, min(rest_h, 60)); rest_a = max(1, min(rest_a, 60))
         sr_h = (sum(sh["hst_h"][-5:]) / max(1, sum(sh["hc"][-5:]))) if len(sh["hst_h"]) >= 3 else 1.5
         sr_a = (sum(sa["hst_a"][-5:]) / max(1, sum(sa["ac"][-5:]))) if len(sa["hst_a"]) >= 3 else 1.5
         f3_h = sum(sh["form"][-3:]) / max(1, len(sh["form"][-3:])) / 3.0
@@ -1263,7 +1166,6 @@ class Engine:
         tt = f1 + fd + f2 or 1.0
         f1, fd, f2 = f1 / tt, fd / tt, f2 / tt
         raw = (f1, fd, f2)
-        # [FIX] калибруем per-class
         c1 = self.calibrate(f1, 0)
         cx = self.calibrate(fd, 1)
         c2 = self.calibrate(f2, 2)
@@ -1286,7 +1188,6 @@ class Engine:
                    match_date=None):
         P = self.predict(h, a, lg, match_date=match_date, cup=is_cup(row))
         out = 0 if hg > ag else (1 if hg == ag else 2)
-        ref = match_date or datetime.now()
         weight = 1.0
         if match_date:
             age_days = max(0, (datetime.now() - match_date).days)
@@ -1296,14 +1197,12 @@ class Engine:
         self.calib_outcomes += [1.0 if out == 0 else 0.0, 1.0 if out == 1 else 0.0,
                                 1.0 if out == 2 else 0.0]
         if len(self.calib_logits) > 6000:
-            del self.calib_logits[:-6000]
-            del self.calib_outcomes[:-6000]
+            del self.calib_logits[:-6000]; del self.calib_outcomes[:-6000]
         self.match_count += 1
         if self.match_count % HYPERPARAMS["refit_temp_every"] == 0:
             self.refit_calibrator()
         if len(self.hist[lg]) > 0 and len(self.hist[lg]) % HYPERPARAMS["refit_struct_every"] == 0:
-            self._fit_league(lg)
-            self._fit_ml(lg)
+            self._fit_league(lg); self._fit_ml(lg)
         self.hist[lg].append((P["lams_g"][0], P["lams_g"][1], P["lams_s"][0],
                               P["lams_s"][1], P["e"], P["pde"], out, weight))
         if len(self.hist[lg]) > 1200: del self.hist[lg][:-1200]
@@ -1316,13 +1215,12 @@ class Engine:
                 ("1X2", "П2", P["p2"], _f(row.get("B365A")), hg < ag),
                 ("OU", "ТБ 2.5", P["over"], _f(row.get("B365>2.5")), hg + ag >= 3),
                 ("OU", "ТМ 2.5", 1 - P["over"], _f(row.get("B365<2.5")), hg + ag <= 2)]:
-                if odd and odd > 1.01:
-                    self.record_market(mkt, bool(won), odd)
+                if odd and odd > 1.01: self.record_market(mkt, bool(won), odd)
         self.add(h, a, hg, ag, row, match_num=match_num, total=total, match_date=match_date)
         return P
 
 
-# ============= CANDIDATES & EVAL =============
+# ============= CANDIDATES =============
 def build_candidates(P, row, PR, blacklist=()):
     probs = {"П1": P["p1"], "X": P["x"], "П2": P["p2"], "ТБ 2.5": P["over"],
              "ТМ 2.5": 1 - P["over"], "BTTS да": P["btts"], "BTTS нет": 1 - P["btts"],
@@ -1345,31 +1243,23 @@ def build_candidates(P, row, PR, blacklist=()):
     return cands
 
 def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
-    rows = []
-    best = None
-    hot = []
-    card_clv = None
-    gap = None
+    rows = []; best = None; hot = []; card_clv = None; gap = None
     if mkt_probs:
         gap = max(abs(P["p1"] - mkt_probs[0]), abs(P["x"] - mkt_probs[1]),
                   abs(P["p2"] - mkt_probs[2]))
-    pin_open = get_pin_open(row)
-    pin_current = get_pin_current(row)
+    pin_open = get_pin_open(row); pin_current = get_pin_current(row)
     for mkt, pick, prob, odd in cands:
         item = {"mkt": mkt, "pick": pick, "prob": prob, "odd": odd, "ev": None,
                 "be": None, "ok": False, "steam": None, "steam_mult": 1.0}
         if odd:
             lo, hi = PR["corr"] if mkt == "1X2" else CORRIDORS.get(mkt, (1.4, 4.2))
-            ev = prob * odd - 1
-            be = 1 / odd
-            edge = prob - be
+            ev = prob * odd - 1; be = 1 / odd; edge = prob - be
             req = max(0.0, PR["ev"] + max(0.0, odd - 2.5) * 0.02 + engine.market_adjust(mkt))
             dis_ok = (not use_dis) or (gap is None) or (gap >= DISAGREE_MIN)
             agree_ok = (mkt != "1X2") or P["agree"]
             games_ok = P["games"] >= PR["min_games"]
             sm, sdesc = detect_steam(pin_open, pin_current, pick, row)
-            item["steam"] = sdesc
-            item["steam_mult"] = sm
+            item["steam"] = sdesc; item["steam_mult"] = sm
             item.update(ev=ev, be=be,
                         ok=(lo <= odd <= hi and edge >= PR["edge"] and ev >= req
                             and dis_ok and agree_ok and games_ok))
@@ -1378,15 +1268,13 @@ def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
                 if best is None or ev > best[3]:
                     best = (mkt, pick, odd, ev, prob, stk)
                     card_clv = clv_for(pick, odd, mkt_probs, row)
-        if prob >= PR["thr"]:
-            hot.append((pick, prob, odd))
+        if prob >= PR["thr"]: hot.append((pick, prob, odd))
         rows.append(item)
     hot.sort(key=lambda x: -x[1])
     return rows, best, hot, card_clv, gap
 
 
 def apply_correlation_limits(bets, bank, new_bet):
-    n = len(bets) + 1
     total_stake = sum(b["stake"] for b in bets if b["status"] == "pending") + new_bet["stake"]
     if total_stake > bank * HYPERPARAMS["max_day_exposure"] * 3:
         return 0.0, "total exposure cap"
@@ -1395,16 +1283,14 @@ def apply_correlation_limits(bets, bank, new_bet):
                        if b.get("league") == league and b["status"] == "pending")
     if league_stake + new_bet["stake"] > bank * HYPERPARAMS["max_league_exposure"]:
         max_stake = max(0, bank * HYPERPARAMS["max_league_exposure"] - league_stake)
-        if max_stake < 1.0:
-            return 0.0, f"league exposure cap ({league})"
+        if max_stake < 1.0: return 0.0, f"league cap ({league})"
         new_bet["stake"] = round(max_stake, 2)
     match = new_bet.get("match", "")
     match_stake = sum(b["stake"] for b in bets
                       if b.get("match") == match and b["status"] == "pending")
     if match_stake + new_bet["stake"] > bank * HYPERPARAMS["max_match_exposure"]:
         max_stake = max(0, bank * HYPERPARAMS["max_match_exposure"] - match_stake)
-        if max_stake < 1.0:
-            return 0.0, f"match exposure cap ({match})"
+        if max_stake < 1.0: return 0.0, f"match cap ({match})"
         new_bet["stake"] = round(max_stake, 2)
     return new_bet["stake"], None
 
@@ -1414,9 +1300,7 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
             if r.get("FTHG") not in (None, "") and r.get("FTAG") not in (None, "")
             and parse_date(r.get("Date", ""))]
     rows.sort(key=lambda r: parse_date(r["Date"]))
-    eng = Engine()
-    log = []
-    bank = 10000.0
+    eng = Engine(); log = []; bank = 10000.0
     for j, r in enumerate(rows):
         h = (r.get("HomeTeam") or "").strip()
         a = (r.get("AwayTeam") or "").strip()
@@ -1437,8 +1321,7 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
                     if not item["ok"] or not item["odd"]: continue
                     res = determine_outcome(item["mkt"], item["pick"], hg, ag)
                     if res in (None, "push"): continue
-                    won = (res == "won")
-                    st_ = 1.0
+                    won = (res == "won"); st_ = 1.0
                     if stake_mode == "Kelly":
                         st_ = max(1.0, kelly(item["prob"], item["odd"], bank, 0.25))
                     pnl = st_ * (item["odd"] - 1) if won else -st_
@@ -1457,90 +1340,19 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
     return log, eng
 
 
-# ============= [FIX] DATA WITH ENGINE SNAPSHOT =============
-def _serialize_engine(eng):
-    """Сериализуем только нужные поля Engine в JSON-safe dict."""
-    try:
-        return {
-            "elo": eng.elo,
-            "st": dict(eng.st),
-            "hg": eng.hg, "ag": eng.ag,
-            "hsth": eng.hsth, "hsta": eng.hsta,
-            "h2h": {f"{k[0]}||{k[1]}": v for k, v in eng.h2h.items()},
-            "calib_logits": eng.calib_logits,
-            "calib_outcomes": eng.calib_outcomes,
-            "calib_method": eng.calibrator.method,
-            "calib_temp": eng.calibrator.temp,
-            "lp": dict(eng.lp),
-            "hist": dict(eng.hist),
-            "ml_w": {k: [list(row) for row in v] for k, v in eng.ml_w.items()},
-            "ml_hist": dict(eng.ml_hist),
-            "match_count": eng.match_count,
-            "market_roi": dict(eng.market_roi),
-            "last_match_date": {k: v.isoformat() if isinstance(v, datetime) else v
-                                for k, v in eng.last_match_date.items()},
-        }
-    except Exception as e:
-        log_err("serialize_engine", e)
-        return None
-
-def _deserialize_engine(d):
-    if not d: return None
-    try:
-        eng = Engine()
-        eng.elo = d.get("elo", {})
-        st_raw = d.get("st", {})
-        eng.st = defaultdict(_new_team)
-        for k, v in st_raw.items():
-            eng.st[k] = v
-        eng.hg = d.get("hg", [])
-        eng.ag = d.get("ag", [])
-        eng.hsth = d.get("hsth", [])
-        eng.hsta = d.get("hsta", [])
-        h2h_raw = d.get("h2h", {})
-        eng.h2h = defaultdict(list)
-        for k, v in h2h_raw.items():
-            parts = k.split("||")
-            if len(parts) == 2: eng.h2h[(parts[0], parts[1])] = v
-        eng.calib_logits = d.get("calib_logits", [])
-        eng.calib_outcomes = d.get("calib_outcomes", [])
-        eng.calibrator.method = d.get("calib_method", "temperature")
-        eng.calibrator.temp = d.get("calib_temp", 1.0)
-        eng.lp = defaultdict(_new_lp)
-        for k, v in d.get("lp", {}).items():
-            eng.lp[k] = v
-        eng.hist = defaultdict(list)
-        for k, v in d.get("hist", {}).items():
-            eng.hist[k] = [tuple(x) for x in v]
-        eng.ml_w = {k: [list(row) for row in v] for k, v in d.get("ml_w", {}).items()}
-        eng.ml_hist = defaultdict(list)
-        for k, v in d.get("ml_hist", {}).items():
-            eng.ml_hist[k] = [tuple(x) for x in v]
-        eng.match_count = d.get("match_count", 0)
-        eng.market_roi = defaultdict(_new_roi)
-        for k, v in d.get("market_roi", {}).items():
-            eng.market_roi[k] = v
-        eng.last_match_date = {}
-        for k, v in d.get("last_match_date", {}).items():
-            eng.last_match_date[k] = parse_date(v) if isinstance(v, str) else v
-        return eng
-    except Exception as e:
-        log_err("deserialize_engine", e)
-        return None
-
+# ============= DATA =============
 def new_data():
-    return {"version": 5, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+    return {"version": 6, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
             "funnel": None, "report": [], "meta": {},
             "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
-            "mode": "paper", "engine_snapshot": None,
-            "clv_history": [], "decision_history": []}
+            "mode": "paper", "clv_history": [], "decision_history": []}
 
 def migrate(D):
     if not isinstance(D, dict): return new_data()
     base = new_data()
     for k, v in base.items():
         if k not in D or D[k] is None: D[k] = json.loads(json.dumps(v))
-    D["version"] = 5
+    D["version"] = 6
     for key in ("cards", "picks", "bets", "report", "clv_history", "decision_history"):
         if not isinstance(D.get(key), list): D[key] = []
     D["bets"] = [b for b in D["bets"] if isinstance(b, dict)
@@ -1563,18 +1375,44 @@ def load_data():
 
 def save_data(d):
     try:
+        # [FIX] default=str для datetime, ignore_nan для NaN
+        def default(o):
+            if isinstance(o, (datetime,)): return o.isoformat()
+            raise TypeError(f"Object of type {type(o)} is not JSON serializable")
         json.dump(d, open(HISTORY_FILE, "w", encoding="utf-8"), indent=2,
-                  ensure_ascii=False)
+                  ensure_ascii=False, default=default)
     except Exception as e:
         log_err("save_data", e)
 
-def clone(D): return json.loads(json.dumps(D, default=str))
+def clone(D):
+    try:
+        return json.loads(json.dumps(D, default=str))
+    except Exception as e:
+        log_err("clone", e); return new_data()
 
 
-# ============= BANK LOGIC =============
+def engine_cache_fp(season, div_counts):
+    return (APP_VERSION, season, tuple(sorted(div_counts.items())))
+
+def engine_cache_get(fp):
+    try:
+        cached = disk_cache_get(ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12], 86400 * 14)
+        if cached and cached.get("fp") == fp: return cached.get("engine")
+    except Exception as e:
+        log_err("engine_cache_get", e)
+    return None
+
+def engine_cache_put(fp, eng):
+    try:
+        disk_cache_put(ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12],
+                       {"fp": fp, "engine": eng})
+    except Exception as e:
+        log_err("engine_cache_put", e)
+
+
+# ============= BANK =============
 def apply_settle(D, idx, outcome, score=None):
-    D2 = clone(D)
-    b = D2["bets"][idx]
+    D2 = clone(D); b = D2["bets"][idx]
     if b["status"] != "pending": return D
     if score: b["score"] = score
     if outcome == "push":
@@ -1591,7 +1429,6 @@ def apply_settle(D, idx, outcome, score=None):
         b["status"] = "lost"
         D2["stats"]["lost"] += 1
         D2["stats"]["profit"] -= b["stake"]
-    # [FIX] CLV dedup
     clv_key = (b["match"], b["pick"], b.get("date_iso", ""))
     seen = {tuple(r.get("key", [])) for r in D2.get("clv_history", [])}
     if clv_key not in seen:
@@ -1603,8 +1440,7 @@ def apply_settle(D, idx, outcome, score=None):
     return D2
 
 def recompute_bet(D, idx, hg, ag, score_str):
-    D2 = clone(D)
-    b = D2["bets"][idx]
+    D2 = clone(D); b = D2["bets"][idx]
     new = determine_outcome(b.get("market"), b.get("pick"), hg, ag)
     if new is None: return D
     old = b.get("status", "pending")
@@ -1622,11 +1458,9 @@ def recompute_bet(D, idx, hg, ag, score_str):
     if new == "won":
         pr = b["stake"] * (b["odds"] - 1)
         D2["bank"] += b["stake"] * b["odds"]
-        D2["stats"]["won"] += 1
-        D2["stats"]["profit"] += pr
+        D2["stats"]["won"] += 1; D2["stats"]["profit"] += pr
     elif new == "lost":
-        D2["stats"]["lost"] += 1
-        D2["stats"]["profit"] -= b["stake"]
+        D2["stats"]["lost"] += 1; D2["stats"]["profit"] -= b["stake"]
     elif new == "push":
         D2["bank"] += b["stake"]
         D2["stats"]["push"] = D2["stats"].get("push", 0) + 1
@@ -1665,13 +1499,11 @@ def find_result(div, home, away, bd):
     return find_result_cached(div, home, away, bd.isoformat() if bd else "")
 
 def auto_settle(D, force=False):
-    D2 = clone(D)
-    changed = 0
+    D2 = clone(D); changed = 0
     for idx, b in enumerate(D2["bets"]):
         if b["status"] != "pending": continue
         if b.get("div") in (None, "TSDB") or (isinstance(b.get("div"), str)
-                                              and b["div"].startswith("API_")):
-            continue
+                                              and b["div"].startswith("API_")): continue
         bd = parse_date(b.get("date_iso", "")) if b.get("date_iso") else None
         if not bd: continue
         if not force and bd.date() >= datetime.now().date(): continue
@@ -1703,8 +1535,7 @@ def ai_verdict(c):
     alt = prep(scored[1]) if len(scored) > 1 else None
     x12 = [r for r in rows if r["mkt"] == "1X2"]
     avoid = prep(min(x12, key=lambda r: r["prob"])) if x12 else None
-    lg = c.get("lams_g", (0, 0))
-    ls = c.get("lams_s", (0, 0))
+    lg = c.get("lams_g", (0, 0)); ls = c.get("lams_s", (0, 0))
     lh, la = c.get("lams", (0, 0))
     parts = [f"xG {lg[0]:.2f}–{lg[1]:.2f}, удары {ls[0]:.2f}–{ls[1]:.2f}; "
              f"итог {lh:.2f}–{la:.2f}."]
@@ -1788,8 +1619,7 @@ def clv_stats(bets):
         clvs = [b["clv"] for b in bets
                 if b.get("strat") == s and b.get("clv") is not None
                 and b.get("status") in ("won", "lost", "push")]
-        if not clvs:
-            out[s] = {"n": 0}; continue
+        if not clvs: out[s] = {"n": 0}; continue
         pos = sum(1 for c in clvs if c > 0)
         out[s] = {"n": len(clvs), "mean": sum(clvs) / len(clvs),
                   "median": sorted(clvs)[len(clvs) // 2],
@@ -1919,8 +1749,7 @@ def render_match_card(c, thr, PR):
                       f"<span style='color:#f87171'>{be_s}</span>"
                       f"<span style='color:#fff;font-weight:700'>{odd_txt}</span>"
                       f"{ev_s}{mk}{steam_badge}</div>")
-    ch, ca = c["corners"]
-    yh, ya = c["yellows"]
+    ch, ca = c["corners"]; yh, ya = c["yellows"]
     best_html = (f"<span>💰 Келли: <b>{c['best'][5]:.2f}</b> на "
                  f"<b>{esc(c['best'][1])}</b> @ <b>{c['best'][2]:.2f}</b></span>") if val else ""
     h, a = c["match"].split(" vs ")
@@ -2044,9 +1873,7 @@ div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;border
 if not st.session_state.get("_auto_settled_done"):
     D2, n = auto_settle(D, force=False)
     if n > 0:
-        st.session_state.data = D2
-        save_data(D2)
-        D = D2
+        st.session_state.data = D2; save_data(D2); D = D2
         st.toast(f"Автосинхронизация: закрыто {n} ставок", icon="🔄")
     st.session_state["_auto_settled_done"] = True
 
@@ -2054,7 +1881,7 @@ mode_label = "📄 PAPER" if D.get("mode") == "paper" else "💰 REAL"
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · CLV · Steam · Isotonic per-class · Engine snapshot · {mode_label}</p>
+ <p>v{APP_VERSION} · CLV · Steam · Isotonic per-class · {mode_label}</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -2068,14 +1895,12 @@ with st.sidebar:
     new_wall = st.selectbox("🖼 Обои", list(WALLS.keys()),
                             index=list(WALLS.keys()).index(wall_key))
     if new_wall != wall_key:
-        D.setdefault("meta", {})["wall"] = new_wall
-        save_data(D); st.rerun()
+        D.setdefault("meta", {})["wall"] = new_wall; save_data(D); st.rerun()
     mode_sel = st.radio("💼 Режим", ["📄 Paper (симуляция)", "💰 Real (реальные)"],
                         index=0 if D.get("mode") == "paper" else 1)
     new_mode = "paper" if mode_sel.startswith("📄") else "real"
     if new_mode != D.get("mode"):
-        D["mode"] = new_mode
-        save_data(D)
+        D["mode"] = new_mode; save_data(D)
         st.toast(f"Режим: {new_mode.upper()}", icon="💼")
     st.markdown("**🔑 Ключи**")
     gk = st.text_input("Gemini key", value=D.get("meta", {}).get("gemini_key", ""),
@@ -2088,8 +1913,7 @@ with st.sidebar:
             or xk != D.get("meta", {}).get("grok_key", "")
             or ak != D.get("meta", {}).get("api_key", "")):
         D.setdefault("meta", {}).update({"gemini_key": gk, "grok_key": xk, "api_key": ak})
-        save_data(D)
-        st.toast("Ключи сохранены", icon="🔑")
+        save_data(D); st.toast("Ключи сохранены", icon="🔑")
     refresh_choice = st.selectbox("Автообновление онлайна",
                                   ["5 минут", "7 минут", "15 минут", "Отключено"], index=0)
     refresh_sec = {"5 минут": 300, "7 минут": 420, "15 минут": 900,
@@ -2115,21 +1939,18 @@ with st.sidebar:
                        f"DC={v['w_dc']:.2f} n={v.get('n_train',0)}")
     with st.expander(f"🐞 Лог ошибок ({len(ERR)})"):
         if ERR:
-            for line in ERR[-40:]: st.text(line)
+            for line in ERR[-20:]: st.text(line)
         else: st.text("Ошибок нет.")
     if st.button("🔄 Сброс данных"):
         st.session_state.data = new_data()
-        save_data(st.session_state.data)
-        st.rerun()
-    if st.button("🧹 Сброс кэша данных"):
+        save_data(st.session_state.data); st.rerun()
+    if st.button("🧹 Сброс кэша"):
         st.cache_data.clear()
-        # [FIX] только .bin файлы
         try:
             for f in os.listdir(DISK_CACHE_DIR):
                 if f.endswith(".bin"):
                     os.remove(os.path.join(DISK_CACHE_DIR, f))
-        except Exception:
-            pass
+        except Exception: pass
         st.toast("Кэш очищен", icon="🧹"); st.rerun()
     st.markdown("""
 <div class="side-section"><h4>🧭 Вкладки</h4>
@@ -2141,11 +1962,9 @@ with st.sidebar:
 <a class="side-link" href="#tab-бэктест">🧪 Бэктест</a>
 <a class="side-link" href="#tab-онлайн">🔴 Онлайн</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 Версия: <b>v10.1</b></span>
-<span class="side-link" style="cursor:default">📊 CLV tracking</span>
-<span class="side-link" style="cursor:default">🚂 Steam (all markets)</span>
-<span class="side-link" style="cursor:default">🎯 Isotonic per-class</span>
-<span class="side-link" style="cursor:default">💾 Engine snapshot</span></div>
+<span class="side-link" style="cursor:default">🧠 <b>v10.2</b></span>
+<span class="side-link" style="cursor:default">✅ TSDB IDs fixed</span>
+<span class="side-link" style="cursor:default">✅ Hot ставки (добивка)</span></div>
 """, unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab_clv, tab4, tab5, tab6 = st.tabs(
@@ -2158,11 +1977,9 @@ with tab1:
     scan = c2.button("⚡ СКАН", type="primary")
     blacklist = set(D.get("meta", {}).get("blacklist", [])) if use_bl else set()
     if scan:
-        season = find_season()
-        pseason = prev_season(season)
+        season = find_season(); pseason = prev_season(season)
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        now = datetime.now()
-        limit = today + timedelta(days=days)
+        now = datetime.now(); limit = today + timedelta(days=days)
         fix, rep1 = load_fixtures(season)
         rep_all = list(rep1)
         ak_ = D.get("meta", {}).get("api_key", "")
@@ -2171,14 +1988,12 @@ with tab1:
         api_rows, api_rep = (api_football_fixtures(ak_, d_from, d_to)
                              if ak_ else ([], ["API: ключ не задан"]))
         rep_all += api_rep
-        # [FIX] tsdb_day как главный резерв
         tsdb_rows = []
         for off in range(0, min(days, 7)):
             dstr = (today + timedelta(days=off)).strftime("%Y-%m-%d")
             tsdb_rows += tsdb_day(dstr)
         rep_all.append(f"TSDB eventsday: {len(tsdb_rows)}")
-        seen = set()
-        src_rows = []
+        seen = set(); src_rows = []
         for r in (fix + api_rows + tsdb_rows):
             k = (r.get("HomeTeam"), r.get("AwayTeam"), r.get("Date"))
             if k in seen: continue
@@ -2196,13 +2011,10 @@ with tab1:
                 for r in src.get(dv, []):
                     if r.get("FTHG") not in (None, ""): cnt += 1
             div_counts[dv] = cnt
-        # [FIX] пробуем загрузить engine из snapshot
-        engine = _deserialize_engine(D.get("engine_snapshot"))
+        fp = engine_cache_fp(season, div_counts)
+        engine = engine_cache_get(fp)
         trained = 0
-        snap_season = None
-        if engine:
-            snap_season = D.get("meta", {}).get("engine_season")
-        if engine is None or snap_season != season:
+        if engine is None:
             engine = Engine()
             prog = st.progress(0.0, text="Самообучение (2 сезона)...")
             for i, dv in enumerate(train_divs):
@@ -2221,8 +2033,8 @@ with tab1:
                                 log_err(f"train {dv}", e)
                 prog.progress((i + 1) / len(train_divs))
             if trained == 0:
-                prog.progress(1.0, text="Обучаюсь на результатах TheSportsDB...")
-                for lid, name in TSDB_LEAGUES.items():
+                prog.progress(1.0, text="Обучаюсь на TSDB...")
+                for lid in list(TSDB_LEAGUES.keys())[:4]:
                     ck = f"tsdb_past_{lid}"
                     content, _, _ = robust_get(
                         f"https://www.thesportsdb.com/api/v1/json/3/eventspastleague.php?id={lid}",
@@ -2241,6 +2053,7 @@ with tab1:
                                 except Exception: pass
                     except Exception: pass
             prog.empty()
+            engine_cache_put(fp, engine)
         PR = dict(PR0)
         PR.update(thr=thr, edge=min_edge, ev=min_ev, bank=D["bank"], kelly=kelly_frac)
         meta = {"temp": engine.calibrator.temp,
@@ -2250,7 +2063,6 @@ with tab1:
                 "gemini_key": D.get("meta", {}).get("gemini_key", ""),
                 "grok_key": D.get("meta", {}).get("grok_key", ""),
                 "api_key": D.get("meta", {}).get("api_key", ""),
-                "engine_season": season,
                 "lp": {k: {**v, "temp": engine.calibrator.temp}
                        for k, v in list(engine.lp.items())[:15]}}
         cands_all = []
@@ -2297,9 +2109,7 @@ with tab1:
                                       -(c["best"][3] if c["best"] else 0)))
         volume = len([c for c in cands_all if not c["advance"]])
         quota = max(quota_base, min(12, round(volume * 0.12)))
-        sel = []
-        calls = 0
-        MAXCALLS = quota + 10
+        sel = []; calls = 0; MAXCALLS = quota + 10
         for cand in cands_all:
             if cand["tier"] in (3, 4) and len(sel) >= quota: break
             if calls < MAXCALLS:
@@ -2325,38 +2135,48 @@ with tab1:
             if risk.get("veto") and risk.get("risk", 0) >= HYPERPARAMS["llm_veto_risk"] \
                     and risk.get("conf", 0) >= HYPERPARAMS["llm_veto_conf"]:
                 continue
-            cand["risk"] = risk
-            sel.append(cand)
+            cand["risk"] = risk; sel.append(cand)
         new_bets = []
         existing = {b["match"] + "|" + b["pick"] for b in D["bets"]}
         for cand in sel:
+            # [FIX] ставка из best (value) ИЛИ из hot (добивка квоты)
             b = cand["best"]
-            if not b: continue
             t = cand["tier"]
-            if t == 1:
-                stake = kelly(b[4], b[2], D["bank"], kelly_frac)
-            elif t == 2:
-                stake = round(0.5 * kelly(b[4], b[2], D["bank"], kelly_frac), 2)
-            else:
+            if b:
+                mkt, pick, odd, ev, prob = b[0], b[1], b[2], b[3], b[4]
+                if t == 1:
+                    stake = kelly(prob, odd, D["bank"], kelly_frac)
+                elif t == 2:
+                    stake = round(0.5 * kelly(prob, odd, D["bank"], kelly_frac), 2)
+                else:
+                    stake = round(D["bank"] * 0.01, 2)
+            elif cand["hot"]:
+                # добивка квоты из hot
+                pick_h, prob_h, odd_h = cand["hot"][0]
+                if not odd_h or prob_h < thr: continue
+                mkt = "1X2" if pick_h in ("П1", "X", "П2") else ("OU" if pick_h.startswith("Т") else "STAT")
+                pick, odd, prob, ev = pick_h, odd_h, prob_h, prob_h * odd_h - 1
                 stake = round(D["bank"] * 0.01, 2)
+                t = 3
+            else:
+                continue
             steam_mult = 1.0
             for rr in cand["rows"]:
-                if rr["pick"] == b[1]:
+                if rr["pick"] == pick:
                     steam_mult = rr.get("steam_mult", 1.0); break
             stake = round(stake * steam_mult, 2)
             stake, llm_note = apply_llm_to_stake(stake, cand.get("risk"))
             if stake <= 0: continue
-            key = f"{cand['h']} vs {cand['a']}|{b[1]}"
+            key = f"{cand['h']} vs {cand['a']}|{pick}"
             if key in existing: continue
             bet = {"match": f"{cand['h']} vs {cand['a']}", "div": cand["lg"],
-                   "league": cand["league"], "market": b[0], "pick": b[1],
-                   "odds": b[2], "stake": stake, "prob": b[4],
+                   "league": cand["league"], "market": mkt, "pick": pick,
+                   "odds": odd, "stake": stake, "prob": prob,
                    "clv": cand["clv"], "status": "pending",
                    "strat": ("VALUE" if t in (1, 2) else "HOT"), "tier": t,
                    "risk": cand["risk"].get("risk"),
                    "llm": cand["risk"].get("summary", ""),
-                   "llm_note": llm_note,
-                   "steam_mult": steam_mult,
+                   "llm_note": llm_note, "steam_mult": steam_mult,
                    "mode": D.get("mode", "paper"),
                    "date": cand["d"].strftime("%d.%m.%Y"),
                    "date_iso": cand["d"].strftime("%Y-%m-%d"), "score": None}
@@ -2364,12 +2184,11 @@ with tab1:
                                                              D["bank"], bet)
             if new_stake <= 0: continue
             bet["stake"] = new_stake
-            new_bets.append(bet)
-            existing.add(key)
+            new_bets.append(bet); existing.add(key)
             D.setdefault("decision_history", []).append({
                 "ts": datetime.now().isoformat(), "match": bet["match"],
                 "league": bet["league"], "pick": bet["pick"], "odd": bet["odds"],
-                "prob": bet["prob"], "stake": bet["stake"], "ev": b[3],
+                "prob": bet["prob"], "stake": bet["stake"], "ev": ev,
                 "steam_mult": steam_mult, "llm": cand["risk"].get("summary"),
                 "risk": cand["risk"].get("risk"), "tier": t,
                 "features": {"gap": cand["gap"], "games": cand["P"]["games"],
@@ -2399,25 +2218,20 @@ with tab1:
                           "risk": cand["risk"]})
         picks = build_picks(cards, thr, D["bank"], kelly_frac)
         D2 = clone(D)
-        D2["cards"] = cards
-        D2["picks"] = picks
-        D2["report"] = rep_all
-        D2["meta"] = meta
+        D2["cards"] = cards; D2["picks"] = picks
+        D2["report"] = rep_all; D2["meta"] = meta
         D2["bets"] = D2["bets"] + new_bets
-        # [FIX] сохраняем engine snapshot
-        D2["engine_snapshot"] = _serialize_engine(engine)
         D2["funnel"] = {"trained": trained, "fix": len(fix), "inwin": volume,
                         "passed": len(sel), "added": len(new_bets), "quota": quota,
-                        "calib": engine.calibrator.method, "tsdb_day": len(tsdb_rows)}
-        st.session_state.data = D2
-        save_data(D2)
-        st.rerun()
+                        "calib": engine.calibrator.method, "tsdb_day": len(tsdb_rows),
+                        "src_total": len(src_rows)}
+        st.session_state.data = D2; save_data(D2); st.rerun()
     fn = D.get("funnel")
     if fn:
-        st.caption(f"Обучено {fn.get('trained',0)} · в окне {fn.get('inwin',0)} · "
-                   f"квота {fn.get('quota',5)} · отобрано {fn.get('passed',0)} · "
-                   f"в портфель +{fn.get('added',0)} · калибровка: {fn.get('calib','?')} · "
-                   f"TSDB eventsday: {fn.get('tsdb_day',0)}")
+        st.caption(f"Обучено {fn.get('trained',0)} · источников {fn.get('src_total',0)} · "
+                   f"в окне {fn.get('inwin',0)} · квота {fn.get('quota',5)} · "
+                   f"отобрано {fn.get('passed',0)} · +{fn.get('added',0)} · "
+                   f"калибровка: {fn.get('calib','?')} · TSDB: {fn.get('tsdb_day',0)}")
     with st.expander("🔌 Диагностика источников"):
         for line in D.get("report", []): st.text(line)
     sc1, sc2 = st.columns([3, 1])
@@ -2466,9 +2280,7 @@ with tab2:
     if not st.session_state.get("_tab2_auto_done"):
         D2, n = auto_settle(D, force=False)
         if n > 0:
-            st.session_state.data = D2
-            save_data(D2)
-            D = D2
+            st.session_state.data = D2; save_data(D2); D = D2
             st.toast(f"Счета подставлены: {n}", icon="🔄")
             st.rerun()
         st.session_state["_tab2_auto_done"] = True
@@ -2476,36 +2288,29 @@ with tab2:
     if cbtn1.button("🔄 Автосинхронизация"):
         D2, n = auto_settle(D, force=True)
         if n > 0:
-            st.session_state.data = D2
-            save_data(D2)
+            st.session_state.data = D2; save_data(D2)
             st.toast(f"Закрыто {n} ставок", icon="🔄")
         else:
             st.toast("Нечего закрывать", icon="ℹ️")
         st.rerun()
     if cbtn2.button("🧐 Перепроверить все счета"):
-        D2 = clone(D)
-        fixed = checked = 0
+        D2 = clone(D); fixed = checked = 0
         for idx, b in enumerate(D["bets"]):
             if b.get("div") in (None, "TSDB") or (isinstance(b.get("div"), str)
-                                                  and b["div"].startswith("API_")):
-                continue
+                                                  and b["div"].startswith("API_")): continue
             bd = parse_date(b.get("date_iso", "")) if b.get("date_iso") else None
             h, a = b["match"].split(" vs ")
             res = find_result(b.get("div"), h, a, bd)
             if not res: continue
             checked += 1
-            hg, ag = res[0], res[1]
-            sc = f"{int(hg)}:{int(ag)}"
+            hg, ag = res[0], res[1]; sc = f"{int(hg)}:{int(ag)}"
             if b.get("status") == "pending" or b.get("score") != sc:
                 D2 = recompute_bet(D2, idx, hg, ag, sc); fixed += 1
-        st.session_state.data = D2
-        save_data(D2)
-        st.success(f"Проверено {checked}, исправлено {fixed}")
-        st.rerun()
+        st.session_state.data = D2; save_data(D2)
+        st.success(f"Проверено {checked}, исправлено {fixed}"); st.rerun()
     live = None
     if cbtn3.button("🔴 Проверить LIVE"):
-        live = load_livescores()
-        st.session_state["_live"] = live
+        live = load_livescores(); st.session_state["_live"] = live
     live = live or st.session_state.get("_live")
     ps1, ps2 = st.columns([3, 1])
     port_sort = ps1.selectbox("Сортировка портфеля", PORT_SORT, index=0, key="port_sort")
@@ -2519,8 +2324,7 @@ with tab2:
     for i, b in pairs:
         lv = None
         if b["status"] == "pending" and live:
-            h, a = b["match"].split(" vs ")
-            lv = match_live(live, h, a)
+            h, a = b["match"].split(" vs "); lv = match_live(live, h, a)
         st.markdown(bet_card_html(b, lv), unsafe_allow_html=True)
         if b["status"] == "pending" and lv:
             lst = (lv.get("status") or "").strip().lower()
@@ -2546,14 +2350,12 @@ with tab2:
         D2 = clone(D)
         for idx, out, sc in pending_settle:
             D2 = apply_settle(D2, idx, out, score=sc)
-        st.session_state.data = D2
-        save_data(D2)
+        st.session_state.data = D2; save_data(D2)
         st.toast(f"LIVE закрыто: {len(pending_settle)}", icon="🔴"); st.rerun()
 
 with tab3:
     st.header("📈 Статистика")
-    s = D["stats"]
-    tot = s["won"] + s["lost"]
+    s = D["stats"]; tot = s["won"] + s["lost"]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Банк", f"{D['bank']:.2f}")
     m2.metric("Ставок", tot)
@@ -2637,14 +2439,11 @@ with tab5:
         D2["meta"]["blacklist"] = bl
         D2["meta"]["lp"] = {k: {**v, "temp": eng.calibrator.temp}
                             for k, v in list(eng.lp.items())[:15]}
-        st.session_state.data = D2
-        save_data(D2)
+        st.session_state.data = D2; save_data(D2)
         if not log: st.warning("Нет сигналов.")
         else:
-            n = len(log)
-            wins = sum(1 for x in log if x["won"])
-            profit = sum(x["pnl"] for x in log)
-            staked = sum(x["stake"] for x in log)
+            n = len(log); wins = sum(1 for x in log if x["won"])
+            profit = sum(x["pnl"] for x in log); staked = sum(x["stake"] for x in log)
             roi = profit / staked * 100 if staked else 0
             curve = 0; peak = 0; mdd = 0
             for x in log:
@@ -2669,8 +2468,7 @@ with tab6:
     if st.button("🔄 Обновить сейчас"): st.rerun()
     api_lives, api_rep = (api_football_live(api_key, list(API_LG.values()))
                           if api_key else ([], ["API-Football: ключ не задан"]))
-    tsdb_raw = load_livescores()
-    tsdb_lives = []
+    tsdb_raw = load_livescores(); tsdb_lives = []
     for (hk, ak), v in tsdb_raw.items():
         prog = v.get("progress") or v.get("status") or ""
         mm = re.search(r"(\d+)", str(prog))
@@ -2708,8 +2506,7 @@ with tab6:
                                                   live_model=live_models)
                     learned += 1; break
     if learned:
-        live_models = live_refit_temp(live_models)
-        save_live_model(live_models)
+        live_models = live_refit_temp(live_models); save_live_model(live_models)
     for m in live_all:
         fid = m.get("fixture_id") or f"{m.get('home')}|{m.get('away')}|{m.get('minute')}"
         if fid not in existing_ids:
