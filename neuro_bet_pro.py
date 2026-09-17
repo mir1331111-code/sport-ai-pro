@@ -1,4 +1,4 @@
-"""NEURO BET PRO v10.4-cloud — persistent engine + Gist storage + correlation caps."""
+"""NEURO BET PRO v10.5 — dark theme fix + Gist persistence + all v10.4 fixes."""
 import streamlit as st
 import requests, csv, io, os, math, re, pickle, json, html, time, hashlib, base64
 from datetime import datetime, timedelta, timezone
@@ -10,13 +10,12 @@ try:
 except Exception:
     Retry = None
 
-st.set_page_config(page_title="NEURO BET PRO v10.4", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v10.5", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
 
 # ============= CLOUD SECRETS =============
 def _get_secret(key, default=""):
-    """Читает из Streamlit Secrets, потом env, потом default."""
     try:
         if key in st.secrets:
             return str(st.secrets[key])
@@ -33,7 +32,7 @@ CLOUD_GIST_TOKEN = _get_secret("GIST_TOKEN", "")
 CLOUD_IS_CLOUD = bool(CLOUD_GIST_ID and CLOUD_GIST_TOKEN)
 
 
-APP_VERSION = "10.4"
+APP_VERSION = "10.5"
 PROMPT_VERSION = "risk_v3"
 HISTORY_FILE = "neuro_bet_pro.json"
 ERR_FILE = "neuro_errors.log"
@@ -103,8 +102,8 @@ GOALS = {
                             corr=(1.40, 4.20), min_games=6),
 }
 WALLS = {
-    "🌃 Неон-стадион": "linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover",
-    "🕹 Synthwave":    "linear-gradient(rgba(6,3,20,.82),rgba(6,3,20,.92)),url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') center/cover",
+    "🌃 Неон-стадион": "linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
+    "🕹 Synthwave":    "linear-gradient(rgba(6,3,20,.82),rgba(6,3,20,.92)),url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
     "🌌 Aurora":       "radial-gradient(1100px 620px at 10% -10%, rgba(34,211,238,.20), transparent 60%),radial-gradient(950px 540px at 90% 8%, rgba(167,139,250,.20), transparent 62%),radial-gradient(900px 640px at 50% 112%, rgba(52,211,153,.16), transparent 60%),#05070f",
     "⚫ Минимализм":   "linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)",
 }
@@ -121,13 +120,15 @@ PORT_DEFAULT_DESC = {"⏳ Сначала активные": False, "📅 По д
 CORRIDORS = {"OU": (1.50, 2.80), "AH": (1.60, 2.60), "STAT": (1.40, 4.50)}
 
 
-# ============= LOGGING =============
+# ============= LOGGING (без записи в файл на Cloud) =============
 def _load_err_from_file():
     out = []
+    if CLOUD_IS_CLOUD:
+        return out
     try:
         if os.path.exists(ERR_FILE):
             with open(ERR_FILE, "r", encoding="utf-8") as f:
-                for line in f.readlines()[-300:]:
+                for line in f.readlines()[-100:]:
                     out.append(line.rstrip("\n"))
     except Exception:
         pass
@@ -135,16 +136,18 @@ def _load_err_from_file():
 
 ERR = _load_err_from_file()
 
+
 def log_err(tag, e):
-    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}][{tag}] {type(e).__name__}: {e}"
+    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}][{tag}] {type(e).__name__}: {str(e)[:200]}"
     ERR.append(line)
-    if len(ERR) > 300:
+    if len(ERR) > 100:
         ERR.pop(0)
-    try:
-        with open(ERR_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
+    if not CLOUD_IS_CLOUD:
+        try:
+            with open(ERR_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
 
 
 # ============= SESSION =============
@@ -173,6 +176,7 @@ def _disk_cache_path(key):
     h = hashlib.md5(key.encode("utf-8")).hexdigest()
     return os.path.join(DISK_CACHE_DIR, f"{h}.bin")
 
+
 def disk_cache_get(key, max_age_sec):
     try:
         p = _disk_cache_path(key)
@@ -183,6 +187,7 @@ def disk_cache_get(key, max_age_sec):
     except Exception:
         return None
 
+
 def disk_cache_put(key, value):
     try:
         p = _disk_cache_path(key)
@@ -191,6 +196,7 @@ def disk_cache_put(key, value):
         os.replace(tmp, p)
     except Exception as e:
         log_err("disk_cache_put", e)
+
 
 def robust_get(url, timeout=20, headers=None, cache_key=None,
                 cache_max_age=900, retries=3):
@@ -217,13 +223,16 @@ def _new_team():
             "cfa": [], "caa": [], "yfh": [], "yah": [], "yfa": [], "yaa": [],
             "hst_h": [], "hstc_h": [], "hst_a": [], "hstc_a": []}
 
+
 def _new_roi(): return {"n": 0, "profit": 0.0}
 def _new_lp():  return {"w_shots": 0.35, "rho": -0.13, "w_dc": 0.72, "w_ml": 0.25,
                         "n_train": 0}
 
+
 def _f(v):
     try: return float(v)
     except Exception: return None
+
 
 def parse_date(s):
     if s is None: return None
@@ -239,9 +248,11 @@ def parse_date(s):
             continue
     return None
 
+
 def is_half_line(x):
     v = _f(x)
     return v is not None and abs((v * 2) % 1) < 1e-9
+
 
 def fmt_line(v):
     s = f"{v:+.2f}"
@@ -249,12 +260,14 @@ def fmt_line(v):
     if s.endswith("."): s = s[:-1]
     return s
 
+
 def is_cup(row):
     if not row: return False
     dv = row.get("Div", "")
     lg = (row.get("League") or "").lower()
     return dv in ("C1", "EL", "EC") or any(
         x in lg for x in ["cup", "champions", "europa", "conference", "libertadores"])
+
 
 def settle_ah(pick, hg, ag):
     m = re.match(r"Ф([12])\(([-+]?\d+(?:\.\d+)?)\)", pick or "")
@@ -264,6 +277,7 @@ def settle_ah(pick, hg, ag):
     if res > 0.001: return True
     if abs(res) <= 0.001: return "push"
     return False
+
 
 def determine_outcome(market, pick, hg, ag):
     m = (market or "").upper()
@@ -297,17 +311,20 @@ def determine_outcome(market, pick, hg, ag):
         return "won" if ok else "lost"
     return None
 
+
 def kelly(prob, odds, bank, frac):
     if prob <= 0 or odds <= 1: return 0.0
     b = odds - 1
     k = (b * prob - (1 - prob)) / b
     return round(min(max(0, k * frac), 0.05) * bank, 2)
 
+
 def odd1(row, keys):
     for k in keys:
         v = _f(row.get(k))
         if v and v > 1.01: return v
     return None
+
 
 ODD_KEYS = {
     "П1": ["MaxH", "B365H", "PSH", "PSCH"],
@@ -317,7 +334,9 @@ ODD_KEYS = {
     "ТМ 2.5": ["Max<2.5", "B365<2.5", "P<2.5"],
 }
 
+
 def best_odd(row, pick): return odd1(row, ODD_KEYS.get(pick, []))
+
 
 def market_probs(row):
     ph, px, pa = _f(row.get("PSH")), _f(row.get("PSD")), _f(row.get("PSA"))
@@ -328,17 +347,20 @@ def market_probs(row):
     s = i1 + ix + ia
     return (i1 / s, ix / s, ia / s)
 
+
 def get_pin_open(row):
     if not row: return None
     h, x, a = _f(row.get("PSH")), _f(row.get("PSD")), _f(row.get("PSA"))
     if not (h and x and a): return None
     return (h, x, a)
 
+
 def get_pin_current(row):
     if not row: return None
     h, x, a = _f(row.get("PSCH")), _f(row.get("PSCD")), _f(row.get("PSCA"))
     if not (h and x and a): return get_pin_open(row)
     return (h, x, a)
+
 
 def clv_for(pick, odd, mkt, row):
     if not odd: return None
@@ -361,6 +383,7 @@ def clv_for(pick, odd, mkt, row):
         i1, i2 = 1 / po, 1 / ot; s = i1 + i2
         return odd * (i1 / s) - 1
     return None
+
 
 def blend_market(P, mkt, w):
     if not mkt: return P
@@ -391,12 +414,15 @@ def detect_steam(pin_open, pin_current, pick, row=None):
 # ============= LLM =============
 _LLM_BAD = {}
 
+
 def _llm_is_bad(name):
     ts = _LLM_BAD.get(name)
     return ts is not None and (time.time() - ts) < 600
 
+
 def _mark_llm_bad(name):
     _LLM_BAD[name] = time.time()
+
 
 def llm_gemini(prompt, key):
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -425,6 +451,7 @@ def llm_gemini(prompt, key):
     except Exception:
         return None
 
+
 def llm_grok(prompt, key):
     url = "https://api.x.ai/v1/chat/completions"
     hdr = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
@@ -438,6 +465,7 @@ def llm_grok(prompt, key):
     except Exception:
         return None
 
+
 def build_risk_prompt(ctx):
     return ("Ты риск-аналитик футбольных ставок.\n"
             f"Матч: {ctx['home']} vs {ctx['away']} ({ctx['league']}).\n"
@@ -448,6 +476,7 @@ def build_risk_prompt(ctx):
             "JSON: {risk_pick:0-100, confidence:0-100, veto:bool, "
             "suggested_stake_multiplier:0.5-1.5, veto_reason:string, "
             "key_factors:[string], summary:string}")
+
 
 def llm_risk(ctx, meta):
     prompt = build_risk_prompt(ctx)
@@ -475,6 +504,7 @@ def llm_risk(ctx, meta):
             log_err("llm", e); _mark_llm_bad(name)
     return None
 
+
 def heuristic_risk(ctx):
     r = 30
     r += max(0.0, (0.60 - ctx.get("prob", 0.5))) * 100
@@ -489,6 +519,7 @@ def heuristic_risk(ctx):
             "veto_reason": "слишком мало данных" if ctx.get("games", 0) < 2 else "",
             "factors": [], "summary": "Эвристическая оценка."}
 
+
 def apply_llm_to_stake(stake, risk):
     if not risk: return stake, None
     if risk.get("veto") and risk.get("risk", 0) >= HYPERPARAMS["llm_veto_risk"] \
@@ -497,6 +528,7 @@ def apply_llm_to_stake(stake, risk):
     mult = max(HYPERPARAMS["llm_mult_min"],
                min(HYPERPARAMS["llm_mult_max"], risk.get("mult", 1.0)))
     return round(stake * mult, 2), f"LLM ×{mult:.2f}"
+
 
 def should_veto(risk):
     if not risk: return False
@@ -512,6 +544,7 @@ def should_veto(risk):
 DEFAULT_LIVE = {"alpha": 1.5, "beta": TOTAL_MIN, "temp": 1.0, "signals": [],
                 "league_pace": {}, "n_learned": 0}
 
+
 def load_live_model():
     try:
         if os.path.exists("live_model.json"):
@@ -523,6 +556,7 @@ def load_live_model():
         log_err("load_live_model", e)
     return dict(DEFAULT_LIVE)
 
+
 def save_live_model(m):
     try:
         tmp = "live_model.json.tmp"
@@ -531,6 +565,7 @@ def save_live_model(m):
         os.replace(tmp, "live_model.json")
     except Exception as e:
         log_err("save_live_model", e)
+
 
 def live_predict(minute, cur_total, base_lam, league=None, live_model=None):
     if live_model is None: live_model = load_live_model()
@@ -551,6 +586,7 @@ def live_predict(minute, cur_total, base_lam, league=None, live_model=None):
     return {"p_goal": p_goal, "proj_total": cur_total + lam_rem,
             "lam_rem": lam_rem, "pace": lam_pace * TOTAL_MIN, "k": k}
 
+
 def live_learn_step(minute, cur_total, final_total, league=None, live_model=None):
     if live_model is None: live_model = load_live_model()
     alpha = float(live_model.get("alpha", 1.5))
@@ -567,9 +603,11 @@ def live_learn_step(minute, cur_total, final_total, league=None, live_model=None
     live_model["n_learned"] = int(live_model.get("n_learned", 0)) + 1
     return live_model
 
+
 def live_refit_temp(live_model, window=500):
     sigs = [s for s in live_model.get("signals", []) if s.get("had_goal") is not None][-window:]
     if len(sigs) < 20: return live_model
+
     def nll(T):
         s = 0.0
         for sig in sigs:
@@ -578,6 +616,7 @@ def live_refit_temp(live_model, window=500):
             y = 1.0 if sig.get("had_goal") else 0.0
             s -= math.log(min(max(p_c if y > 0.5 else 1 - p_c, 1e-9), 1 - 1e-9))
         return s
+
     best_T, best_ll = live_model.get("temp", 1.0), nll(live_model.get("temp", 1.0))
     T = 0.5
     while T <= 3.0001:
@@ -592,6 +631,7 @@ def live_refit_temp(live_model, window=500):
         T += 0.005
     live_model["temp"] = min(max(best_T, 0.5), 3.0)
     return live_model
+
 
 def live_stats(live_model):
     sigs = live_model.get("signals", [])
@@ -641,6 +681,7 @@ def live_stats(live_model):
 def _api_headers(api_key):
     return {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
 
+
 def _api_get(url, headers, timeout=20, retries=3):
     last_err = None
     for attempt in range(retries):
@@ -661,6 +702,7 @@ def _api_get(url, headers, timeout=20, retries=3):
             last_err = f"{type(e).__name__}: {str(e)[:80]}"
             time.sleep(1.0 * (attempt + 1))
     return None, last_err
+
 
 def api_football_fixtures(api_key, d_from, d_to):
     if not api_key: return [], ["API fixtures: ключ не задан"]
@@ -691,6 +733,7 @@ def api_football_fixtures(api_key, d_from, d_to):
                     "HomeTeam": h, "AwayTeam": a,
                     "fixture_id": fix.get("id")})
     disk_cache_put(cache_key, (out, rep)); return out, rep
+
 
 def api_football_live(api_key, league_ids=None):
     if not api_key: return [], ["API-Football: ключ не задан"]
@@ -724,6 +767,7 @@ def api_football_live(api_key, league_ids=None):
     rep.append(f"API live: {n}")
     disk_cache_put(cache_key, (out, rep)); return out, rep
 
+
 def api_football_fixture(api_key, fixture_id):
     if not api_key: return None
     headers = _api_headers(api_key)
@@ -752,14 +796,17 @@ def find_season():
             return s
     return "2526"
 
+
 def season_for(dt):
     if not dt: return find_season()
     y = dt.year if dt.month >= 7 else dt.year - 1
     return f"{str(y)[2:]}{str(y+1)[2:]}"
 
+
 def prev_season(s):
     try: return f"{int(s[:2])-1:02d}{int(s[2:])-1:02d}"
     except Exception: return s
+
 
 def load_seasonal(div, season):
     ck = f"seasonal_{div}_{season}"
@@ -773,9 +820,11 @@ def load_seasonal(div, season):
     except Exception as e:
         log_err(f"load_seasonal parse {div}", e); return []
 
+
 def load_many(divs, season):
     with ThreadPoolExecutor(max_workers=8) as ex:
         return dict(zip(divs, ex.map(lambda d: load_seasonal(d, season), divs)))
+
 
 def load_fixtures(season=None):
     rep = []; rows = []; seen = set()
@@ -804,6 +853,7 @@ def load_fixtures(season=None):
             rep.append(f"{ck}: parse error")
     return rows, rep
 
+
 def load_tsdb():
     rep = []; rows = []; seen = set()
     for lid, name in TSDB_LEAGUES.items():
@@ -829,6 +879,7 @@ def load_tsdb():
             log_err(f"tsdb {name}", e)
     return rows, rep
 
+
 def tsdb_day(dstr):
     ck = f"tsdb_day_{dstr}"
     content, _, err = robust_get(
@@ -849,6 +900,7 @@ def tsdb_day(dstr):
     except Exception as e:
         log_err("tsdb_day", e); return []
 
+
 def tsdb_days_parallel(days_list):
     out = []
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -859,6 +911,7 @@ def tsdb_days_parallel(days_list):
             except Exception as e:
                 log_err("tsdb_days_parallel", e)
     return out
+
 
 def load_livescores():
     ck = "tsdb_livescores"
@@ -881,6 +934,7 @@ def load_livescores():
     except Exception as e:
         log_err("livescores", e); return {}
 
+
 def match_live(live, home, away):
     if not live: return None
     hk = re.sub(r"[^a-zа-я0-9]", "", (home or "").lower())
@@ -889,6 +943,7 @@ def match_live(live, home, away):
         if (lh == hk and la == ak) or (hk in lh and ak in la) or (lh in hk and la in ak):
             return v
     return None
+
 
 FINISHED_STATUSES = {"match finished", "ft", "aet", "ap", "finished", "full time"}
 
@@ -1307,6 +1362,7 @@ def build_candidates(P, row, PR, blacklist=()):
             cands.append(("AH", f"Ф2({fmt_line(-ahh)})", 1 - pc, oha))
     return cands
 
+
 def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
     rows = []; best = None; hot = []; card_clv = None; gap = None
     if mkt_probs:
@@ -1424,17 +1480,18 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
 
 # ============= DATA =============
 def new_data():
-    return {"version": 8, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+    return {"version": 9, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
             "funnel": None, "report": [], "meta": {},
             "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
             "mode": "paper", "clv_history": [], "decision_history": []}
+
 
 def migrate(D):
     if not isinstance(D, dict): return new_data()
     base = new_data()
     for k, v in base.items():
         if k not in D or D[k] is None: D[k] = json.loads(json.dumps(v))
-    D["version"] = 8
+    D["version"] = 9
     for key in ("cards", "picks", "bets", "report", "clv_history", "decision_history"):
         if not isinstance(D.get(key), list): D[key] = []
     D["bets"] = [b for b in D["bets"] if isinstance(b, dict)
@@ -1447,6 +1504,7 @@ def migrate(D):
     if not isinstance(D.get("meta"), dict): D["meta"] = {}
     return D
 
+
 def _sanitize(obj):
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else 0.0
@@ -1455,6 +1513,7 @@ def _sanitize(obj):
     if isinstance(obj, list):
         return [_sanitize(v) for v in obj]
     return obj
+
 
 def _local_save_data(d):
     try:
@@ -1470,6 +1529,7 @@ def _local_save_data(d):
     except Exception as e:
         log_err("save_data.local", e)
 
+
 def _local_load_data():
     if os.path.exists(HISTORY_FILE):
         try:
@@ -1483,6 +1543,7 @@ def _local_load_data():
 def _gist_api_url(gist_id):
     return f"https://api.github.com/gists/{gist_id}"
 
+
 def _gist_load():
     if not CLOUD_GIST_ID or not CLOUD_GIST_TOKEN:
         return None
@@ -1491,7 +1552,6 @@ def _gist_load():
                    "Accept": "application/vnd.github+json"}
         r = _sess.get(_gist_api_url(CLOUD_GIST_ID), headers=headers, timeout=15)
         if r.status_code != 200:
-            log_err("gist_load", f"HTTP {r.status_code}")
             return None
         data = r.json()
         files = data.get("files", {})
@@ -1501,9 +1561,9 @@ def _gist_load():
         if not content:
             return None
         return json.loads(content)
-    except Exception as e:
-        log_err("gist_load", e)
+    except Exception:
         return None
+
 
 def _gist_save(D):
     if not CLOUD_GIST_ID or not CLOUD_GIST_TOKEN:
@@ -1520,25 +1580,20 @@ def _gist_save(D):
         body = {"files": {HISTORY_FILE: {"content": content}}}
         r = _sess.patch(_gist_api_url(CLOUD_GIST_ID), headers=headers,
                         json=body, timeout=20)
-        if r.status_code not in (200, 201):
-            log_err("gist_save", f"HTTP {r.status_code}: {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        log_err("gist_save", e)
+        return r.status_code in (200, 201)
+    except Exception:
         return False
 
-# Универсальные load/save — работают и локально, и на Cloud
+
 def load_data():
-    """1) Gist (если Cloud)  2) локальный файл  3) пусто."""
     if CLOUD_IS_CLOUD:
         gist_data = _gist_load()
         if gist_data:
             return migrate(gist_data)
     return _local_load_data()
 
+
 def save_data(D):
-    """1) локально  2) в Gist (если Cloud)."""
     _local_save_data(D)
     if CLOUD_IS_CLOUD:
         _gist_save(D)
@@ -1554,31 +1609,32 @@ def clone(D):
 def engine_cache_fp(season, div_counts):
     return (APP_VERSION, season, tuple(sorted(div_counts.items())))
 
+
 def engine_cache_get(fp):
     try:
         key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         cached = disk_cache_get(key, 86400 * 14)
         if cached and cached.get("fp") == fp:
             return cached.get("engine")
-    except Exception as e:
-        log_err("engine_cache_get.disk", e)
+    except Exception:
+        pass
     try:
         if os.path.exists(ENGINE_SNAPSHOT_FILE):
             with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
                 snap = pickle.load(f)
             if snap.get("fp") == fp:
-                log_err("engine_cache", f"loaded from {ENGINE_SNAPSHOT_FILE}")
                 return snap.get("engine")
-    except Exception as e:
-        log_err("engine_cache_get.pkl", e)
+    except Exception:
+        pass
     return None
+
 
 def engine_cache_put(fp, eng):
     try:
         key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         disk_cache_put(key, {"fp": fp, "engine": eng})
-    except Exception as e:
-        log_err("engine_cache_put.disk", e)
+    except Exception:
+        pass
     try:
         tmp = ENGINE_SNAPSHOT_FILE + ".tmp"
         with open(tmp, "wb") as f:
@@ -1609,15 +1665,8 @@ def apply_settle(D, idx, outcome, score=None):
         b["status"] = "lost"
         D2["stats"]["lost"] += 1
         D2["stats"]["profit"] -= b["stake"]
-    clv_key = (b["match"], b["pick"], b.get("date_iso", ""))
-    seen = {tuple(r.get("key", [])) for r in D2.get("clv_history", [])}
-    if clv_key not in seen:
-        D2.setdefault("clv_history", []).append({
-            "ts": datetime.now().isoformat(), "key": list(clv_key),
-            "match": b["match"], "pick": b["pick"], "odds": b["odds"],
-            "status": b["status"], "prob": b.get("prob"), "clv": b.get("clv")
-        })
     return D2
+
 
 def recompute_bet(D, idx, hg, ag, score_str):
     D2 = clone(D)
@@ -1648,6 +1697,7 @@ def recompute_bet(D, idx, hg, ag, score_str):
         D2["stats"]["push"] = D2["stats"].get("push", 0) + 1
     return D2
 
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def find_result_cached(div, home, away, bd_iso):
     if div in (None, "TSDB", "") or (isinstance(div, str) and div.startswith("API_")):
@@ -1677,8 +1727,10 @@ def find_result_cached(div, home, away, bd_iso):
         return (cands[0][1], cands[0][2], cands[0][0].isoformat())
     return None
 
+
 def find_result(div, home, away, bd):
     return find_result_cached(div, home, away, bd.isoformat() if bd else "")
+
 
 def auto_settle(D, force=False):
     D2 = clone(D); changed = 0
@@ -1719,6 +1771,7 @@ def _odd_s(rw):
     p = max(rw.get("prob") or 0.01, 0.01)
     return f"фейр {1/p:.2f}"
 
+
 def ai_verdict(c):
     rows = c.get("rows", [])
     scored = sorted([r for r in rows if r.get("prob")], key=lambda r: -r["prob"])
@@ -1752,6 +1805,7 @@ def ai_verdict(c):
     else: parts.append("Наблюдение.")
     return main, alt, avoid, " ".join(parts)
 
+
 def stars_for(rw, thr):
     if rw["ok"]:
         score = rw["ev"] * 10 + max(0, rw["prob"] - 0.5) * 5
@@ -1762,6 +1816,7 @@ def stars_for(rw, thr):
         return "⭐⭐⭐⭐⭐" if rw["prob"] >= 0.70 else (
             "⭐⭐⭐⭐" if rw["prob"] >= 0.65 else "⭐⭐⭐")
     return ""
+
 
 def build_picks(cards, thr, bank, kf):
     picks = []
@@ -1795,12 +1850,12 @@ def build_picks(cards, thr, bank, kf):
                       "odd": row["odd"], "odd_s": _odd_s(row), "stake": stake,
                       "stars": stars_for(row, thr), "type": ptype, "verdict": text,
                       "main": main, "alt": alt, "avoid": avoid,
-                      "clv": c.get("clv"),
-                      "ev": row.get("ev"),
+                      "clv": c.get("clv"), "ev": row.get("ev"),
                       "score": (row.get("ev") or 0 if ptype == "value" else 0) + row["prob"],
                       "steam": row.get("steam")})
     picks.sort(key=lambda p: (p["type"] == "value", p["score"]), reverse=True)
     return picks[:10]
+
 
 def strat_stats(bets):
     out = {}
@@ -1817,6 +1872,7 @@ def strat_stats(bets):
                       wr=(w / n * 100 if n else 0.0))
     return out
 
+
 def clv_stats(bets):
     out = {}
     for s in ("VALUE", "HOT"):
@@ -1830,6 +1886,7 @@ def clv_stats(bets):
                   "pos_pct": pos / len(clvs) * 100}
     return out
 
+
 def calibration_rows(bets):
     settled = [b for b in bets if b.get("status") in ("won", "lost") and b.get("prob")]
     rows = []
@@ -1841,6 +1898,7 @@ def calibration_rows(bets):
             rows.append({"Бин P": f"{lo*100:.0f}–{hi*100:.0f}%", "Ставок": len(sb),
                          "Предсказано": f"{avgp:.1f}%", "Факт WR": f"{wr:.1f}%"})
     return rows
+
 
 def weekly_rows(bets):
     wk = defaultdict(lambda: [0, 0, 0.0])
@@ -1856,6 +1914,7 @@ def weekly_rows(bets):
     return [{"Неделя": f"{y}-W{w:02d}", "Ставок": v[0], "WR": f"{v[1]/v[0]*100:.0f}%",
              "PnL": f"{v[2]:+.1f}"} for (y, w), v in sorted(wk.items())]
 
+
 def card_sort_val(c, key):
     if key.startswith("По EV"):
         if c.get("best"): return c["best"][3]
@@ -1868,6 +1927,7 @@ def card_sort_val(c, key):
         return max([r["odd"] for r in c["rows"] if r["odd"]], default=0)
     return c.get("league", "")
 
+
 def pick_sort_val(p, key):
     if key.startswith("По EV"):
         return p.get("ev") if p.get("ev") is not None else -1
@@ -1875,6 +1935,7 @@ def pick_sort_val(p, key):
     if key.startswith("По дате"): return p.get("dt", "9999-99-99")
     if key.startswith("По коэффициенту"): return p.get("odd") or 0
     return p.get("league", "")
+
 
 def bet_sort_key(pair, key):
     i, b = pair
@@ -1890,6 +1951,7 @@ def bet_sort_key(pair, key):
     if key.startswith("📊"):
         return b.get("clv") if b.get("clv") is not None else -999
     return (0, b.get("prob", 0))
+
 
 def tsdb_upcoming(engine, PR, blacklist, today, limit):
     out = []
@@ -1914,6 +1976,7 @@ def tsdb_upcoming(engine, PR, blacklist, today, limit):
                     "rows": rows, "best": best, "hot": hot, "clv": clv, "gap": gap,
                     "advance": (d.date() > today.date())})
     return out
+
 
 def render_match_card(c, thr, PR):
     val = c.get("best") is not None
@@ -1969,6 +2032,7 @@ def render_match_card(c, thr, PR):
   <span>📚 игр <b>{c['games']}</b></span>{best_html}</div>
 </div>"""
 
+
 def bet_card_html(b, live=None):
     st_ = b.get("status", "pending")
     icon = {"pending": "⏳", "won": "🟢", "lost": "🔴", "push": "⚪"}.get(st_, "⏳")
@@ -2004,7 +2068,6 @@ def bet_card_html(b, live=None):
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 D = st.session_state.data
-# Мерджим ключи из Secrets
 if "meta" not in D: D["meta"] = {}
 if CLOUD_GEMINI_KEY and not D["meta"].get("gemini_key"):
     D["meta"]["gemini_key"] = CLOUD_GEMINI_KEY
@@ -2017,8 +2080,69 @@ wall_key = D.get("meta", {}).get("wall", "🌃 Неон-стадион")
 if wall_key not in WALLS: wall_key = "🌃 Неон-стадион"
 WALL_CSS = WALLS[wall_key]
 
-st.markdown("<style>" + """
+
+# ============= CSS v10.5 — БЕЛЫЙ НИЗ ИСПРАВЛЕН =============
+st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
+
+/* ===== ГЛОБАЛЬНЫЙ ФОН — все контейнеры Streamlit ===== */
+html, body, #root,
+.stApp,
+.stApp > div,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > div,
+[data-testid="stAppViewContainer"] > section,
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stBottom"],
+[data-testid="stBottom"] > div,
+[data-testid="stBottomBlockContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stVerticalBlock"],
+[data-testid="stVerticalBlockBorderWrapper"],
+section.main,
+section.main > div,
+.main,
+.main > div,
+.block-container,
+div[class^="main"],
+div[class*=" main"] {
+    background-color: #05070f !important;
+    background-image: __WALL__ !important;
+    background-attachment: scroll !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+
+/* Убираем белый фон у header/toolbar */
+.stApp > header,
+[data-testid="stHeader"],
+[data-testid="stToolbar"] {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Bottom (поле ввода в чате) */
+[data-testid="stBottom"] > div,
+[data-testid="stBottomBlockContainer"] {
+    background-color: transparent !important;
+}
+
+/* Footer */
+footer, [data-testid="stStatusWidget"], [data-testid="stAppDeployButton"] {
+    background: transparent !important;
+    color: #8b93a7 !important;
+}
+
+/* Скроллбар */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,.3); }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,.5); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,.8); }
+
+/* Sidebar */
 @media (min-width: 992px){
  section[data-testid="stSidebar"]{visibility:visible!important;transform:none!important;width:320px!important;z-index:999!important;}
  section[data-testid="stSidebar"]>div{width:320px!important;overflow-y:auto!important;height:100vh!important;}
@@ -2031,13 +2155,12 @@ st.markdown("<style>" + """
  section[data-testid="stSidebar"]>div{width:100%!important;}
  button[kind="header"]{display:none!important;}
 }
-html,body,#root,div[data-testid="stAppViewContainer"],div[data-testid="stAppViewContainer"]>div,section.main,.stApp{
- background: __WALL__ !important;background-attachment: fixed !important;}
+
 .stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
 .stCaption,.stCaption *{color:#8b93a7 !important;}
 div[data-testid="stMetricValue"]{color:#f8fafc !important;font-family:'Unbounded',sans-serif;font-size:1.3rem;}
 div[data-testid="stMetricLabel"] p{color:#8b93a7 !important;}
-header,#MainMenu,footer{visibility:hidden}
+header,#MainMenu{visibility:hidden}
 section[data-testid="stSidebar"]{background:rgba(8,11,20,.72);backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
 section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2 !important;}
 section.stButton>button{background:linear-gradient(135deg,#0ea5e9 0%,#8b5cf6 55%,#ec4899 110%);color:#fff;border:none;border-radius:14px;font-weight:800;font-family:'Inter',sans-serif;box-shadow:0 8px 26px rgba(139,92,246,.35);transition:.18s;}
@@ -2086,6 +2209,7 @@ div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;border
 .side-section h4{margin:0 0 8px 0;color:#7dd3fc;font-size:.72rem;text-transform:uppercase;letter-spacing:1.3px;font-weight:700;}
 </style>""".replace("__WALL__", WALL_CSS), unsafe_allow_html=True)
 
+
 if not st.session_state.get("_auto_settled_done"):
     D2, n = auto_settle(D, force=False)
     if n > 0:
@@ -2110,7 +2234,7 @@ st.markdown(f"""
 with st.sidebar:
     st.header("⚙️ Настройки")
     if CLOUD_IS_CLOUD:
-        st.success(f"☁️ Cloud mode: данные в Gist", icon="✅")
+        st.success("☁️ Cloud mode: данные в Gist", icon="✅")
     else:
         st.info("💾 Local mode: данные в файлах", icon="💾")
     new_wall = st.selectbox("🖼 Обои", list(WALLS.keys()),
@@ -2124,7 +2248,7 @@ with st.sidebar:
         D["mode"] = new_mode; save_data(D)
         st.toast(f"Режим: {new_mode.upper()}", icon="💼")
     st.markdown("**🔑 Ключи**")
-    st.caption("На Cloud ключи берутся из Secrets, поля ниже — переопределение.")
+    st.caption("На Cloud — из Secrets, поля ниже переопределяют.")
     gk = st.text_input("Gemini key", value=D.get("meta", {}).get("gemini_key", ""),
                        type="password")
     xk = st.text_input("Grok key", value=D.get("meta", {}).get("grok_key", ""),
@@ -2177,6 +2301,9 @@ with st.sidebar:
         if ERR:
             for line in ERR[-20:]: st.text(line)
         else: st.text("Ошибок нет.")
+    if st.button("🧹 Очистить лог"):
+        ERR.clear()
+        st.toast("Лог очищен", icon="🧹"); st.rerun()
     if st.button("🔄 Сброс данных"):
         st.session_state.data = new_data()
         save_data(st.session_state.data); st.rerun()
@@ -2190,7 +2317,6 @@ with st.sidebar:
                     os.remove(os.path.join(DISK_CACHE_DIR, f))
         except Exception: pass
         st.toast("Кэш очищен", icon="🧹"); st.rerun()
-    # Debug: скачать engine.pkl
     if st.checkbox("🐞 Debug: engine.pkl"):
         if os.path.exists(ENGINE_SNAPSHOT_FILE):
             with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
@@ -2209,9 +2335,9 @@ with st.sidebar:
 <a class="side-link" href="#tab-бэктест">🧪 Бэктест</a>
 <a class="side-link" href="#tab-онлайн">🔴 Онлайн</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 <b>v10.4 cloud</b></span>
+<span class="side-link" style="cursor:default">🧠 <b>v10.5 cloud</b></span>
 <span class="side-link" style="cursor:default">☁️ Gist persistence</span>
-<span class="side-link" style="cursor:default">🛡 correlation caps</span></div>
+<span class="side-link" style="cursor:default">🎨 Dark theme fixed</span></div>
 """, unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab_clv, tab4, tab5, tab6 = st.tabs(
@@ -2430,15 +2556,6 @@ with tab1:
             if new_stake <= 0: continue
             bet["stake"] = new_stake
             new_bets.append(bet); existing.add(key)
-            D.setdefault("decision_history", []).append({
-                "ts": datetime.now().isoformat(), "match": bet["match"],
-                "league": bet["league"], "pick": bet["pick"], "odd": bet["odds"],
-                "prob": bet["prob"], "stake": bet["stake"], "ev": ev,
-                "steam_mult": steam_mult, "llm": cand["risk"].get("summary"),
-                "risk": cand["risk"].get("risk"), "tier": t,
-                "features": {"gap": cand["gap"], "games": cand["P"]["games"],
-                             "agree": cand["P"]["agree"]},
-            })
         cards = []
         for cand in sel:
             P = cand["P"]
