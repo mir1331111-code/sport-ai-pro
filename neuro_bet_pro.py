@@ -1,17 +1,6 @@
-"""NEURO BET PRO v10.4 — persistent engine + correlation caps + force-settle fix.
-
-ИЗМЕНЕНИЯ ОТ v10.3:
-[P0-1] engine.pkl — persistent snapshot в корне репо (переживает reboot Streamlit Cloud).
-       Трёхуровневый кэш: disk_cache → engine.pkl → обучение с нуля.
-[P0-2] TSDB_LEAGUES: убраны 4-значные ID (были дубли) — только 8 × 3-значных.
-[P0-3] apply_correlation_limits: лимит по КОЛИЧЕСТВУ ставок на матч (max 2) и день (max 10).
-[P1-4] build_picks: ev явно сохраняется, clv не теряется.
-[P1-5] live_learn_step: cap β = 100 матчей (было 500 — переобучение).
-[P1-6] auto_settle(force=True): не закрывает БУДУЩИЕ матчи, только начавшиеся.
-[P1-7] date_time сохраняется в bet для точной проверки начала матча.
-"""
+"""NEURO BET PRO v10.4-cloud — persistent engine + Gist storage + correlation caps."""
 import streamlit as st
-import requests, csv, io, os, math, re, pickle, json, html, time, hashlib
+import requests, csv, io, os, math, re, pickle, json, html, time, hashlib, base64
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +12,26 @@ except Exception:
 
 st.set_page_config(page_title="NEURO BET PRO v10.4", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
+
+
+# ============= CLOUD SECRETS =============
+def _get_secret(key, default=""):
+    """Читает из Streamlit Secrets, потом env, потом default."""
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return os.environ.get(key, default)
+
+
+CLOUD_GEMINI_KEY = _get_secret("GEMINI_KEY", "")
+CLOUD_GROK_KEY = _get_secret("GROK_KEY", "")
+CLOUD_API_FOOTBALL_KEY = _get_secret("API_FOOTBALL_KEY", "")
+CLOUD_GIST_ID = _get_secret("GIST_ID", "")
+CLOUD_GIST_TOKEN = _get_secret("GIST_TOKEN", "")
+CLOUD_IS_CLOUD = bool(CLOUD_GIST_ID and CLOUD_GIST_TOKEN)
+
 
 APP_VERSION = "10.4"
 PROMPT_VERSION = "risk_v3"
@@ -62,7 +71,6 @@ HYPERPARAMS = {
     "live_beta_cap_matches": 100,
 }
 
-# Только 3-значные ID TheSportsDB (без дублей)
 TSDB_LEAGUES = {
     "432": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ",
     "434": "🇪🇸 Ла Лига",
@@ -145,7 +153,7 @@ def _session():
     if Retry:
         r = Retry(total=4, connect=3, read=3, backoff_factor=1.5,
                   status_forcelist=[429, 500, 502, 503, 504, 520, 521, 522, 524],
-                  allowed_methods=frozenset(["GET", "HEAD", "POST"]),
+                  allowed_methods=frozenset(["GET", "HEAD", "POST", "PATCH"]),
                   raise_on_status=False)
         adapter = HTTPAdapter(max_retries=r, pool_connections=20, pool_maxsize=20)
         s.mount("https://", adapter); s.mount("http://", adapter)
@@ -1331,15 +1339,12 @@ def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
     return rows, best, hot, card_clv, gap
 
 
-# ============= CORRELATION LIMITS (v10.4) =============
+# ============= CORRELATION LIMITS =============
 def apply_correlation_limits(bets, bank, new_bet):
-    """Возвращает (new_stake, reason). reason=None если всё ок."""
-    # 1. Общая экспозиция
     total_stake = sum(b["stake"] for b in bets if b["status"] == "pending") + new_bet["stake"]
     if total_stake > bank * HYPERPARAMS["max_day_exposure"] * 3:
         return 0.0, "total exposure cap"
 
-    # 2. Лимит по лиге
     league = new_bet.get("league", "")
     league_stake = sum(b["stake"] for b in bets
                        if b.get("league") == league and b["status"] == "pending")
@@ -1349,14 +1354,12 @@ def apply_correlation_limits(bets, bank, new_bet):
             return 0.0, f"league cap ({league})"
         new_bet["stake"] = round(max_stake, 2)
 
-    # 3. Лимит по КОЛИЧЕСТВУ ставок на матч
     match = new_bet.get("match", "")
     pending_on_match = [b for b in bets
                         if b.get("match") == match and b["status"] == "pending"]
     if len(pending_on_match) >= HYPERPARAMS["max_match_bets"]:
         return 0.0, f"match bet count cap ({match}, {len(pending_on_match)} already)"
 
-    # 4. Лимит по сумме на матч
     match_stake = sum(b["stake"] for b in pending_on_match)
     if match_stake + new_bet["stake"] > bank * HYPERPARAMS["max_match_exposure"]:
         max_stake = max(0, bank * HYPERPARAMS["max_match_exposure"] - match_stake)
@@ -1364,7 +1367,6 @@ def apply_correlation_limits(bets, bank, new_bet):
             return 0.0, f"match exposure cap ({match})"
         new_bet["stake"] = round(max_stake, 2)
 
-    # 5. Лимит по количеству ставок в день
     bd = new_bet.get("date_iso")
     if bd:
         same_day = [b for b in bets
@@ -1445,14 +1447,6 @@ def migrate(D):
     if not isinstance(D.get("meta"), dict): D["meta"] = {}
     return D
 
-def load_data():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            return migrate(json.load(open(HISTORY_FILE, encoding="utf-8")))
-        except Exception as e:
-            log_err("load_data", e)
-    return new_data()
-
 def _sanitize(obj):
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else 0.0
@@ -1462,7 +1456,7 @@ def _sanitize(obj):
         return [_sanitize(v) for v in obj]
     return obj
 
-def save_data(d):
+def _local_save_data(d):
     try:
         def default(o):
             if isinstance(o, datetime): return o.isoformat()
@@ -1474,7 +1468,81 @@ def save_data(d):
                       default=default, allow_nan=False)
         os.replace(tmp, HISTORY_FILE)
     except Exception as e:
-        log_err("save_data", e)
+        log_err("save_data.local", e)
+
+def _local_load_data():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            return migrate(json.load(open(HISTORY_FILE, encoding="utf-8")))
+        except Exception as e:
+            log_err("load_data.local", e)
+    return new_data()
+
+
+# ============= GIST PERSISTENCE =============
+def _gist_api_url(gist_id):
+    return f"https://api.github.com/gists/{gist_id}"
+
+def _gist_load():
+    if not CLOUD_GIST_ID or not CLOUD_GIST_TOKEN:
+        return None
+    try:
+        headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
+                   "Accept": "application/vnd.github+json"}
+        r = _sess.get(_gist_api_url(CLOUD_GIST_ID), headers=headers, timeout=15)
+        if r.status_code != 200:
+            log_err("gist_load", f"HTTP {r.status_code}")
+            return None
+        data = r.json()
+        files = data.get("files", {})
+        if HISTORY_FILE not in files:
+            return None
+        content = files[HISTORY_FILE].get("content", "")
+        if not content:
+            return None
+        return json.loads(content)
+    except Exception as e:
+        log_err("gist_load", e)
+        return None
+
+def _gist_save(D):
+    if not CLOUD_GIST_ID or not CLOUD_GIST_TOKEN:
+        return False
+    try:
+        clean = _sanitize(D)
+        def default(o):
+            if isinstance(o, datetime): return o.isoformat()
+            raise TypeError(f"not serializable: {type(o)}")
+        content = json.dumps(clean, ensure_ascii=False, indent=2,
+                             default=default, allow_nan=False)
+        headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
+                   "Accept": "application/vnd.github+json"}
+        body = {"files": {HISTORY_FILE: {"content": content}}}
+        r = _sess.patch(_gist_api_url(CLOUD_GIST_ID), headers=headers,
+                        json=body, timeout=20)
+        if r.status_code not in (200, 201):
+            log_err("gist_save", f"HTTP {r.status_code}: {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        log_err("gist_save", e)
+        return False
+
+# Универсальные load/save — работают и локально, и на Cloud
+def load_data():
+    """1) Gist (если Cloud)  2) локальный файл  3) пусто."""
+    if CLOUD_IS_CLOUD:
+        gist_data = _gist_load()
+        if gist_data:
+            return migrate(gist_data)
+    return _local_load_data()
+
+def save_data(D):
+    """1) локально  2) в Gist (если Cloud)."""
+    _local_save_data(D)
+    if CLOUD_IS_CLOUD:
+        _gist_save(D)
+
 
 def clone(D):
     try:
@@ -1486,9 +1554,7 @@ def clone(D):
 def engine_cache_fp(season, div_counts):
     return (APP_VERSION, season, tuple(sorted(div_counts.items())))
 
-# [v10.4] Трёхуровневый кэш
 def engine_cache_get(fp):
-    # Уровень 1: disk cache
     try:
         key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         cached = disk_cache_get(key, 86400 * 14)
@@ -1496,7 +1562,6 @@ def engine_cache_get(fp):
             return cached.get("engine")
     except Exception as e:
         log_err("engine_cache_get.disk", e)
-    # Уровень 2: engine.pkl (persistent snapshot)
     try:
         if os.path.exists(ENGINE_SNAPSHOT_FILE):
             with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
@@ -1615,10 +1680,7 @@ def find_result_cached(div, home, away, bd_iso):
 def find_result(div, home, away, bd):
     return find_result_cached(div, home, away, bd.isoformat() if bd else "")
 
-# [v10.4] force=True не закрывает будущие матчи
 def auto_settle(D, force=False):
-    """force=False: только матчи ПРОШЛЫХ дней.
-       force=True:  только начавшиеся (не будущие)."""
     D2 = clone(D); changed = 0
     now = datetime.now()
     today = now.date()
@@ -1701,7 +1763,6 @@ def stars_for(rw, thr):
             "⭐⭐⭐⭐" if rw["prob"] >= 0.65 else "⭐⭐⭐")
     return ""
 
-# [v10.4] ev и clv явно сохраняются
 def build_picks(cards, thr, bank, kf):
     picks = []
     for c in cards:
@@ -1943,6 +2004,15 @@ def bet_card_html(b, live=None):
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 D = st.session_state.data
+# Мерджим ключи из Secrets
+if "meta" not in D: D["meta"] = {}
+if CLOUD_GEMINI_KEY and not D["meta"].get("gemini_key"):
+    D["meta"]["gemini_key"] = CLOUD_GEMINI_KEY
+if CLOUD_GROK_KEY and not D["meta"].get("grok_key"):
+    D["meta"]["grok_key"] = CLOUD_GROK_KEY
+if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
+    D["meta"]["api_key"] = CLOUD_API_FOOTBALL_KEY
+
 wall_key = D.get("meta", {}).get("wall", "🌃 Неон-стадион")
 if wall_key not in WALLS: wall_key = "🌃 Неон-стадион"
 WALL_CSS = WALLS[wall_key]
@@ -2023,11 +2093,12 @@ if not st.session_state.get("_auto_settled_done"):
         st.toast(f"Автосинхронизация: закрыто {n} ставок", icon="🔄")
     st.session_state["_auto_settled_done"] = True
 
+cloud_badge = "☁️ CLOUD (Gist)" if CLOUD_IS_CLOUD else "💾 LOCAL"
 mode_label = "📄 PAPER" if D.get("mode") == "paper" else "💰 REAL"
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · Persistent engine · Correlation caps · {mode_label}</p>
+ <p>v{APP_VERSION} · {cloud_badge} · {mode_label}</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -2038,6 +2109,10 @@ st.markdown(f"""
 
 with st.sidebar:
     st.header("⚙️ Настройки")
+    if CLOUD_IS_CLOUD:
+        st.success(f"☁️ Cloud mode: данные в Gist", icon="✅")
+    else:
+        st.info("💾 Local mode: данные в файлах", icon="💾")
     new_wall = st.selectbox("🖼 Обои", list(WALLS.keys()),
                             index=list(WALLS.keys()).index(wall_key))
     if new_wall != wall_key:
@@ -2049,6 +2124,7 @@ with st.sidebar:
         D["mode"] = new_mode; save_data(D)
         st.toast(f"Режим: {new_mode.upper()}", icon="💼")
     st.markdown("**🔑 Ключи**")
+    st.caption("На Cloud ключи берутся из Secrets, поля ниже — переопределение.")
     gk = st.text_input("Gemini key", value=D.get("meta", {}).get("gemini_key", ""),
                        type="password")
     xk = st.text_input("Grok key", value=D.get("meta", {}).get("grok_key", ""),
@@ -2060,6 +2136,20 @@ with st.sidebar:
             or ak != D.get("meta", {}).get("api_key", "")):
         D.setdefault("meta", {}).update({"gemini_key": gk, "grok_key": xk, "api_key": ak})
         save_data(D); st.toast("Ключи сохранены", icon="🔑")
+    if st.button("💾 Принудительно в Gist"):
+        if _gist_save(D):
+            st.toast("Сохранено в Gist", icon="☁️")
+        else:
+            st.error("Ошибка сохранения в Gist")
+    if st.button("⬇️ Загрузить из Gist"):
+        gd = _gist_load()
+        if gd:
+            st.session_state.data = migrate(gd)
+            save_data(st.session_state.data)
+            st.toast("Загружено из Gist", icon="☁️")
+            st.rerun()
+        else:
+            st.error("Не удалось загрузить")
     refresh_choice = st.selectbox("Автообновление онлайна",
                                   ["5 минут", "7 минут", "15 минут", "Отключено"], index=0)
     refresh_sec = {"5 минут": 300, "7 минут": 420, "15 минут": 900,
@@ -2099,7 +2189,16 @@ with st.sidebar:
                 if f.endswith(".bin"):
                     os.remove(os.path.join(DISK_CACHE_DIR, f))
         except Exception: pass
-        st.toast("Кэш очищен (engine.pkl сохранён)", icon="🧹"); st.rerun()
+        st.toast("Кэш очищен", icon="🧹"); st.rerun()
+    # Debug: скачать engine.pkl
+    if st.checkbox("🐞 Debug: engine.pkl"):
+        if os.path.exists(ENGINE_SNAPSHOT_FILE):
+            with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
+                st.download_button("⬇️ Скачать engine.pkl", f,
+                                   file_name="engine.pkl",
+                                   mime="application/octet-stream")
+        else:
+            st.warning("engine.pkl ещё не создан. Нажми ⚡ СКАН.")
     st.markdown("""
 <div class="side-section"><h4>🧭 Вкладки</h4>
 <a class="side-link" href="#tab-сканер">🏟 Сканер</a>
@@ -2110,8 +2209,8 @@ with st.sidebar:
 <a class="side-link" href="#tab-бэктест">🧪 Бэктест</a>
 <a class="side-link" href="#tab-онлайн">🔴 Онлайн</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 <b>v10.4</b></span>
-<span class="side-link" style="cursor:default">💾 engine.pkl persistent</span>
+<span class="side-link" style="cursor:default">🧠 <b>v10.4 cloud</b></span>
+<span class="side-link" style="cursor:default">☁️ Gist persistence</span>
 <span class="side-link" style="cursor:default">🛡 correlation caps</span></div>
 """, unsafe_allow_html=True)
 
