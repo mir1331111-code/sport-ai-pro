@@ -1,1 +1,3 @@
-pip install streamlit requests scikit-learn
+git add neuro_bet_pro.py requirements.txt .streamlit/config.toml
+git commit -m "v10.6: proxy fix (trust_env=False) — fixes ConnectionError 127.0.0.1:80"
+git push
