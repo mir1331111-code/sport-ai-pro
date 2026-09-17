@@ -1,5 +1,4 @@
-# Замени App.py целиком
 git add App.py
-git commit -m "v12.5: PRO X precision + reliability"
+git commit -m "v12.6: fatal predict fix + honest backtest + flags"
 git push
 # Streamlit Cloud → Reboot → Ctrl+Shift+R
