@@ -1,1 +1,1 @@
-streamlit run neuro_bet_pro.py
+pip install streamlit requests scikit-learn
