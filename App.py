@@ -1144,7 +1144,17 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
             log_err("bt learn", e)
     return log, eng
     def new_data():
-    return {"version": 10, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+        return {...}
+
+def migrate(D):
+    if not isinstance(D, dict):
+        return new_data()
+    base = new_data()
+    for k, v in base.items():
+        if k not in D or D[k] is None:
+            D[k] = json.loads(json.dumps(v))
+    D["version"] = 10
+    ...
             "funnel": None, "report": [], "meta": {},
             "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
             "mode": "paper", "clv_history": [], "decision_history": []}
