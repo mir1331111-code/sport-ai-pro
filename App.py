@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.4 — CSS gradients + RU team translations."""
+"""NEURO BET PRO v12.4.1 — RU translations + smart alternatives."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
 from datetime import datetime, timedelta
@@ -17,10 +17,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.4", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.4.1", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.4"
+APP_VERSION = "12.4.1"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
@@ -74,7 +74,7 @@ STADIUM_WALLS = {
     "DEFAULT": "linear-gradient(135deg, rgba(71,85,105,.55), rgba(15,23,42,.95))",
 }
 
-# ============= [v12.4] ПЕРЕВОД КОМАНД =============
+# ============= ПЕРЕВОД КОМАНД =============
 TEAM_TRANSLATIONS = {
     # АПЛ
     "Manchester United": "Манчестер Юнайтед", "Manchester City": "Манчестер Сити",
@@ -217,7 +217,6 @@ TEAM_TRANSLATIONS = {
     "Copenhagen": "Копенгаген", "FC Copenhagen": "Копенгаген",
     "Bodo/Glimt": "Будё-Глимт", "Bodø/Glimt": "Будё-Глимт",
     "Club Brugge": "Брюгге", "Anderlecht": "Андерлехт",
-    "Shakhtar": "Шахтёр",
 }
 
 
@@ -967,6 +966,42 @@ class Engine:
         return P
 
 
+# ============= [v12.4.1] УМНЫЕ АЛЬТЕРНАТИВЫ =============
+def build_alternatives(rows, main_pick):
+    """Умные альтернативы к главной рекомендации."""
+    alternatives = []
+    
+    # Если главная 1X2 → показываем другие исходы 1X2
+    if main_pick in ("П1", "X", "П2"):
+        for r in rows:
+            if r["pick"] in ("П1", "X", "П2") and r["pick"] != main_pick:
+                alternatives.append(r)
+            if len(alternatives) == 2:
+                break
+    
+    # Если главная тотал → показываем другой тотал + BTTS
+    elif main_pick in ("ТБ 2.5", "ТМ 2.5"):
+        for r in rows:
+            if r["pick"] in ("ТБ 2.5", "ТМ 2.5") and r["pick"] != main_pick:
+                alternatives.append(r)
+            elif r["pick"] in ("BTTS да", "BTTS нет"):
+                alternatives.append(r)
+            if len(alternatives) == 2:
+                break
+    
+    # Если главная BTTS → показываем другой BTTS + тотал
+    elif main_pick in ("BTTS да", "BTTS нет"):
+        for r in rows:
+            if r["pick"] in ("BTTS да", "BTTS нет") and r["pick"] != main_pick:
+                alternatives.append(r)
+            elif r["pick"] in ("ТБ 2.5", "ТМ 2.5"):
+                alternatives.append(r)
+            if len(alternatives) == 2:
+                break
+    
+    return alternatives[:2]
+
+
 def build_verdict(P, thr, bank, kelly_frac, h_name, a_name, fh, fa, h2h_n):
     probs = {
         "П1": P["p1"], "X": P["x"], "П2": P["p2"],
@@ -988,7 +1023,9 @@ def build_verdict(P, thr, bank, kelly_frac, h_name, a_name, fh, fa, h2h_n):
                      "odd": est_odd, "fair_odd": fair_odd})
     rows.sort(key=lambda r: -r["prob"])
     top = rows[0]
-    second = rows[1] if len(rows) > 1 else None
+    
+    # [v12.4.1] Умные альтернативы к главной рекомендации
+    alternatives = build_alternatives(rows, top["pick"])
 
     reasons = []
     lh, la = P["lams"]
@@ -1030,8 +1067,8 @@ def build_verdict(P, thr, bank, kelly_frac, h_name, a_name, fh, fa, h2h_n):
         "pick": top["pick"], "label": top["label"], "prob": top["prob"],
         "odd": top["odd"], "fair_odd": top["fair_odd"],
         "confidence": confidence, "conf_color": conf_color,
-        "reasons": reasons, "top2": rows[:2],
-        "is_action": top["prob"] >= thr, "second": second,
+        "reasons": reasons, "alternatives": alternatives,
+        "is_action": top["prob"] >= thr,
     }
     best = None
     if top["prob"] >= thr:
@@ -1195,7 +1232,6 @@ def stadium_bg(div):
     return STADIUM_WALLS.get(div, STADIUM_WALLS["DEFAULT"])
 
 
-# [v12.4] Применяем переводы в рендере карточек
 def render_verdict_card(c, thr):
     v = c.get("verdict") or {}
     if not v:
@@ -1207,11 +1243,10 @@ def render_verdict_card(c, thr):
     conf_color = v.get("conf_color", "#fbbf24")
     reasons = v.get("reasons", [])
     is_action = v.get("is_action", False)
-    top2 = v.get("top2", [])
+    alternatives = v.get("alternatives", [])
 
     match_str = c.get("match", "— vs —")
     parts = match_str.split(" vs ")
-    # [v12.4] Перевод команд для отображения
     h = translate_team(parts[0]) if len(parts) > 0 else "—"
     a = translate_team(parts[1]) if len(parts) > 1 else "—"
     bg_grad = stadium_bg(c.get("div", ""))
@@ -1228,13 +1263,14 @@ def render_verdict_card(c, thr):
     fh = c.get("fh", "—")
     fa = c.get("fa", "—")
 
-    top2_html = ""
-    for i, t in enumerate(top2):
-        icon = "🥇" if i == 0 else "🥈"
+    # [v12.4.1] Умные альтернативы
+    alt_html = ""
+    for i, t in enumerate(alternatives):
+        icon = "🥈" if i == 0 else "🥉"
         t_prob = t.get("prob", 0)
         t_odd = t.get("odd", 1)
         t_label = t.get("label", "—")
-        top2_html += (
+        alt_html += (
             f"<div style='display:flex;justify-content:space-between;padding:6px 0;"
             f"border-top:1px solid rgba(255,255,255,.06);font-size:.85rem;'>"
             f"<span>{icon} {esc(t_label)}</span>"
@@ -1278,8 +1314,8 @@ def render_verdict_card(c, thr):
       {reasons_html}
     </ul>
 
-    <div style="color:#7dd3fc;font-size:.72rem;text-transform:uppercase;font-weight:700;margin-bottom:6px;letter-spacing:1px;">Топ-2 исхода</div>
-    {top2_html}
+    <div style="color:#7dd3fc;font-size:.72rem;text-transform:uppercase;font-weight:700;margin-bottom:6px;letter-spacing:1px;">Альтернативы</div>
+    {alt_html}
   </div>
 </div>"""
 
@@ -1350,7 +1386,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🇷🇺 команды по-русски · 🎨 цветные лиги · 🎯 фильтр · ⏱ throttle</p>
+ <p>v{APP_VERSION} · 🇷🇺 команды по-русски · 🎯 умные альтернативы · 🎨 цветные лиги · ⏱ throttle</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1565,7 +1601,6 @@ with tab1:
                     d = parse_date(r.get("Date", ""))
                     if not d or not (today <= d <= limit):
                         continue
-                    # [v12.4] Передаём ПЕРЕВЕДЁННЫЕ имена для вердикта
                     h_en = (r.get("HomeTeam") or "").strip()
                     a_en = (r.get("AwayTeam") or "").strip()
                     if not h_en or not a_en:
@@ -1586,8 +1621,8 @@ with tab1:
                     cards.append({
                         "div": lg,
                         "league": r.get("League") or DIV_NAMES.get(lg, "Лига"),
-                        "match": f"{h_en} vs {a_en}",  # оригинал сохраняется для API
-                        "match_ru": f"{h_ru} — {a_ru}",  # [v12.4] русский вариант
+                        "match": f"{h_en} vs {a_en}",
+                        "match_ru": f"{h_ru} — {a_ru}",
                         "date": d.strftime("%d.%m") + (f" {r.get('Time', '')}" if r.get("Time") else ""),
                         "when": "сегодня" if d.date() == today.date() else "скоро",
                         "verdict": verdict,
@@ -1615,8 +1650,8 @@ with tab1:
                     if bet_key in existing:
                         continue
                     new_bets.append({
-                        "match": c["match"],          # оригинал для API
-                        "match_ru": c["match_ru"],    # [v12.4] для отображения
+                        "match": c["match"],
+                        "match_ru": c["match_ru"],
                         "div": c["div"],
                         "league": c["league"],
                         "market": "STAT",
@@ -1716,7 +1751,6 @@ with tab2:
             for b in D["bets"]:
                 if not isinstance(b, dict):
                     continue
-                # [v12.4] В CSV экспортируем русское название
                 match_display = b.get("match_ru") or translate_match(b.get("match", ""))
                 w.writerow([match_display, b.get("league", ""), b.get("pick", ""),
                             b.get("odds", ""), b.get("stake", ""), b.get("prob", ""),
@@ -1735,7 +1769,6 @@ with tab2:
             odds = float(b.get("odds") or 1.0)
             stake = float(b.get("stake") or 0.0)
             pick_label = b.get("pick", "—")
-            # [v12.4] Показываем по-русски
             match_display = b.get("match_ru") or translate_match(b.get("match", "—"))
             st.markdown(f"""
 <div class="betcard {st_}" style="padding:14px 18px;">
