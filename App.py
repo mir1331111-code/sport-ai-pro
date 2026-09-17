@@ -1,4 +1,4 @@
-"""NEURO BET PRO v9.2 — full: LLM risk (circuit-breaker) + quota>=5 + tiers + live engine."""
+"""NEURO BET PRO v9.3 — single file: fallback sources + quota + LLM risk + live engine."""
 import streamlit as st
 import requests, csv, io, os, math, re, pickle, json, html
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ try:
 except Exception:
     Retry=None
 
-st.set_page_config(page_title="NEURO BET PRO v9.2", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NEURO BET PRO v9.3", page_icon="🏟", layout="wide", initial_sidebar_state="expanded")
 HISTORY_FILE="neuro_bet_pro.json"
 esc=html.escape
 AVG_GOALS=2.75
@@ -26,7 +26,7 @@ ML_LR=0.05
 ML_L2=0.001
 ML_ITERS=300
 NFEAT_ML=12
-ENGINE_CACHE_VERSION="9.2"
+ENGINE_CACHE_VERSION="9.3"
 LIVE_MODEL_FILE="live_model.json"
 UA={"User-Agent":"Mozilla/5.0"}
 CORRIDORS={"OU":(1.50,2.80),"AH":(1.60,2.60),"STAT":(1.40,4.50)}
@@ -35,11 +35,13 @@ ERR_FILE="neuro_errors.log"
 ENGINE_CACHE="neuro_engine.pkl"
 API_LG={"R1":235,"T1":203,"C1":2,"EL":3,"EC":848,"RUS_CUP":233}
 API_NAMES={235:"🇷🇺 РПЛ",203:"🇹🇷 Суперлига",2:"🏆 ЛЧ",3:"🏆 ЛЕ",848:"🏆 ЛК",233:"🏆 Кубок России"}
-DIV_NAMES={"E0":"🏴󠁢󠁮󠁿 АПЛ","E1":"🏴󠁢󠁿 Чемпионшип","SC0":"🏴󠁣󠁿 Шотландия",
- "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮 Серия A","I2":"🇮🇹 Серия B",
+DIV_NAMES={"E0":"🏴󠁢󠁿 АПЛ","E1":"🏴󠁮 Чемпионшип","SC0":"🏴󠁿 Шотландия",
+ "D1":"🇩🇪 Бундеслига","D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B",
  "SP1":"🇪🇸 Ла Лига","SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2",
  "N1":"🇳🇱 Эредивизи","B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига",
  "G1":"🇬🇷 Греция","R1":"🇷🇺 РПЛ","BR1":"🇧🇷 Бразилия","C1":"🏆 ЛЧ","EL":"🏆 ЛЕ","EC":"🏆 ЛК"}
+TSDB_LEAGUES={"432":"🏴󠁢󠁿 АПЛ","434":"🇪🇸 Ла Лига","435":"🇮🇹 Серия A","436":"🇩🇪 Бундеслига",
+ "437":"🇫🇷 Лига 1","448":"🏆 ЛЧ","442":"🇺🇸 MLS","439":"🇵🇹 Примейра"}
 GOALS={
  "🎯 Проходимость":dict(w_market=0.65,thr=0.62,dis=False,edge=0.01,ev=0.01,corr=(1.30,2.30),min_games=10),
  "⚖️ Баланс":dict(w_market=0.40,thr=0.55,dis=True,edge=0.02,ev=0.02,corr=(1.40,4.20),min_games=8),
@@ -181,7 +183,7 @@ def blend_market(P,mkt,w):
     P["p1"]/=t; P["x"]/=t; P["p2"]/=t; P["mkt"]=mkt
     return P
 
-# ============= LLM RISK LAYER (circuit-breaker) =============
+# ============= LLM RISK (circuit-breaker) =============
 _LLM_BAD=set()
 def llm_gemini(prompt,key):
     url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
@@ -353,6 +355,35 @@ def api_football_fixture(api_key,fixture_id):
                 "home":goals.get("home") or 0,"away":goals.get("away") or 0}
     except Exception as e:
         log_err(f"api_fix {fixture_id}",e); return None
+@st.cache_data(ttl=900)
+def api_football_fixtures(api_key,d_from,d_to):
+    """Резерв №1: ближайшие матчи через API-Football, когда football-data лежит."""
+    if not api_key: return [],["API fixtures: ключ не задан"]
+    out=[]; rep=[]
+    headers={"x-apisports-key":api_key,"x-rapidapi-host":"v3.football.api-sports.io"}
+    try:
+        r=_sess.get(f"https://v3.football.api-sports.io/fixtures?from={d_from}&to={d_to}",headers=headers,timeout=20)
+        if r.status_code!=200:
+            return [],[f"API fixtures: HTTP {r.status_code}"]
+        for f in (r.json() or {}).get("response") or []:
+            fix=f.get("fixture") or {}; teams=f.get("teams") or {}; lg=f.get("league") or {}
+            dt=fix.get("date") or ""
+            h=(teams.get("home") or {}).get("name"); a=(teams.get("away") or {}).get("name")
+            if not h or not a: continue
+            out.append({"Div":"API","League":lg.get("name") or "Матч","Date":dt[:10],
+                        "Time":dt[11:16],"HomeTeam":h,"AwayTeam":a})
+        rep.append(f"API fixtures: {len(out)}")
+    except Exception as e:
+        log_err("api_fixtures",e); rep.append(f"API fixtures: {type(e).__name__}")
+    return out,rep
+@st.cache_data(ttl=1800)
+def tsdb_past(lid):
+    """Резерв №2 для ОБУЧЕНИЯ, когда football-data лежит."""
+    try:
+        r=_sess.get(f"https://www.thesportsdb.com/api/v1/json/3/eventspastleague.php?id={lid}",timeout=15)
+        return (r.json() or {}).get("events") or []
+    except Exception as e:
+        log_err("tsdb_past",e); return []
 
 # ============= ENGINE =============
 class Engine:
@@ -1077,7 +1108,7 @@ if not st.session_state.get("_auto_settled_done"):
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v9.2 · LLM риск (Gemini→Grok→эвристика, circuit-breaker) · квота ≥5/день + добор TSDB · ярусы T1/T2/T3 · зелёные/жёлтые · live-движок</p>
+ <p>v9.3 · резервные источники (API-Football + TheSportsDB) · квота ≥5/день · LLM риск · live-движок · авто-счёт</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status']=='pending')}</div></div>
@@ -1120,6 +1151,8 @@ with st.sidebar:
         else: st.text("Ошибок нет.")
     if st.button("🔄 Сброс"):
         st.session_state.data=new_data(); save_data(st.session_state.data); st.rerun()
+    if st.button("🧹 Сброс кэша данных"):
+        st.cache_data.clear(); st.toast("Кэш данных очищен — следующий СКАН возьмёт свежие матчи",icon="🧹"); st.rerun()
     st.markdown("""
 <div class="side-section"><h4>🧭 Вкладки</h4>
 <a class="side-link" href="#tab-сканер">🏟 Сканер</a><a class="side-link" href="#tab-портфель">💼 Портфель</a>
@@ -1135,7 +1168,7 @@ with st.sidebar:
 <a class="side-link" href="https://understat.com/" target="_blank">📉 understat.com</a>
 <a class="side-link" href="https://fbref.com/" target="_blank">📋 fbref.com</a></div>
 <div class="side-section"><h4>ℹ️ О системе</h4>
-<span class="side-link" style="cursor:default">🧠 Версия: <b>9.2</b></span>
+<span class="side-link" style="cursor:default">🧠 Версия: <b>9.3</b></span>
 <span class="side-link" style="cursor:default">🤖 LLM: Gemini→Grok→эвристика</span>
 <span class="side-link" style="cursor:default">📅 Квота: ≥<b>"""+str(quota_base)+"""</b>/день</span></div>
 """, unsafe_allow_html=True)
@@ -1152,6 +1185,14 @@ with tab1:
         today=datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
         now=datetime.now(); limit=today+timedelta(days=days)
         fix,rep1=load_fixtures(); rep_all=list(rep1)
+        ak=D.get("meta",{}).get("api_key","")
+        api_rows,api_rep=(api_football_fixtures(ak,today.isoformat(),limit.isoformat()) if ak else ([],[]))
+        rep_all+=api_rep
+        seen=set(); src_rows=[]
+        for r in (fix+api_rows):
+            k=(r.get("HomeTeam"),r.get("AwayTeam"),r.get("Date"))
+            if k in seen: continue
+            seen.add(k); src_rows.append(r)
         train_divs=sorted({r.get("Div") for r in fix if r.get("Div")}) or ["E0","SP1","I1","D1","F1"]
         dp=load_many(train_divs,pseason); dc=load_many(train_divs,season)
         div_counts={}
@@ -1174,6 +1215,17 @@ with tab1:
                                 trained+=1
                             except Exception as e: log_err(f"train {dv}",e)
                 prog.progress((i+1)/len(train_divs))
+            if trained==0:
+                prog.progress(1.0,text="football-data недоступен — обучаюсь на TheSportsDB...")
+                for lid in TSDB_LEAGUES:
+                    for e in tsdb_past(lid):
+                        h=e.get("strHomeTeam"); a=e.get("strAwayTeam")
+                        hs=_f(e.get("intHomeScore")); as_=_f(e.get("intAwayScore"))
+                        if h and a and hs is not None and as_ is not None:
+                            try:
+                                engine.learn_step(h,a,hs,as_,None,lg="TSDB",match_date=parse_date(e.get("dateEvent","")))
+                                trained+=1
+                            except Exception: pass
             prog.empty(); engine_cache_put(fp,engine)
         PR=dict(PR0); PR.update(thr=thr,edge=min_edge,ev=min_ev,bank=D["bank"],kelly=kelly_frac)
         meta={"temp":round(engine.temp,3),"blacklist":D.get("meta",{}).get("blacklist",[]),
@@ -1181,7 +1233,7 @@ with tab1:
               "grok_key":D.get("meta",{}).get("grok_key",""),"api_key":D.get("meta",{}).get("api_key",""),
               "lp":{k:{**v,"temp":round(engine.temp,3)} for k,v in list(engine.lp.items())[:15]}}
         cands_all=[]
-        for r in fix:
+        for r in src_rows:
             d=parse_date(r.get("Date",""))
             if not d or not (today<=d<=limit): continue
             tm=(r.get("Time") or "").strip()
@@ -1445,7 +1497,7 @@ with tab6:
     api_key=D.get("meta",{}).get("api_key","")
     if refresh_sec>0:
         import streamlit.components.v1 as components
-        components.html(f'<meta http-equiv="refresh" content="{refresh_sec}">',height=0)
+        components.html(f"<script>setInterval(function(){{window.parent.location.reload();}},{refresh_sec*1000});</script>",height=0)
     if st.button("🔄 Обновить сейчас"): st.rerun()
     api_lives,api_rep=api_football_live(api_key,list(API_LG.values())) if api_key else ([],["API-Football: ключ не задан"])
     tsdb_raw=load_livescores(); tsdb_lives=[]
