@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.5 — hybrid: PRO X precision + v12.4 reliability."""
+"""NEURO BET PRO v12.6 — fatal fix + honest backtest + fixed flags."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
 from datetime import datetime, timedelta
@@ -17,10 +17,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.5", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.6", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.5"
+APP_VERSION = "12.6"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
@@ -42,11 +42,11 @@ DIV_TO_APILG = {
 }
 
 DIV_NAMES = {
-    "E0": "🏴󠁧󠁢󠁮󠁿 АПЛ", "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип",
-    "D1": "🇩 Бундеслига", "D2": "🇩🇪 2.Бундеслига", "I1": "🇮 Серия A",
+    "E0": "🏴󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁢󠁮󠁿 Чемпионшип",
+    "D1": "🇩🇪 Бундеслига", "D2": "🇩🇪 2. Бундеслига", "I1": "🇮🇹 Серия A",
     "I2": "🇮🇹 Серия B", "SP1": "🇪🇸 Ла Лига", "SP2": "🇪🇸 Сегунда",
-    "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇳 Эредивизи",
-    "B1": "🇧🇪 Про-лига", "P1": "🇵🇹 Примейра", "T1": "🇹 Суперлига",
+    "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇱 Эредивизи",
+    "B1": "🇧🇪 Про-лига", "P1": "🇵🇹 Примейра", "T1": "🇹🇷 Суперлига",
     "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ",
 }
 
@@ -984,8 +984,6 @@ class Engine:
         P0 = self.lp[lg]
         lh_g = max(0.05, self._m(self.hg, 1.5))
         la_g = max(0.05, self._m(self.ag, 1.2))
-        lh_s = max(0.05, self._m(self.hsth, 4.5))
-        la_s = max(0.05, self._m(self.hsta, 4.0))
         sh, sa = self.st[h], self.st[a]
         ah_ = self._m(sh["hs"], lh_g) / lh_g
         dh_ = self._m(sh["hc"], la_g) / la_g
@@ -998,7 +996,6 @@ class Engine:
             lam_g_h = max(0.3, lam_g_h - 0.15)
             lam_g_a = max(0.25, lam_g_a - 0.15)
         lam_h, lam_a, h2h_n = self.h2h_adjust(h, a, lam_g_h, lam_g_a)
-        # [v12.5] Elo shrinkage: команды с малой выборкой тянутся к 1500
         gh = len(sh["hs"]) + len(sh["as"])
         ga = len(sa["hs"]) + len(sa["as"])
         eh_eff = 1500 + (self.elo.get(h, 1500) - 1500) * min(1.0, gh / 10.0)
@@ -1042,9 +1039,7 @@ class Engine:
         return P
 
 
-# ============= [v12.5] PRO X КАЛЬКУЛЯТОР =============
 def manual_poisson(ha, hd, hf, he, aa, ad, af, ae, max_goals):
-    """Poisson из явных параметров команды (стиль PRO X TeamInput)."""
     LG_H, LG_A = 1.45, 1.20
     lam_h = LG_H * (1 + ha * 0.25) * max(0.3, 1 - ad * 0.20) * (1 + hf * 0.10) \
             * (1 + (he - 1500) / 1000 * 0.15) + 0.25
@@ -1067,7 +1062,6 @@ def manual_poisson(ha, hd, hf, he, aa, ad, af, ae, max_goals):
 
 
 def evaluate_manual(prob, odd, bankroll, max_kelly, min_ev):
-    """Централизованный расчёт EV/Kelly/stake (стиль PRO X evaluate)."""
     fair = 1.0 / max(prob, 0.01)
     ev = prob * odd - 1
     k = (prob * (odd - 1) - (1 - prob)) / (odd - 1) if odd > 1 else 0.0
@@ -1512,7 +1506,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🇺 переводы · 🎯 умные альтернативы · 🧮 PRO-калькулятор · 🎨 цветные лиги · ⏱ throttle</p>
+ <p>v{APP_VERSION} · 🇷🇺 переводы · 🎯 умные альтернативы · 🧮 PRO-калькулятор · 🧪 честный бэктест · ⏱ throttle</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1983,59 +1977,72 @@ with tab4:
             st.warning(f"EV ниже порога: {v['ev'] * 100:+.1f}%")
 
 with tab5:
-    st.header("🧪 Бэктест (walk-forward)")
-    st.caption("Требует API-Football ключ и историю матчей.")
+    st.header("🧪 Бэктест (walk-forward, реальные кэфы)")
+    st.caption("Источник: football-data.co.uk (история + реальные кэфы Pinnacle/B365). "
+               "EV считается против реальной цены, а не против придуманной.")
     b1, b2, b3, b4 = st.columns(4)
     bt_div = b1.selectbox("Лига", list(DIV_NAMES.keys()), format_func=lambda k: DIV_NAMES[k])
     bt_season = b2.selectbox("Сезон", ["2526", "2425", "2324"], index=1)
-    bt_edge = b3.slider("Edge, п.п.", 0, 8, 2, key="bte") / 100
+    bt_edge = b3.slider("Мин. edge", 0.00, 0.15, 0.03, 0.01)
     bt_mode = b4.selectbox("Стейк", ["Flat", "Kelly"])
     if st.button("▶️ Прогнать", type="primary"):
-        ak_ = D.get("meta", {}).get("api_key", "")
-        if not ak_:
-            st.error("❌ Нужен API-Football ключ для бэктеста")
+        rows_all = [r for r in load_seasonal(bt_div, bt_season)
+                    if r.get("FTHG") not in (None, "") and parse_date(r.get("Date", ""))]
+        rows_all.sort(key=lambda r: parse_date(r.get("Date", "")))
+        if len(rows_all) < 150:
+            st.error("Мало матчей с результатом для бэктеста.")
         else:
             engine = Engine(matrix_n=matrix_n)
-            dp = api_season_history(ak_, bt_div, bt_season)
-            if not dp:
-                st.error("Нет истории матчей для этой лиги/сезона")
-            else:
-                dp.sort(key=lambda r: r.get("Date", ""))
-                log = []
-                bank = 10000.0
-                for j, r in enumerate(dp):
-                    h = r.get("HomeTeam", "")
-                    a = r.get("AwayTeam", "")
-                    try:
-                        hg, ag = float(r["FTHG"]), float(r["FTAG"])
-                    except Exception:
-                        continue
-                    md = parse_date(r.get("Date", ""))
+            log = []
+            bank = 10000.0
+            prog = st.progress(0.0)
+            for j, r in enumerate(rows_all):
+                h = (r.get("HomeTeam") or "").strip()
+                a = (r.get("AwayTeam") or "").strip()
+                hg, ag = float(r["FTHG"]), float(r["FTAG"])
+                md = parse_date(r.get("Date", ""))
+                if j >= 120:
                     P = engine.predict(h, a, bt_div, match_date=md, cup=is_cup(r))
-                    if j >= 120:
-                        probs = {"П1": P["p1"], "X": P["x"], "П2": P["p2"]}
-                        for pick, prob in probs.items():
-                            if prob - bt_edge >= 1 / 1.90 and prob >= 0.55:
-                                odd = 1 / prob * 1.05
-                                st_ = 1.0
-                                if bt_mode == "Kelly":
-                                    st_ = max(1.0, kelly(prob, odd, bank, 0.25))
-                                won = (pick == "П1" and hg > ag) or \
-                                      (pick == "X" and hg == ag) or \
-                                      (pick == "П2" and hg < ag)
-                                pnl = st_ * (odd - 1) if won else -st_
-                                bank += pnl
-                                log.append({"pick": pick, "prob": prob, "odd": odd,
-                                            "won": won, "pnl": pnl})
-                    engine.learn_step(h, a, hg, ag, r, lg=bt_div, match_num=j,
-                                      total=len(dp), match_date=md)
-                if not log:
-                    st.warning("Нет сигналов за сезон.")
-                else:
-                    n = len(log)
-                    wins = sum(1 for x in log if x["won"])
-                    profit = sum(x["pnl"] for x in log)
-                    k1, k2, k3 = st.columns(3)
-                    k1.metric("Ставок", n)
-                    k2.metric("WinRate", f"{wins / n * 100:.1f}%")
-                    k3.metric("PnL", f"{profit:+.1f}")
+                    for pick, prob, odd in (
+                        ("П1", P["p1"], _f(r.get("PSH")) or _f(r.get("B365H"))),
+                        ("X", P["x"], _f(r.get("PSD")) or _f(r.get("B365D"))),
+                        ("П2", P["p2"], _f(r.get("PSA")) or _f(r.get("B365A"))),
+                    ):
+                        if not odd or odd <= 1.01:
+                            continue
+                        edge = prob - 1.0 / odd
+                        if edge < bt_edge:
+                            continue
+                        if bt_mode == "Kelly":
+                            stake = kelly(prob, odd, bank, 0.25)
+                        else:
+                            stake = round(bank * 0.01, 2)
+                        if stake <= 0:
+                            continue
+                        won = (pick == "П1" and hg > ag) or \
+                              (pick == "X" and hg == ag) or \
+                              (pick == "П2" and hg < ag)
+                        pnl = stake * (odd - 1) if won else -stake
+                        bank += pnl
+                        log.append({"pick": pick, "prob": round(prob, 3), "odd": odd,
+                                    "edge": round(edge, 3), "stake": stake,
+                                    "won": won, "pnl": round(pnl, 2)})
+                engine.learn_step(h, a, hg, ag, r, lg=bt_div, match_num=j,
+                                  total=len(rows_all), match_date=md)
+                if j % 25 == 0:
+                    prog.progress(j / len(rows_all))
+            prog.progress(1.0)
+            if not log:
+                st.warning("Сигналов не найдено: edge выше порога не встретился. "
+                           "Это нормальный результат для честного бэктеста.")
+            else:
+                n = len(log)
+                wins = sum(1 for x in log if x["won"])
+                profit = sum(x["pnl"] for x in log)
+                staked = sum(x["stake"] for x in log)
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Ставок", n)
+                k2.metric("WinRate", f"{wins / n * 100:.1f}%")
+                k3.metric("PnL", f"{profit:+.1f}")
+                k4.metric("ROI", f"{profit / staked * 100:+.2f}%" if staked else "0.00%")
+                st.dataframe(log[-30:], use_container_width=True, hide_index=True)
