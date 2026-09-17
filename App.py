@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.1 — throttle auto-settle + fp-checked engine + full settle."""
+"""NEURO BET PRO v12.2 — card filter + throttle + fp-checked engine."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
 from datetime import datetime, timedelta
@@ -17,10 +17,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.1", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.2", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.1"
+APP_VERSION = "12.2"
 DATA_VERSION = 14
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
@@ -1177,7 +1177,6 @@ if "meta" not in D:
 if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
     D["meta"]["api_key"] = CLOUD_API_FOOTBALL_KEY
 
-# [v12.1] THROTTLE для auto_settle — раз в 30 минут
 _now_ts = time.time()
 _last_auto_ts = st.session_state.get("_last_auto_settle_ts", 0)
 if _now_ts - _last_auto_ts > AUTO_SETTLE_THROTTLE_SEC:
@@ -1194,7 +1193,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🤖 AI-вердикт с объяснением · 🛡 fp-checked engine · ⏱ throttle auto-settle</p>
+ <p>v{APP_VERSION} · 🤖 AI-вердикт · 🎯 фильтр карточек · 🛡 fp-engine · ⏱ throttle</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1244,7 +1243,7 @@ with st.sidebar:
 
     st.markdown("**🎯 Минимальная вероятность**")
     min_prob = st.slider("", 50, 85, 60, 1, label_visibility="collapsed") / 100
-    st.caption(f"Порог: **{min_prob * 100:.0f}%** — зеленым будут только матчи с этой P")
+    st.caption(f"Порог: **{min_prob * 100:.0f}%** — показываются только матчи с такой P")
 
     kelly_frac = st.slider("Келли (доля)", 0.10, 0.40, 0.25, 0.05)
 
@@ -1506,19 +1505,39 @@ with tab1:
         for line in D.get("report", []):
             st.text(line)
 
+    all_cards = D.get("cards", [])
     cards_view = sorted(
-        D.get("cards", []),
+        [c for c in all_cards if isinstance(c, dict)],
         key=lambda c: (c.get("verdict", {}).get("prob") or 0),
         reverse=True,
     )
     shown = 0
+    hidden = 0
     for c in cards_view:
-        if not isinstance(c, dict):
+        v = c.get("verdict") or {}
+        if not v.get("is_action", False):
+            hidden += 1
             continue
         st.markdown(render_verdict_card(c, min_prob), unsafe_allow_html=True)
         shown += 1
-    if not shown:
+
+    if shown == 0 and hidden == 0:
         st.info("Нажми ⚡ СКАН.")
+    elif shown == 0 and hidden > 0:
+        st.warning(
+            f"⚠️ Ни один матч не прошёл порог **{min_prob * 100:.0f}%**. "
+            f"Скрыто **{hidden}** слабых матчей. "
+            f"Попробуй понизить порог до **55%** или обожди следующий скан."
+        )
+        with st.expander(f"👀 Показать {hidden} скрытых матчей"):
+            for c in cards_view:
+                v = c.get("verdict") or {}
+                if v.get("is_action", False):
+                    continue
+                st.markdown(render_verdict_card(c, min_prob), unsafe_allow_html=True)
+    elif hidden > 0:
+        st.caption(f"✅ Показано **{shown}** матчей с P ≥ {min_prob * 100:.0f}% · "
+                   f"скрыто **{hidden}** слабых")
 
 with tab2:
     st.header("💼 Портфель")
