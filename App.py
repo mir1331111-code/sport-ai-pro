@@ -1148,6 +1148,10 @@ def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
             "funnel": None, "report": [], "meta": {},
             "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
             "mode": "paper", "clv_history": [], "decision_history": []}
+    return {"version": 10, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+            "funnel": None, "report": [], "meta": {},
+            "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
+            "mode": "paper", "clv_history": [], "decision_history": []}
 
 
 def migrate(D):
