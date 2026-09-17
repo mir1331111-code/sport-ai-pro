@@ -1,13 +1,14 @@
-"""NEURO BET PRO v11.0 — full code, indentation-safe."""
+"""NEURO BET PRO v11.1 — fixed syntax + dynamic season + engine in Gist + 4 sources."""
 import streamlit as st
-import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip
-from datetime import datetime, timedelta
+import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ============= PROXY CLEANUP (before requests) =============
-for _k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
-           "ALL_PROXY", "all_proxy", "FTP_PROXY", "ftp_proxy"]:
+# ============= TRIPLE PROXY DEFENSE =============
+PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+              "ALL_PROXY", "all_proxy", "FTP_PROXY", "ftp_proxy"]
+for _k in PROXY_VARS:
     os.environ.pop(_k, None)
 
 import requests
@@ -24,123 +25,8 @@ try:
 except Exception:
     _HAS_HTTPX = False
 
-st.set_page_config(page_title="NEURO BET PRO v11", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v11.1", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
-
-APP_VERSION = "11.0"
-PROMPT_VERSION = "risk_v4"
-HISTORY_FILE = "neuro_bet_pro.json"
-ERR_FILE = "neuro_errors.log"
-ENGINE_CACHE_KEY = "neuro_engine_v11_0"
-ENGINE_SNAPSHOT_FILE = "engine.pkl"
-DISK_CACHE_DIR = "neuro_cache"
-os.makedirs(DISK_CACHE_DIR, exist_ok=True)
-
-esc = html.escape
-AVG_GOALS = 2.75
-TOTAL_MIN = 95.0
-MATRIX_N = 9
-
-HYPERPARAMS = {}
-HYPERPARAMS["refit_temp_every"] = 150
-HYPERPARAMS["refit_struct_every"] = 300
-HYPERPARAMS["ml_iters"] = 300
-HYPERPARAMS["ml_lr"] = 0.05
-HYPERPARAMS["ml_l2"] = 0.001
-HYPERPARAMS["time_decay_tau_days"] = 180.0
-HYPERPARAMS["shr_bayes_k"] = 200.0
-HYPERPARAMS["steam_threshold"] = 0.03
-HYPERPARAMS["steam_multiplier"] = 1.3
-HYPERPARAMS["max_league_exposure"] = 0.15
-HYPERPARAMS["max_market_exposure"] = 0.25
-HYPERPARAMS["max_day_exposure"] = 0.10
-HYPERPARAMS["max_match_exposure"] = 0.02
-HYPERPARAMS["max_match_bets"] = 2
-HYPERPARAMS["max_day_bets"] = 10
-HYPERPARAMS["llm_mult_min"] = 0.5
-HYPERPARAMS["llm_mult_max"] = 1.5
-HYPERPARAMS["llm_veto_risk"] = 85
-HYPERPARAMS["llm_veto_conf"] = 70
-HYPERPARAMS["live_beta_cap_matches"] = 100
-
-TSDB_LEAGUES = {}
-TSDB_LEAGUES["432"] = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ"
-TSDB_LEAGUES["434"] = "🇪🇸 Ла Лига"
-TSDB_LEAGUES["435"] = "🇮🇹 Серия A"
-TSDB_LEAGUES["436"] = "🇩🇪 Бундеслига"
-TSDB_LEAGUES["437"] = "🇫🇷 Лига 1"
-TSDB_LEAGUES["448"] = "🏆 ЛЧ"
-TSDB_LEAGUES["442"] = "🇺🇸 MLS"
-TSDB_LEAGUES["439"] = "🇵🇹 Примейра"
-
-API_LG = {}
-API_LG["R1"] = 235
-API_LG["T1"] = 203
-API_LG["C1"] = 2
-API_LG["EL"] = 3
-API_LG["EC"] = 848
-API_LG["RUS_CUP"] = 233
-
-API_NAMES = {}
-API_NAMES[235] = "🇷🇺 РПЛ"
-API_NAMES[203] = "🇹🇷 Суперлига"
-API_NAMES[2] = "🏆 ЛЧ"
-API_NAMES[3] = "🏆 ЛЕ"
-API_NAMES[848] = "🏆 ЛК"
-API_NAMES[233] = "🏆 Кубок России"
-
-DIV_NAMES = {}
-DIV_NAMES["E0"] = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ"
-DIV_NAMES["E1"] = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип"
-DIV_NAMES["D1"] = "🇩🇪 Бундеслига"
-DIV_NAMES["D2"] = "🇩🇪 2.Бундеслига"
-DIV_NAMES["I1"] = "🇮🇹 Серия A"
-DIV_NAMES["I2"] = "🇮🇹 Серия B"
-DIV_NAMES["SP1"] = "🇪🇸 Ла Лига"
-DIV_NAMES["SP2"] = "🇪🇸 Сегунда"
-DIV_NAMES["F1"] = "🇫🇷 Лига 1"
-DIV_NAMES["F2"] = "🇫🇷 Лига 2"
-DIV_NAMES["N1"] = "🇳🇱 Эредивизи"
-DIV_NAMES["B1"] = "🇧🇪 Про-лига"
-DIV_NAMES["P1"] = "🇵🇹 Примейра"
-DIV_NAMES["T1"] = "🇹🇷 Суперлига"
-DIV_NAMES["R1"] = "🇷🇺 РПЛ"
-
-GOALS = {}
-GOALS["🎯 Проходимость"] = {"w_market": 0.65, "thr": 0.62, "dis": False,
-                            "edge": 0.01, "ev": 0.01, "corr": (1.30, 2.30), "min_games": 10}
-GOALS["⚖️ Баланс"] = {"w_market": 0.40, "thr": 0.55, "dis": True,
-                        "edge": 0.02, "ev": 0.02, "corr": (1.40, 4.20), "min_games": 8}
-GOALS["💰 Value"] = {"w_market": 0.20, "thr": 0.45, "dis": True,
-                       "edge": 0.03, "ev": 0.02, "corr": (1.40, 4.20), "min_games": 6}
-
-WALLS = {}
-WALLS["🌃 Неон-стадион"] = "linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat"
-WALLS["⚫ Минимализм"] = "linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)"
-
-SORT_OPTIONS = ["По EV (валуи сверху)", "По вероятности", "По дате (ближайшие)",
-                "По коэффициенту", "По лиге (А→Я)"]
-SORT_DEFAULT_DESC = {}
-SORT_DEFAULT_DESC["По EV (валуи сверху)"] = True
-SORT_DEFAULT_DESC["По вероятности"] = True
-SORT_DEFAULT_DESC["По дате (ближайшие)"] = False
-SORT_DEFAULT_DESC["По коэффициенту"] = True
-SORT_DEFAULT_DESC["По лиге (А→Я)"] = False
-
-PORT_SORT = ["⏳ Сначала активные", "📅 По дате (новые сверху)",
-             "💰 По сумме ставки", "📈 По PnL", "🎯 По вероятности", "📊 По CLV"]
-PORT_DEFAULT_DESC = {}
-PORT_DEFAULT_DESC["⏳ Сначала активные"] = False
-PORT_DEFAULT_DESC["📅 По дате (новые сверху)"] = True
-PORT_DEFAULT_DESC["💰 По сумме ставки"] = True
-PORT_DEFAULT_DESC["📈 По PnL"] = True
-PORT_DEFAULT_DESC["🎯 По вероятности"] = True
-PORT_DEFAULT_DESC["📊 По CLV"] = True
-
-CORRIDORS = {}
-CORRIDORS["OU"] = (1.50, 2.80)
-CORRIDORS["AH"] = (1.60, 2.60)
-CORRIDORS["STAT"] = (1.40, 4.50)
 
 
 def _get_secret(key, default=""):
@@ -160,11 +46,104 @@ CLOUD_GIST_TOKEN = _get_secret("GIST_TOKEN", "")
 CLOUD_HISTORY_GIST_ID = _get_secret("HISTORY_GIST_ID", "")
 CLOUD_IS_CLOUD = bool(CLOUD_GIST_ID and CLOUD_GIST_TOKEN)
 
-ERR = []
+APP_VERSION = "11.1"
+PROMPT_VERSION = "risk_v4"
+HISTORY_FILE = "neuro_bet_pro.json"
+ERR_FILE = "neuro_errors.log"
+ENGINE_CACHE_KEY = f"neuro_engine_v{APP_VERSION.replace('.', '_')}"
+ENGINE_SNAPSHOT_FILE = "engine.pkl"
+DISK_CACHE_DIR = "neuro_cache"
+os.makedirs(DISK_CACHE_DIR, exist_ok=True)
+
+esc = html.escape
+AVG_GOALS = 2.75
+TOTAL_MIN = 95.0
+MATRIX_N = 9
+
+HYPERPARAMS = {
+    "refit_temp_every": 150,
+    "refit_struct_every": 300,
+    "ml_iters": 300,
+    "ml_lr": 0.05, "ml_l2": 0.001,
+    "time_decay_tau_days": 180.0,
+    "shr_bayes_k": 200.0,
+    "steam_threshold": 0.03, "steam_multiplier": 1.3,
+    "max_league_exposure": 0.15, "max_market_exposure": 0.25,
+    "max_day_exposure": 0.10, "max_match_exposure": 0.02,
+    "max_match_bets": 2, "max_day_bets": 10,
+    "llm_mult_min": 0.5, "llm_mult_max": 1.5,
+    "llm_veto_risk": 85, "llm_veto_conf": 70,
+    "live_beta_cap_matches": 100,
+}
+
+TSDB_LEAGUES = {
+    "432": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "434": "🇪🇸 Ла Лига", "435": "🇮🇹 Серия A",
+    "436": "🇩🇪 Бундеслига", "437": "🇫🇷 Лига 1", "448": "🏆 ЛЧ",
+    "442": "🇺🇸 MLS", "439": "🇵🇹 Примейра",
+}
+API_LG = {"R1": 235, "T1": 203, "C1": 2, "EL": 3, "EC": 848, "RUS_CUP": 233}
+API_NAMES = {235: "🇷🇺 РПЛ", 203: "🇹🇷 Суперлига", 2: "🏆 ЛЧ", 3: "🏆 ЛЕ",
+             848: "🏆 ЛК", 233: "🏆 Кубок России"}
+
+DIV_NAMES = {
+    "E0": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип", "SC0": "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Шотландия",
+    "D1": "🇩🇪 Бундеслига", "D2": "🇩🇪 2.Бундеслига", "I1": "🇮🇹 Серия A",
+    "I2": "🇮🇹 Серия B", "SP1": "🇪🇸 Ла Лига", "SP2": "🇪🇸 Сегунда",
+    "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇳🇱 Эредивизи",
+    "B1": "🇧🇪 Про-лига", "P1": "🇵🇹 Примейра", "T1": "🇹🇷 Суперлига",
+    "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ", "BR1": "🇧🇷 Бразилия",
+    "C1": "🏆 ЛЧ", "EL": "🏆 ЛЕ", "EC": "🏆 ЛК",
+}
+GOALS = {
+    "🎯 Проходимость": dict(w_market=0.65, thr=0.62, dis=False, edge=0.01, ev=0.01,
+                            corr=(1.30, 2.30), min_games=10),
+    "⚖️ Баланс":      dict(w_market=0.40, thr=0.55, dis=True, edge=0.02, ev=0.02,
+                            corr=(1.40, 4.20), min_games=8),
+    "💰 Value":       dict(w_market=0.20, thr=0.45, dis=True, edge=0.03, ev=0.02,
+                            corr=(1.40, 4.20), min_games=6),
+}
+WALLS = {
+    "🌃 Неон-стадион": "linear-gradient(rgba(4,8,18,.80),rgba(4,8,18,.90)),url('https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
+    "🕹 Synthwave":    "linear-gradient(rgba(6,3,20,.82),rgba(6,3,20,.92)),url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') center/cover no-repeat",
+    "🌌 Aurora":       "radial-gradient(1100px 620px at 10% -10%, rgba(34,211,238,.20), transparent 60%),radial-gradient(950px 540px at 90% 8%, rgba(167,139,250,.20), transparent 62%),radial-gradient(900px 640px at 50% 112%, rgba(52,211,153,.16), transparent 60%),#05070f",
+    "⚫ Минимализм":   "linear-gradient(180deg,#070a12 0%,#0b0f1a 55%,#070a12 100%)",
+}
+SORT_OPTIONS = ["По EV (валуи сверху)", "По вероятности", "По дате (ближайшие)",
+                "По коэффициенту", "По лиге (А→Я)"]
+SORT_DEFAULT_DESC = {"По EV (валуи сверху)": True, "По вероятности": True,
+                     "По дате (ближайшие)": False, "По коэффициенту": True,
+                     "По лиге (А→Я)": False}
+PORT_SORT = ["⏳ Сначала активные", "📅 По дате (новые сверху)",
+             "💰 По сумме ставки", "📈 По PnL", "🎯 По вероятности", "📊 По CLV"]
+PORT_DEFAULT_DESC = {"⏳ Сначала активные": False, "📅 По дате (новые сверху)": True,
+                     "💰 По сумме ставки": True, "📈 По PnL": True,
+                     "🎯 По вероятности": True, "📊 По CLV": True}
+CORRIDORS = {"OU": (1.50, 2.80), "AH": (1.60, 2.60), "STAT": (1.40, 4.50)}
+
+_ERR_CATEGORIES = defaultdict(int)
+
+
+def _load_err_from_file():
+    out = []
+    if CLOUD_IS_CLOUD:
+        return out
+    try:
+        if os.path.exists(ERR_FILE):
+            with open(ERR_FILE, "r", encoding="utf-8") as f:
+                for line in f.readlines()[-100:]:
+                    out.append(line.rstrip("\n"))
+    except Exception:
+        pass
+    return out
+
+
+ERR = _load_err_from_file()
 
 
 def log_err(tag, e):
-    line = "[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "][" + tag + "] " + type(e).__name__ + ": " + str(e)[:200]
+    cat = tag.split("_")[0] if "_" in tag else tag
+    _ERR_CATEGORIES[cat] += 1
+    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}][{tag}] {type(e).__name__}: {str(e)[:200]}"
     ERR.append(line)
     if len(ERR) > 100:
         ERR.pop(0)
@@ -187,8 +166,10 @@ def _session():
         s.mount("https://", adapter)
         s.mount("http://", adapter)
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
         "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
     })
     s.trust_env = False
     s.proxies = {"http": None, "https": None}
@@ -206,9 +187,9 @@ def _safe_get(url, timeout=20, headers=None, retries=3):
             r = _sess.get(url, timeout=timeout, headers=headers or {}, proxies=NO_PROXY)
             if r.status_code == 200:
                 return r.content, "requests", None
-            last_err = "HTTP " + str(r.status_code)
+            last_err = f"HTTP {r.status_code}"
         except Exception as e:
-            last_err = type(e).__name__ + ": " + str(e)[:80]
+            last_err = f"{type(e).__name__}: {str(e)[:80]}"
             time.sleep(1.0 * (attempt + 1))
     if _HAS_HTTPX:
         try:
@@ -216,15 +197,15 @@ def _safe_get(url, timeout=20, headers=None, retries=3):
                 r = client.get(url, headers=headers or {})
                 if r.status_code == 200:
                     return r.content, "httpx", None
-                last_err = "httpx HTTP " + str(r.status_code)
+                last_err = f"httpx HTTP {r.status_code}"
         except Exception as e:
-            last_err = "httpx " + type(e).__name__ + ": " + str(e)[:80]
+            last_err = f"httpx {type(e).__name__}: {str(e)[:80]}"
     return None, "error", last_err
 
 
 def _disk_cache_path(key):
     h = hashlib.md5(key.encode("utf-8")).hexdigest()
-    return os.path.join(DISK_CACHE_DIR, h + ".bin")
+    return os.path.join(DISK_CACHE_DIR, f"{h}.bin")
 
 
 def disk_cache_get(key, max_age_sec):
@@ -256,7 +237,8 @@ def disk_cache_put(key, value):
         log_err("disk_cache_put", e)
 
 
-def robust_get(url, timeout=20, headers=None, cache_key=None, cache_max_age=900, retries=3):
+def robust_get(url, timeout=20, headers=None, cache_key=None,
+                cache_max_age=900, retries=3):
     content, source, err = _safe_get(url, timeout=timeout, headers=headers, retries=retries)
     if content:
         if cache_key:
@@ -270,25 +252,9 @@ def robust_get(url, timeout=20, headers=None, cache_key=None, cache_max_age=900,
 
 
 def _new_team():
-    t = {}
-    t["hs"] = []
-    t["hc"] = []
-    t["as"] = []
-    t["ac"] = []
-    t["form"] = []
-    t["cfh"] = []
-    t["cah"] = []
-    t["cfa"] = []
-    t["caa"] = []
-    t["yfh"] = []
-    t["yah"] = []
-    t["yfa"] = []
-    t["yaa"] = []
-    t["hst_h"] = []
-    t["hstc_h"] = []
-    t["hst_a"] = []
-    t["hstc_a"] = []
-    return t
+    return {"hs": [], "hc": [], "as": [], "ac": [], "form": [], "cfh": [], "cah": [],
+            "cfa": [], "caa": [], "yfh": [], "yah": [], "yfa": [], "yaa": [],
+            "hst_h": [], "hstc_h": [], "hst_a": [], "hstc_a": []}
 
 
 def _new_roi():
@@ -329,7 +295,7 @@ def is_half_line(x):
 
 
 def fmt_line(v):
-    s = "{:+.2f}".format(v)
+    s = f"{v:+.2f}"
     if s.endswith("0"):
         s = s[:-1]
     if s.endswith("."):
@@ -342,15 +308,15 @@ def is_cup(row):
         return False
     dv = row.get("Div", "")
     lg = (row.get("League") or "").lower()
-    return dv in ("C1", "EL", "EC") or any(x in lg for x in ["cup", "champions", "europa", "conference", "libertadores"])
+    return dv in ("C1", "EL", "EC") or any(
+        x in lg for x in ["cup", "champions", "europa", "conference", "libertadores"])
 
 
 def settle_ah(pick, hg, ag):
     m = re.match(r"Ф([12])\(([-+]?\d+(?:\.\d+)?)\)", pick or "")
     if not m:
         return None
-    side = int(m.group(1))
-    line = float(m.group(2))
+    side, line = int(m.group(1)), float(m.group(2))
     res = ((hg - ag) if side == 1 else (ag - hg)) + line
     if res > 0.001:
         return True
@@ -421,12 +387,13 @@ def odd1(row, keys):
     return None
 
 
-ODD_KEYS = {}
-ODD_KEYS["П1"] = ["MaxH", "B365H", "PSH", "PSCH"]
-ODD_KEYS["X"] = ["MaxD", "B365D", "PSD", "PSCD"]
-ODD_KEYS["П2"] = ["MaxA", "B365A", "PSA", "PSCA"]
-ODD_KEYS["ТБ 2.5"] = ["Max>2.5", "B365>2.5", "P>2.5"]
-ODD_KEYS["ТМ 2.5"] = ["Max<2.5", "B365<2.5", "P<2.5"]
+ODD_KEYS = {
+    "П1": ["MaxH", "B365H", "PSH", "PSCH"],
+    "X": ["MaxD", "B365D", "PSD", "PSCD"],
+    "П2": ["MaxA", "B365A", "PSA", "PSCA"],
+    "ТБ 2.5": ["Max>2.5", "B365>2.5", "P>2.5"],
+    "ТМ 2.5": ["Max<2.5", "B365<2.5", "P<2.5"],
+}
 
 
 def best_odd(row, pick):
@@ -434,18 +401,12 @@ def best_odd(row, pick):
 
 
 def market_probs(row):
-    ph = _f(row.get("PSH"))
-    px = _f(row.get("PSD"))
-    pa = _f(row.get("PSA"))
+    ph, px, pa = _f(row.get("PSH")), _f(row.get("PSD")), _f(row.get("PSA"))
     if not (ph and px and pa):
-        ph = _f(row.get("B365H"))
-        px = _f(row.get("B365D"))
-        pa = _f(row.get("B365A"))
+        ph, px, pa = _f(row.get("B365H")), _f(row.get("B365D")), _f(row.get("B365A"))
     if not (ph and px and pa):
         return None
-    i1 = 1.0 / ph
-    ix = 1.0 / px
-    ia = 1.0 / pa
+    i1, ix, ia = 1 / ph, 1 / px, 1 / pa
     s = i1 + ix + ia
     return (i1 / s, ix / s, ia / s)
 
@@ -453,9 +414,7 @@ def market_probs(row):
 def get_pin_open(row):
     if not row:
         return None
-    h = _f(row.get("PSH"))
-    x = _f(row.get("PSD"))
-    a = _f(row.get("PSA"))
+    h, x, a = _f(row.get("PSH")), _f(row.get("PSD")), _f(row.get("PSA"))
     if not (h and x and a):
         return None
     return (h, x, a)
@@ -464,9 +423,7 @@ def get_pin_open(row):
 def get_pin_current(row):
     if not row:
         return None
-    h = _f(row.get("PSCH"))
-    x = _f(row.get("PSCD"))
-    a = _f(row.get("PSCA"))
+    h, x, a = _f(row.get("PSCH")), _f(row.get("PSCD")), _f(row.get("PSCA"))
     if not (h and x and a):
         return get_pin_open(row)
     return (h, x, a)
@@ -485,16 +442,16 @@ def clv_for(pick, odd, mkt, row):
         po = _f(row.get("PAHH")) if pick.startswith("Ф1") else _f(row.get("PAHA"))
         ot = _f(row.get("PAHA")) if pick.startswith("Ф1") else _f(row.get("PAHH"))
         if po and ot:
-            i1 = 1.0 / po
-            i2 = 1.0 / ot
+            i1, i2 = 1 / po, 1 / ot
             s = i1 + i2
             return odd * (i1 / s) - 1
         return None
-    po = _f(row.get("PS>2.5")) if pick == "ТБ 2.5" else (_f(row.get("PS<2.5")) if pick == "ТМ 2.5" else None)
-    ot = _f(row.get("PS<2.5")) if pick == "ТБ 2.5" else (_f(row.get("PS>2.5")) if pick == "ТМ 2.5" else None)
+    po = _f(row.get("PS>2.5")) if pick == "ТБ 2.5" else (
+        _f(row.get("PS<2.5")) if pick == "ТМ 2.5" else None)
+    ot = _f(row.get("PS<2.5")) if pick == "ТБ 2.5" else (
+        _f(row.get("PS>2.5")) if pick == "ТМ 2.5" else None)
     if po and ot:
-        i1 = 1.0 / po
-        i2 = 1.0 / ot
+        i1, i2 = 1 / po, 1 / ot
         s = i1 + i2
         return odd * (i1 / s) - 1
     return None
@@ -519,26 +476,26 @@ def detect_steam(pin_open, pin_current, pick, row=None):
     if pin_open and pin_current:
         idx = {"П1": 0, "X": 1, "П2": 2}.get(pick)
         if idx is not None:
-            o = pin_open[idx]
-            c = pin_current[idx]
+            o, c = pin_open[idx], pin_current[idx]
             if o > 1.01 and c > 1.01:
                 move = (c - o) / o
                 if move <= -HYPERPARAMS["steam_threshold"]:
-                    return HYPERPARAMS["steam_multiplier"], "steam +{:.1f}%".format(abs(move) * 100)
+                    return HYPERPARAMS["steam_multiplier"], f"steam +{abs(move)*100:.1f}%"
                 if move >= HYPERPARAMS["steam_threshold"]:
-                    return 0.5, "against -{:.1f}%".format(move * 100)
+                    return 0.5, f"against -{move*100:.1f}%"
     return 1.0, None
 
 
+# ============= GIST I/O =============
 def _gist_url(gid):
-    return "https://api.github.com/gists/" + gid
+    return f"https://api.github.com/gists/{gid}"
 
 
 def _gist_load(gid, filename):
     if not gid or not CLOUD_GIST_TOKEN:
         return None
     try:
-        headers = {"Authorization": "token " + CLOUD_GIST_TOKEN,
+        headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
                    "Accept": "application/vnd.github+json"}
         r = _sess.get(_gist_url(gid), headers=headers, timeout=15, proxies=NO_PROXY)
         if r.status_code != 200:
@@ -559,12 +516,12 @@ def _gist_save(gid, filename, data):
     if not gid or not CLOUD_GIST_TOKEN:
         return False
     try:
-        def _d(o):
+        def default(o):
             if isinstance(o, datetime):
                 return o.isoformat()
-            raise TypeError("not serializable")
-        content = json.dumps(data, ensure_ascii=False, default=_d, allow_nan=False)
-        headers = {"Authorization": "token " + CLOUD_GIST_TOKEN,
+            raise TypeError(f"not serializable: {type(o)}")
+        content = json.dumps(data, ensure_ascii=False, default=default, allow_nan=False)
+        headers = {"Authorization": f"token {CLOUD_GIST_TOKEN}",
                    "Accept": "application/vnd.github+json"}
         body = {"files": {filename: {"content": content}}}
         r = _sess.patch(_gist_url(gid), headers=headers, json=body, timeout=20, proxies=NO_PROXY)
@@ -574,47 +531,303 @@ def _gist_save(gid, filename, data):
         return False
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_history_gist():
-    if not CLOUD_HISTORY_GIST_ID:
+# ============= [NEW] ENGINE PERSISTENCE IN GIST =============
+def engine_to_gist(fp, eng):
+    """Сохраняет engine в Gist как base64-encoded pickle."""
+    if not CLOUD_IS_CLOUD:
+        return False
+    try:
+        blob = base64.b64encode(pickle.dumps({"fp": fp, "engine": eng})).decode()
+        return _gist_save(CLOUD_GIST_ID, "engine.b64",
+                          {"data": blob, "fp": fp,
+                           "ts": datetime.now().isoformat(), "version": APP_VERSION})
+    except Exception as e:
+        log_err("engine_to_gist", e)
+        return False
+
+
+def engine_from_gist(fp):
+    """Загружает engine из Gist."""
+    if not CLOUD_IS_CLOUD:
         return None
-    return _gist_load(CLOUD_HISTORY_GIST_ID, "history.json")
+    try:
+        d = _gist_load(CLOUD_GIST_ID, "engine.b64")
+        if not d or d.get("fp") != fp:
+            return None
+        return pickle.loads(base64.b64decode(d["data"]))["engine"]
+    except Exception as e:
+        log_err("engine_from_gist", e)
+        return None
 
 
-def load_seasonal_smart(div, season):
-    hist = load_history_gist()
-    if hist:
-        data = (hist.get("data", {}) or {}).get(div, {}).get(season)
-        if data:
-            return data
-    ck = "seasonal_" + div + "_" + season
-    content, source, err = robust_get(
-        "https://www.football-data.co.uk/mmz4281/" + season + "/" + div + ".csv",
-        timeout=20, cache_key=ck, cache_max_age=3600, retries=3)
+# ============= [NEW] 4 ИСТОЧНИКА ДАННЫХ =============
+class SourceStatus:
+    def __init__(self, name):
+        self.name = name
+        self.status = "unknown"  # ok, error, cache, timeout
+        self.count = 0
+        self.err = ""
+        self.latency_ms = 0
+
+
+def src_football_data_co_uk(season):
+    """Источник 1: football-data.co.uk — основной CSV."""
+    status = SourceStatus("football-data.co.uk")
+    t0 = time.time()
+    rep = []
+    rows = []
+    seen = set()
+    urls = [
+        (f"https://www.football-data.co.uk/mmz4281/{season}/fixtures.csv", f"fixtures_{season}"),
+        ("https://www.football-data.co.uk/fixtures.csv", "fixtures_global"),
+    ]
+    for u, ck in urls:
+        content, source, err = robust_get(u, timeout=25, cache_key=ck, cache_max_age=1800, retries=3)
+        if content is None:
+            rep.append(f"{ck}: {err}")
+            continue
+        try:
+            rd = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+            n = 0
+            for x in rd:
+                k = (x.get("Div"), x.get("Date"), x.get("HomeTeam"), x.get("AwayTeam"))
+                if k in seen or not x.get("HomeTeam"):
+                    continue
+                seen.add(k)
+                rows.append(x)
+                n += 1
+            rep.append(f"{ck}: {source}, {n}")
+            if n:
+                break
+        except Exception as e:
+            log_err(f"src_football_data {ck}", e)
+            rep.append(f"{ck}: parse error")
+    status.count = len(rows)
+    status.status = "ok" if rows else "error"
+    status.err = "; ".join(rep)
+    status.latency_ms = int((time.time() - t0) * 1000)
+    return rows, status
+
+
+def src_api_football(api_key, d_from, d_to):
+    """Источник 2: API-Football v3 — резерв с богатой статистикой."""
+    status = SourceStatus("API-Football")
+    if not api_key:
+        status.status = "no_key"
+        status.err = "ключ не задан"
+        return [], status
+    t0 = time.time()
+    ck = f"api_fixtures_{d_from}_{d_to}"
+    cached = disk_cache_get(ck, 900)
+    if cached is not None:
+        status.status = "cache"
+        status.count = len(cached[0])
+        status.latency_ms = int((time.time() - t0) * 1000)
+        return cached[0], status
+    out = []
+    headers = {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
+    url = f"https://v3.football.api-sports.io/fixtures?from={d_from}&to={d_to}&timezone=UTC"
+    try:
+        r = _sess.get(url, headers=headers, timeout=25, proxies=NO_PROXY)
+        if r.status_code != 200:
+            status.status = "error"
+            status.err = f"HTTP {r.status_code}"
+            disk_cache_put(ck, (out, status.err))
+            status.latency_ms = int((time.time() - t0) * 1000)
+            return out, status
+        resp = (r.json() or {}).get("response") or []
+        for f in resp:
+            fix = f.get("fixture") or {}
+            teams = f.get("teams") or {}
+            lg = f.get("league") or {}
+            dt = fix.get("date") or ""
+            h = (teams.get("home") or {}).get("name")
+            a = (teams.get("away") or {}).get("name")
+            if not h or not a:
+                continue
+            out.append({"Div": f"API_{lg.get('id', '')}",
+                        "League": lg.get("name") or "Матч",
+                        "Date": dt[:10], "Time": dt[11:16],
+                        "HomeTeam": h, "AwayTeam": a,
+                        "fixture_id": fix.get("id")})
+        status.status = "ok"
+        status.count = len(out)
+    except Exception as e:
+        status.status = "error"
+        status.err = f"{type(e).__name__}: {str(e)[:60]}"
+        log_err("src_api_football", e)
+    status.latency_ms = int((time.time() - t0) * 1000)
+    disk_cache_put(ck, (out, status.err))
+    return out, status
+
+
+def src_thesportsdb_day(days_list):
+    """Источник 3: TheSportsDB eventsday — все матчи дня без ключа."""
+    status = SourceStatus("TheSportsDB-day")
+    t0 = time.time()
+
+    def fetch_day(dstr):
+        ck = f"tsdb_day_{dstr}"
+        content, _, err = robust_get(
+            f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={dstr}&s=Soccer",
+            timeout=15, cache_key=ck, cache_max_age=1800, retries=2)
+        if content is None:
+            return []
+        try:
+            out = []
+            ev = (json.loads(content) or {}).get("events") or []
+            for e in ev:
+                h = e.get("strHomeTeam")
+                a = e.get("strAwayTeam")
+                if not h or not a:
+                    continue
+                out.append({"Div": "TSDB", "League": e.get("strLeague") or "Матч",
+                            "Date": (e.get("dateEvent") or "")[:10],
+                            "Time": (e.get("strTime") or "")[:5],
+                            "HomeTeam": h, "AwayTeam": a})
+            return out
+        except Exception:
+            return []
+
+    all_rows = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(fetch_day, d): d for d in days_list}
+        for fut in as_completed(futs):
+            try:
+                all_rows += fut.result()
+            except Exception:
+                pass
+    status.count = len(all_rows)
+    status.status = "ok" if all_rows else "empty"
+    status.latency_ms = int((time.time() - t0) * 1000)
+    return all_rows, status
+
+
+def src_thesportsdb_next():
+    """Источник 4: TheSportsDB eventsnextleague — ближайшие матчи по лигам."""
+    status = SourceStatus("TheSportsDB-next")
+    t0 = time.time()
+    rows = []
+    seen = set()
+    errs = []
+    for lid, name in TSDB_LEAGUES.items():
+        ck = f"tsdb_next_{lid}"
+        content, _, err = robust_get(
+            f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}",
+            timeout=15, cache_key=ck, cache_max_age=3600, retries=2)
+        if content is None:
+            errs.append(f"{name}: {err}")
+            continue
+        try:
+            ev = (json.loads(content) or {}).get("events") or []
+            for e in ev:
+                k = (e.get("strHomeTeam"), e.get("strAwayTeam"), e.get("dateEvent"))
+                if k in seen:
+                    continue
+                seen.add(k)
+                rows.append({"Div": "TSDB", "League": name,
+                             "Date": e.get("dateEvent", ""),
+                             "Time": (e.get("strTime") or "")[:5],
+                             "HomeTeam": e.get("strHomeTeam", ""),
+                             "AwayTeam": e.get("strAwayTeam", "")})
+        except Exception as e:
+            errs.append(f"{name}: {type(e).__name__}")
+    status.count = len(rows)
+    status.status = "ok" if rows else "empty"
+    status.err = "; ".join(errs[:3])
+    status.latency_ms = int((time.time() - t0) * 1000)
+    return rows, status
+
+
+def src_thesportsdb_past_for_training():
+    """Дополнительный источник для тренировки когда football-data лежит."""
+    rows = []
+    for lid in list(TSDB_LEAGUES.keys())[:4]:
+        ck = f"tsdb_past_{lid}"
+        content, _, _ = robust_get(
+            f"https://www.thesportsdb.com/api/v1/json/3/eventspastleague.php?id={lid}",
+            timeout=15, cache_key=ck, cache_max_age=86400 * 7, retries=2)
+        if content is None:
+            continue
+        try:
+            ev = (json.loads(content) or {}).get("events") or []
+            for e in ev:
+                h = e.get("strHomeTeam")
+                a = e.get("strAwayTeam")
+                hs = _f(e.get("intHomeScore"))
+                as_ = _f(e.get("intAwayScore"))
+                if h and a and hs is not None and as_ is not None:
+                    rows.append({"HomeTeam": h, "AwayTeam": a,
+                                 "FTHG": str(int(hs)), "FTAG": str(int(as_)),
+                                 "Date": e.get("dateEvent", ""),
+                                 "Div": "TSDB"})
+        except Exception:
+            pass
+    return rows
+
+
+# ============= [NEW] FIND SEASON (DYNAMIC) =============
+def find_season():
+    """Определяет текущий сезон через HEAD-запросы к football-data.co.uk."""
+    if "_season_cache" in st.session_state:
+        return st.session_state["_season_cache"]
+    for s in ["2627", "2526", "2425"]:
+        content, _, _ = robust_get(
+            f"https://www.football-data.co.uk/mmz4281/{s}/E0.csv",
+            timeout=10, cache_key=f"season_probe_{s}", cache_max_age=86400, retries=2)
+        if content:
+            st.session_state["_season_cache"] = s
+            return s
+    return "2526"
+
+
+def season_for(dt):
+    if not dt:
+        return find_season()
+    y = dt.year if dt.month >= 7 else dt.year - 1
+    return f"{str(y)[2:]}{str(y + 1)[2:]}"
+
+
+def prev_season(s):
+    try:
+        return f"{int(s[:2]) - 1:02d}{int(s[2:]) - 1:02d}"
+    except Exception:
+        return s
+
+
+# ============= SEASONAL LOADING =============
+def load_seasonal(div, season):
+    ck = f"seasonal_{div}_{season}"
+    content, _, err = robust_get(
+        f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv",
+        timeout=20, cache_key=ck, cache_max_age=86400, retries=3)
     if content is None:
-        log_err("load_seasonal " + div, err)
+        log_err(f"load_seasonal {div}", err)
         return []
     try:
         return list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
     except Exception as e:
-        log_err("load_seasonal parse " + div, e)
+        log_err(f"load_seasonal parse {div}", e)
         return []
 
 
 def load_many(divs, season):
     with ThreadPoolExecutor(max_workers=8) as ex:
-        return dict(zip(divs, ex.map(lambda d: load_seasonal_smart(d, season), divs)))
+        return dict(zip(divs, ex.map(lambda d: load_seasonal(d, season), divs)))
 
 
+# ============= CALIBRATOR =============
 class Calibrator:
     def __init__(self):
         self.method = "temperature"
         self.platt_a = [1.0, 1.0, 1.0]
         self.platt_b = [0.0, 0.0, 0.0]
         self.temp = 1.0
+        self.n_samples = 0
 
     def fit(self, logits, outcomes):
         n = len(logits)
+        self.n_samples = n
         if n < 60:
             self.method = "temperature"
             return
@@ -625,11 +838,9 @@ class Calibrator:
                 ys = outcomes[c::3]
                 if len(zs) < 20:
                     continue
-                a = 1.0
-                b = 0.0
+                a, b = 1.0, 0.0
                 for _ in range(500):
-                    ga = 0.0
-                    gb = 0.0
+                    ga, gb = 0.0, 0.0
                     for z, y in zip(zs, ys):
                         p = 1 / (1 + math.exp(-max(-30, min(30, a * z + b))))
                         err = p - y
@@ -637,8 +848,7 @@ class Calibrator:
                         gb += err
                     a -= lr * ga / max(1, len(zs))
                     b -= lr * gb / max(1, len(zs))
-                self.platt_a[c] = a
-                self.platt_b[c] = b
+                self.platt_a[c], self.platt_b[c] = a, b
             self.method = "platt"
         except Exception:
             self.method = "temperature"
@@ -650,14 +860,12 @@ class Calibrator:
                 p = 1 / (1 + math.exp(-z / max(0.3, T)))
                 s -= math.log(min(max(p if y > 0.5 else 1 - p, 1e-9), 1 - 1e-9))
             return s
-        best_T = 1.0
-        best_ll = nll(1.0)
+        best_T, best_ll = 1.0, nll(1.0)
         T = 0.5
         while T <= 3.0001:
             ll = nll(T)
             if ll < best_ll - 1e-9:
-                best_ll = ll
-                best_T = T
+                best_ll, best_T = ll, T
             T += 0.05
         self.temp = best_T
 
@@ -671,6 +879,7 @@ class Calibrator:
         return 1 / (1 + math.exp(-max(-30, min(30, z / max(0.3, self.temp)))))
 
 
+# ============= ENGINE =============
 class Engine:
     def __init__(self):
         self.elo = {}
@@ -735,11 +944,8 @@ class Engine:
     def _p1px(self, lh, la, rho):
         N = MATRIX_N
         M = [[self._p(lh, i) * self._p(la, j) for j in range(N)] for i in range(N)]
-        tau = {}
-        tau[(0, 0)] = 1 + lh * la * rho
-        tau[(1, 0)] = 1 - la * rho
-        tau[(0, 1)] = 1 - lh * rho
-        tau[(1, 1)] = 1 + rho
+        tau = {(0, 0): 1 + lh * la * rho, (1, 0): 1 - la * rho,
+               (0, 1): 1 - lh * rho, (1, 1): 1 + rho}
         for i in range(N):
             for j in range(N):
                 if (i, j) in tau:
@@ -750,14 +956,16 @@ class Engine:
         px = sum(M[i][i] for i in range(N))
         return p1, px, M
 
+    def _probs_from(self, lh, la, rho, w, e, pde):
+        p1, px, _ = self._p1px(lh, la, rho)
+        f1 = w * p1 + (1 - w) * e * (1 - pde)
+        fd = w * px + (1 - w) * pde
+        return f1, fd, max(1e-6, 1 - f1 - fd)
+
     def _loglik(self, rows, rho, w):
         ll = 0.0
-        for row in rows:
-            lh, la, e, pde, out, weight = row
-            p1, px, _ = self._p1px(lh, la, rho)
-            f1 = w * p1 + (1 - w) * e * (1 - pde)
-            fd = w * px + (1 - w) * pde
-            f2 = max(1e-6, 1 - f1 - fd)
+        for lh, la, e, pde, out, weight in rows:
+            f1, fd, f2 = self._probs_from(lh, la, rho, w, e, pde)
             ll -= weight * math.log(min(max((f1, fd, f2)[out], 1e-6), 1 - 1e-6))
         return ll
 
@@ -766,24 +974,20 @@ class Engine:
         if len(win) < 200:
             return
         split = int(len(win) * 0.8)
-        train = win[:split]
-        hold = win[split:]
+        train, hold = win[:split], win[split:]
         cur = self.lp[lg]
         best_ws = None
         for ws in (0.20, 0.35, 0.50):
-            rows = []
-            for gh, ga, sh, sa, e, pde, out, wt in train:
-                rows.append(((1 - ws) * gh + ws * sh, (1 - ws) * ga + ws * sa, e, pde, out, wt))
+            rows = [((1 - ws) * gh + ws * sh, (1 - ws) * ga + ws * sa, e, pde, out, wt)
+                    for gh, ga, sh, sa, e, pde, out, wt in train]
             ll = self._loglik(rows, cur["rho"], cur["w_dc"])
             if best_ws is None or ll < best_ws[0]:
                 best_ws = (ll, ws)
         ws_pick = best_ws[1]
-        tr = []
-        for gh, ga, sh, sa, e, pde, out, wt in train:
-            tr.append(((1 - ws_pick) * gh + ws_pick * sh, (1 - ws_pick) * ga + ws_pick * sa, e, pde, out, wt))
-        ho = []
-        for gh, ga, sh, sa, e, pde, out, wt in hold:
-            ho.append(((1 - ws_pick) * gh + ws_pick * sh, (1 - ws_pick) * ga + ws_pick * sa, e, pde, out, wt))
+        tr = [((1 - ws_pick) * gh + ws_pick * sh, (1 - ws_pick) * ga + ws_pick * sa,
+               e, pde, out, wt) for gh, ga, sh, sa, e, pde, out, wt in train]
+        ho = [((1 - ws_pick) * gh + ws_pick * sh, (1 - ws_pick) * ga + ws_pick * sa,
+               e, pde, out, wt) for gh, ga, sh, sa, e, pde, out, wt in hold]
         best = None
         for rho in (-0.20, -0.13, -0.06, 0.0, 0.06):
             for w in (0.60, 0.72, 0.85):
@@ -825,8 +1029,7 @@ class Engine:
         if len(data) < 150:
             return
         split = int(len(data) * 0.8)
-        train = data[:split]
-        hold = data[split:]
+        train, hold = data[:split], data[split:]
         old = self.ml_w.get(lg)
         W = [row[:] for row in old] if old else [[0.0] * 12 for _ in range(3)]
         n = max(1, len(train))
@@ -861,8 +1064,7 @@ class Engine:
         if k is None:
             prog = min(1.0, match_num / total) if (match_num is not None and total) else 0.5
             k = 16 + 32 * prog
-        rh = self.elo.get(h, 1500)
-        ra = self.elo.get(a, 1500)
+        rh, ra = self.elo.get(h, 1500), self.elo.get(a, 1500)
         eh = 1 / (1 + 10 ** ((ra - (rh + 60)) / 400))
         s = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
         self.elo[h] = rh + k * (s - eh)
@@ -887,8 +1089,7 @@ class Engine:
                 if v is not None:
                     t[t1][k1].append(v)
                     t[t2][k2].append(v)
-            hst = _f(row.get("HST"))
-            ast = _f(row.get("AST"))
+            hst, ast = _f(row.get("HST")), _f(row.get("AST"))
             if hst is not None and ast is not None:
                 t[h]["hst_h"].append(hst)
                 t[h]["hstc_h"].append(ast)
@@ -919,7 +1120,7 @@ class Engine:
         hist = self.h2h.get((h, a), [])[-5:]
         if not hist:
             return "нет данных"
-        return ", ".join("{:+.0f}".format(d) for d in hist)
+        return ", ".join(f"{d:+.0f}" for d in hist)
 
     def predict(self, h, a, lg="G", match_date=None, cup=False):
         P0 = self.lp[lg]
@@ -928,14 +1129,12 @@ class Engine:
         la_g = max(0.05, self._m(self.ag, 1.2))
         lh_s = max(0.05, self._m(self.hsth, 4.5))
         la_s = max(0.05, self._m(self.hsta, 4.0))
-        sh = self.st[h]
-        sa = self.st[a]
+        sh, sa = self.st[h], self.st[a]
         ah_ = self._m(sh["hs"], lh_g) / lh_g
         dh_ = self._m(sh["hc"], la_g) / la_g
         aa_ = self._m(sa["as"], la_g) / la_g
         da_ = self._m(sa["ac"], lh_g) / lh_g
-        fh = self._form(h)
-        fa = self._form(a)
+        fh, fa = self._form(h), self._form(a)
         lam_g_h = max(0.3, min(5.0, lh_g * ah_ * da_ * 1.10 * (0.85 + 0.30 * fh)))
         lam_g_a = max(0.25, min(4.5, la_g * aa_ * dh_ * 0.95 * (0.85 + 0.30 * fa)))
         conv_h = lh_g / max(0.5, lh_s)
@@ -983,47 +1182,26 @@ class Engine:
             fd = (1 - w_ml) * fd + w_ml * mx
             f2 = (1 - w_ml) * f2 + w_ml * mp2
         tt = f1 + fd + f2 or 1.0
-        f1 = f1 / tt
-        fd = fd / tt
-        f2 = f2 / tt
+        f1, fd, f2 = f1 / tt, fd / tt, f2 / tt
         raw = (f1, fd, f2)
         c1 = self.calibrate(f1, 0)
         cx = self.calibrate(fd, 1)
         c2 = self.calibrate(f2, 2)
         ct = c1 + cx + c2
         if ct > 0.01:
-            c1 = c1 / ct
-            cx = cx / ct
-            c2 = c2 / ct
+            c1, cx, c2 = c1 / ct, cx / ct, c2 / ct
         over = 1 - sum(self._p(lam_h + lam_a, k) for k in range(3))
         btts = sum(M[i][j] for i in range(1, MATRIX_N) for j in range(1, MATRIX_N))
         corners = ((self._m(sh["cfh"], 5) + self._m(sa["caa"], 5)) / 2,
                    (self._m(sa["cfa"], 5) + self._m(sh["cah"], 5)) / 2)
         yellows = ((self._m(sh["yfh"], 2) + self._m(sa["yaa"], 2)) / 2,
                    (self._m(sa["yfa"], 2) + self._m(sh["yah"], 2)) / 2)
-        out = {}
-        out["p1"] = c1
-        out["x"] = cx
-        out["p2"] = c2
-        out["p1_raw"] = raw[0]
-        out["x_raw"] = raw[1]
-        out["p2_raw"] = raw[2]
-        out["over"] = over
-        out["btts"] = btts
-        out["M"] = M
-        out["agree"] = agree
-        out["lams"] = (lam_h, lam_a)
-        out["lams_g"] = (lam_g_h, lam_g_a)
-        out["lams_s"] = (lam_s_h, lam_s_a)
-        out["games"] = games
-        out["corners"] = corners
-        out["yellows"] = yellows
-        out["h2h_n"] = h2h_n
-        out["e"] = e
-        out["pde"] = pde
-        out["ml_feats"] = feats
-        out["w_ml_eff"] = w_ml
-        return out
+        return {"p1": c1, "x": cx, "p2": c2, "p1_raw": raw[0], "x_raw": raw[1],
+                "p2_raw": raw[2], "over": over, "btts": btts, "M": M, "agree": agree,
+                "lams": (lam_h, lam_a), "lams_g": (lam_g_h, lam_g_a),
+                "lams_s": (lam_s_h, lam_s_a), "games": games, "corners": corners,
+                "yellows": yellows, "h2h_n": h2h_n, "e": e, "pde": pde,
+                "ml_feats": feats, "w_ml_eff": w_ml}
 
     def learn_step(self, h, a, hg, ag, row=None, lg="G", match_num=None, total=None, match_date=None):
         P = self.predict(h, a, lg, match_date=match_date, cup=is_cup(row))
@@ -1032,8 +1210,10 @@ class Engine:
         if match_date:
             age_days = max(0, (datetime.now() - match_date).days)
             weight = math.exp(-age_days / HYPERPARAMS["time_decay_tau_days"])
-        self.calib_logits += [self._logit(P["p1_raw"]), self._logit(P["x_raw"]), self._logit(P["p2_raw"])]
-        self.calib_outcomes += [1.0 if out == 0 else 0.0, 1.0 if out == 1 else 0.0, 1.0 if out == 2 else 0.0]
+        self.calib_logits += [self._logit(P["p1_raw"]), self._logit(P["x_raw"]),
+                              self._logit(P["p2_raw"])]
+        self.calib_outcomes += [1.0 if out == 0 else 0.0, 1.0 if out == 1 else 0.0,
+                                1.0 if out == 2 else 0.0]
         if len(self.calib_logits) > 6000:
             del self.calib_logits[:-6000]
             del self.calib_outcomes[:-6000]
@@ -1063,33 +1243,26 @@ class Engine:
         return P
 
 
+# ============= CANDIDATES & EVAL =============
 def build_candidates(P, row, PR, blacklist=()):
-    probs = {}
-    probs["П1"] = P["p1"]
-    probs["X"] = P["x"]
-    probs["П2"] = P["p2"]
-    probs["ТБ 2.5"] = P["over"]
-    probs["ТМ 2.5"] = 1 - P["over"]
-    probs["BTTS да"] = P["btts"]
-    probs["BTTS нет"] = 1 - P["btts"]
-    probs["1X"] = P["p1"] + P["x"]
-    probs["X2"] = P["x"] + P["p2"]
-    probs["12"] = P["p1"] + P["p2"]
+    probs = {"П1": P["p1"], "X": P["x"], "П2": P["p2"], "ТБ 2.5": P["over"],
+             "ТМ 2.5": 1 - P["over"], "BTTS да": P["btts"], "BTTS нет": 1 - P["btts"],
+             "1X": P["p1"] + P["x"], "X2": P["x"] + P["p2"], "12": P["p1"] + P["p2"]}
     cands = []
     for pick, prob in probs.items():
         mkt = "1X2" if pick in ("П1", "X", "П2") else ("OU" if pick.startswith("Т") else "STAT")
         if mkt in blacklist:
             continue
-        odd = best_odd(row, pick) if pick in ODD_KEYS else None
-        cands.append((mkt, pick, prob, odd))
+        cands.append((mkt, pick, prob, best_odd(row, pick) if pick in ODD_KEYS else None))
     ahh = _f(row.get("AHh")) if row else None
     if is_half_line(ahh) and "AH" not in blacklist:
         ohh = odd1(row, ["MaxAHH", "B365AHH", "PAHH"])
         oha = odd1(row, ["MaxAHA", "B365AHA", "PAHA"])
         if ohh and oha:
-            pc = sum(P["M"][i][j] for i in range(MATRIX_N) for j in range(MATRIX_N) if (i - j + ahh) > 0.001)
-            cands.append(("AH", "Ф1(" + fmt_line(ahh) + ")", pc, ohh))
-            cands.append(("AH", "Ф2(" + fmt_line(-ahh) + ")", 1 - pc, oha))
+            pc = sum(P["M"][i][j] for i in range(MATRIX_N) for j in range(MATRIX_N)
+                     if (i - j + ahh) > 0.001)
+            cands.append(("AH", f"Ф1({fmt_line(ahh)})", pc, ohh))
+            cands.append(("AH", f"Ф2({fmt_line(-ahh)})", 1 - pc, oha))
     return cands
 
 
@@ -1104,16 +1277,8 @@ def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
     pin_open = get_pin_open(row)
     pin_current = get_pin_current(row)
     for mkt, pick, prob, odd in cands:
-        item = {}
-        item["mkt"] = mkt
-        item["pick"] = pick
-        item["prob"] = prob
-        item["odd"] = odd
-        item["ev"] = None
-        item["be"] = None
-        item["ok"] = False
-        item["steam"] = None
-        item["steam_mult"] = 1.0
+        item = {"mkt": mkt, "pick": pick, "prob": prob, "odd": odd, "ev": None,
+                "be": None, "ok": False, "steam": None, "steam_mult": 1.0}
         if odd:
             lo, hi = PR["corr"] if mkt == "1X2" else CORRIDORS.get(mkt, (1.4, 4.2))
             ev = prob * odd - 1
@@ -1126,11 +1291,10 @@ def evaluate_rows(cands, P, mkt_probs, PR, engine, use_dis, row=None):
             sm, sdesc = detect_steam(pin_open, pin_current, pick, row)
             item["steam"] = sdesc
             item["steam_mult"] = sm
-            ok = (lo <= odd <= hi and edge >= PR["edge"] and ev >= req and dis_ok and agree_ok and games_ok)
-            item["ev"] = ev
-            item["be"] = be
-            item["ok"] = ok
-            if ok:
+            item.update(ev=ev, be=be,
+                        ok=(lo <= odd <= hi and edge >= PR["edge"] and ev >= req
+                            and dis_ok and agree_ok and games_ok))
+            if item["ok"]:
                 stk = kelly(prob, odd, PR["bank"], PR["kelly"])
                 if best is None or ev > best[3]:
                     best = (mkt, pick, odd, ev, prob, stk)
@@ -1151,50 +1315,88 @@ def apply_correlation_limits(bets, bank, new_bet):
     if league_stake + new_bet["stake"] > bank * HYPERPARAMS["max_league_exposure"]:
         max_stake = max(0, bank * HYPERPARAMS["max_league_exposure"] - league_stake)
         if max_stake < 1.0:
-            return 0.0, "league cap"
+            return 0.0, f"league cap ({league})"
         new_bet["stake"] = round(max_stake, 2)
     match = new_bet.get("match", "")
     pending_on_match = [b for b in bets if b.get("match") == match and b["status"] == "pending"]
     if len(pending_on_match) >= HYPERPARAMS["max_match_bets"]:
-        return 0.0, "match bet count cap"
+        return 0.0, f"match bet count cap ({match})"
     match_stake = sum(b["stake"] for b in pending_on_match)
     if match_stake + new_bet["stake"] > bank * HYPERPARAMS["max_match_exposure"]:
         max_stake = max(0, bank * HYPERPARAMS["max_match_exposure"] - match_stake)
         if max_stake < 1.0:
-            return 0.0, "match exposure cap"
+            return 0.0, f"match exposure cap ({match})"
         new_bet["stake"] = round(max_stake, 2)
     bd = new_bet.get("date_iso")
     if bd:
         same_day = [b for b in bets if b.get("date_iso") == bd and b["status"] == "pending"]
         if len(same_day) >= HYPERPARAMS["max_day_bets"]:
-            return 0.0, "day bet count cap"
+            return 0.0, f"day bet count cap ({bd})"
     return new_bet["stake"], None
 
 
+def backtest(div, season, PR, use_dis=True, stake_mode="Flat"):
+    rows = [r for r in load_seasonal(div, season)
+            if r.get("FTHG") not in (None, "") and r.get("FTAG") not in (None, "")
+            and parse_date(r.get("Date", ""))]
+    rows.sort(key=lambda r: parse_date(r["Date"]))
+    eng = Engine()
+    log = []
+    bank = 10000.0
+    for j, r in enumerate(rows):
+        h = (r.get("HomeTeam") or "").strip()
+        a = (r.get("AwayTeam") or "").strip()
+        try:
+            hg, ag = float(r["FTHG"]), float(r["FTAG"])
+        except Exception as e:
+            log_err("bt parse", e)
+            continue
+        md = parse_date(r.get("Date", ""))
+        try:
+            P = eng.predict(h, a, div, match_date=md, cup=is_cup(r))
+            mkt = market_probs(r)
+            Pb = blend_market(P, mkt, PR["w_market"])
+            if j >= 120:
+                cands = build_candidates(Pb, r, PR)
+                rows_ev, best, hot, clv, gap = evaluate_rows(cands, Pb, mkt, PR, eng, use_dis, row=r)
+                for item in rows_ev:
+                    if not item["ok"] or not item["odd"]:
+                        continue
+                    res = determine_outcome(item["mkt"], item["pick"], hg, ag)
+                    if res in (None, "push"):
+                        continue
+                    won = (res == "won")
+                    st_ = 1.0
+                    if stake_mode == "Kelly":
+                        st_ = max(1.0, kelly(item["prob"], item["odd"], bank, 0.25))
+                    pnl = st_ * (item["odd"] - 1) if won else -st_
+                    bank += pnl
+                    log.append({"mkt": item["mkt"], "prob": item["prob"],
+                                "odd": item["odd"], "won": won, "stake": st_, "pnl": pnl})
+        except Exception as e:
+            log_err("bt loop", e)
+        try:
+            eng.learn_step(h, a, hg, ag, r, lg=div, match_num=j, total=len(rows), match_date=md)
+        except Exception as e:
+            log_err("bt learn", e)
+    return log, eng
+
+
+# ============= DATA =============
 def new_data():
-    d = {}
-    d["version"] = 10
-    d["bank"] = 10000.0
-    d["bets"] = []
-    d["cards"] = []
-    d["picks"] = []
-    d["funnel"] = None
-    d["report"] = []
-    d["meta"] = {}
-    d["stats"] = {"won": 0, "lost": 0, "profit": 0, "push": 0}
-    d["mode"] = "paper"
-    d["clv_history"] = []
-    d["decision_history"] = []
-    return d
+    return {"version": 10, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+            "funnel": None, "report": [], "meta": {},
+            "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
+            "mode": "paper", "clv_history": [], "decision_history": []}
 
 
 def migrate(D):
     if not isinstance(D, dict):
         return new_data()
     base = new_data()
-    for k in base:
+    for k, v in base.items():
         if k not in D or D[k] is None:
-            D[k] = json.loads(json.dumps(base[k]))
+            D[k] = json.loads(json.dumps(v))
     D["version"] = 10
     for key in ("cards", "picks", "bets", "report", "clv_history", "decision_history"):
         if not isinstance(D.get(key), list):
@@ -1225,14 +1427,14 @@ def _sanitize(obj):
 
 def _local_save(d):
     try:
-        def _d(o):
+        def default(o):
             if isinstance(o, datetime):
                 return o.isoformat()
-            raise TypeError("not serializable")
+            raise TypeError(f"not serializable: {type(o)}")
         clean = _sanitize(d)
         tmp = HISTORY_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(clean, f, indent=2, ensure_ascii=False, default=_d, allow_nan=False)
+            json.dump(clean, f, indent=2, ensure_ascii=False, default=default, allow_nan=False)
         os.replace(tmp, HISTORY_FILE)
     except Exception as e:
         log_err("save_data.local", e)
@@ -1274,6 +1476,11 @@ def engine_cache_fp(season, div_counts):
 
 
 def engine_cache_get(fp):
+    # 1. Попытка из Gist (переживает Reboot)
+    eng = engine_from_gist(fp)
+    if eng:
+        return eng
+    # 2. Попытка из disk_cache (быстро, но ephemeral)
     try:
         key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         cached = disk_cache_get(key, 86400 * 14)
@@ -1281,6 +1488,7 @@ def engine_cache_get(fp):
             return cached.get("engine")
     except Exception:
         pass
+    # 3. Попытка из локального файла
     try:
         if os.path.exists(ENGINE_SNAPSHOT_FILE):
             with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
@@ -1293,6 +1501,7 @@ def engine_cache_get(fp):
 
 
 def engine_cache_put(fp, eng):
+    # Сохраняем во все 3 места для надёжности
     try:
         key = ENGINE_CACHE_KEY + "_" + hashlib.md5(str(fp).encode()).hexdigest()[:12]
         disk_cache_put(key, {"fp": fp, "engine": eng})
@@ -1305,6 +1514,8 @@ def engine_cache_put(fp, eng):
         os.replace(tmp, ENGINE_SNAPSHOT_FILE)
     except Exception as e:
         log_err("engine_cache_put.pkl", e)
+    # [NEW] Сохраняем в Gist для persistency через Reboot
+    engine_to_gist(fp, eng)
 
 
 def apply_settle(D, idx, outcome, score=None):
@@ -1368,20 +1579,6 @@ def recompute_bet(D, idx, hg, ag, score_str):
     return D2
 
 
-def season_for(dt):
-    if not dt:
-        return "2526"
-    y = dt.year if dt.month >= 7 else dt.year - 1
-    return "{}{}".format(str(y)[2:], str(y + 1)[2:])
-
-
-def prev_season(s):
-    try:
-        return "{:02d}{:02d}".format(int(s[:2]) - 1, int(s[2:]) - 1)
-    except Exception:
-        return s
-
-
 @st.cache_data(ttl=1800, show_spinner=False)
 def find_result_cached(div, home, away, bd_iso):
     if div in (None, "TSDB", "") or (isinstance(div, str) and div.startswith("API_")):
@@ -1390,14 +1587,14 @@ def find_result_cached(div, home, away, bd_iso):
     season = season_for(bd)
     for s in (season, prev_season(season)):
         cands = []
-        for r in load_seasonal_smart(div, s):
-            if r.get("HomeTeam") == home and r.get("AwayTeam") == away and r.get("FTHG") not in (None, ""):
+        for r in load_seasonal(div, s):
+            if r.get("HomeTeam") == home and r.get("AwayTeam") == away \
+                    and r.get("FTHG") not in (None, ""):
                 rd = parse_date(r.get("Date", ""))
                 if not rd:
                     continue
                 try:
-                    hg = float(r["FTHG"])
-                    ag = float(r["FTAG"])
+                    hg, ag = float(r["FTHG"]), float(r["FTAG"])
                 except Exception:
                     continue
                 cands.append((rd, hg, ag))
@@ -1440,15 +1637,18 @@ def auto_settle(D, force=False):
         else:
             if bd.date() > today:
                 continue
+            if bd.date() == today:
+                dtf = parse_date(b.get("date_time", "")) if b.get("date_time") else None
+                if dtf and now < dtf + timedelta(hours=2, minutes=15):
+                    continue
         h, a = b["match"].split(" vs ")
         res = find_result(b.get("div"), h, a, bd)
         if not res:
             continue
-        hg = res[0]
-        ag = res[1]
+        hg, ag = res[0], res[1]
         out = determine_outcome(b.get("market"), b.get("pick"), hg, ag)
         if out:
-            D2 = apply_settle(D2, idx, out, score="{}:{}".format(int(hg), int(ag)))
+            D2 = apply_settle(D2, idx, out, score=f"{int(hg)}:{int(ag)}")
             changed += 1
     return D2, changed
 
@@ -1497,13 +1697,8 @@ def live_predict(minute, cur_total, base_lam, league=None, live_model=None):
     u_shape = 0.85 + 0.4 * (abs(phase - 0.5) * 2) ** 1.5
     lam_rem = lam_pace * remaining * k * u_shape
     p_goal = 1.0 - math.exp(-lam_rem / max(0.3, temp))
-    out = {}
-    out["p_goal"] = p_goal
-    out["proj_total"] = cur_total + lam_rem
-    out["lam_rem"] = lam_rem
-    out["pace"] = lam_pace * TOTAL_MIN
-    out["k"] = k
-    return out
+    return {"p_goal": p_goal, "proj_total": cur_total + lam_rem,
+            "lam_rem": lam_rem, "pace": lam_pace * TOTAL_MIN, "k": k}
 
 
 def live_learn_step(minute, cur_total, final_total, league=None, live_model=None):
@@ -1526,19 +1721,40 @@ def live_learn_step(minute, cur_total, final_total, league=None, live_model=None
     return live_model
 
 
+def live_refit_temp(live_model, window=500):
+    sigs = [s for s in live_model.get("signals", []) if s.get("had_goal") is not None][-window:]
+    if len(sigs) < 20:
+        return live_model
+
+    def nll(T):
+        s = 0.0
+        for sig in sigs:
+            p = min(max(sig.get("p_goal", 0.5), 1e-6), 1 - 1e-6)
+            p_c = 1.0 / (1.0 + math.exp(-math.log(p / (1 - p)) / max(0.3, T)))
+            y = 1.0 if sig.get("had_goal") else 0.0
+            s -= math.log(min(max(p_c if y > 0.5 else 1 - p_c, 1e-9), 1 - 1e-9))
+        return s
+
+    best_T, best_ll = live_model.get("temp", 1.0), nll(live_model.get("temp", 1.0))
+    T = 0.5
+    while T <= 3.0001:
+        ll = nll(T)
+        if ll < best_ll - 1e-9:
+            best_ll, best_T = ll, T
+        T += 0.05
+    live_model["temp"] = min(max(best_T, 0.5), 3.0)
+    return live_model
+
+
 def live_stats(live_model):
     sigs = live_model.get("signals", [])
     fin = [s for s in sigs if s.get("had_goal") is not None]
     total = len(fin)
-    out = {}
     if total < 5:
-        out["n"] = total
-        out["hit_rate"] = None
-        out["brier"] = None
-        out["by_league"] = {}
-        return out
+        return {"n": total, "hit_rate": None, "brier": None, "cal": [], "by_league": {}}
     hits = sum(1 for s in fin if s.get("had_goal"))
-    brier = sum((s.get("p_goal", 0.5) - (1.0 if s.get("had_goal") else 0.0)) ** 2 for s in fin) / total
+    brier = sum((s.get("p_goal", 0.5) - (1.0 if s.get("had_goal") else 0.0)) ** 2
+                for s in fin) / total
     by = {}
     for s in fin:
         lg = s.get("league") or "—"
@@ -1548,11 +1764,7 @@ def live_stats(live_model):
             by[lg]["hits"] += 1
     for lg in by:
         by[lg]["hr"] = by[lg]["hits"] / by[lg]["n"] * 100
-    out["n"] = total
-    out["hit_rate"] = hits / total * 100
-    out["brier"] = brier
-    out["by_league"] = by
-    return out
+    return {"n": total, "hit_rate": hits / total * 100, "brier": brier, "cal": [], "by_league": by}
 
 
 _LLM_BAD = {}
@@ -1568,9 +1780,20 @@ def _mark_llm_bad(name):
 
 
 def llm_gemini(prompt, key):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"gemini-2.0-flash:generateContent?key={key}")
+    schema = {"type": "OBJECT",
+              "properties": {"risk_pick": {"type": "INTEGER"},
+                             "confidence": {"type": "INTEGER"},
+                             "veto": {"type": "BOOLEAN"},
+                             "suggested_stake_multiplier": {"type": "NUMBER"},
+                             "veto_reason": {"type": "STRING"},
+                             "summary": {"type": "STRING"}},
+              "required": ["risk_pick", "confidence", "veto", "summary"]}
     body = {"contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}}
+            "generationConfig": {"temperature": 0.2,
+                                 "responseMimeType": "application/json",
+                                 "responseSchema": schema}}
     try:
         r = _sess.post(url, json=body, timeout=10, proxies=NO_PROXY)
         if r.status_code != 200:
@@ -1582,8 +1805,9 @@ def llm_gemini(prompt, key):
 
 def llm_grok(prompt, key):
     url = "https://api.x.ai/v1/chat/completions"
-    hdr = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
-    body = {"model": "grok-2-latest", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+    hdr = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    body = {"model": "grok-2-latest",
+            "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
     try:
         r = _sess.post(url, json=body, headers=hdr, timeout=10, proxies=NO_PROXY)
         if r.status_code != 200:
@@ -1594,9 +1818,14 @@ def llm_grok(prompt, key):
 
 
 def llm_risk(ctx, meta):
-    prompt = "Матч: " + ctx["home"] + " vs " + ctx["away"] + ". Исход: " + ctx["pick"] + " @ " + str(round(ctx["odd"], 2))
+    prompt = (f"Матч: {ctx['home']} vs {ctx['away']} ({ctx['league']}). "
+              f"Исход: {ctx['pick']} @ {ctx['odd']:.2f}, P {ctx['prob'] * 100:.0f}%. "
+              f"H2H: {ctx['h2h']}. Форма: {ctx['fh']} vs {ctx['fa']}. "
+              f"xG: {ctx['lh']:.2f}-{ctx['la']:.2f}. Игр: {ctx['games']}. "
+              "JSON: {risk_pick:0-100, confidence:0-100, veto:bool, "
+              "suggested_stake_multiplier:0.5-1.5, veto_reason:string, summary:string}")
     ph = hashlib.md5((PROMPT_VERSION + prompt).encode()).hexdigest()[:16]
-    cached = disk_cache_get("llm_" + ph, 3600)
+    cached = disk_cache_get(f"llm_{ph}", 3600)
     if cached is not None:
         return cached
     for name, fn, key in (("gemini", llm_gemini, meta.get("gemini_key", "")),
@@ -1607,14 +1836,13 @@ def llm_risk(ctx, meta):
             txt = fn(prompt, key)
             if txt:
                 d = json.loads(txt)
-                result = {}
-                result["source"] = name
-                result["risk"] = int(d.get("risk_pick", 50))
-                result["conf"] = int(d.get("confidence", 50))
-                result["veto"] = bool(d.get("veto", False))
-                result["mult"] = float(d.get("suggested_stake_multiplier", 1.0))
-                result["summary"] = d.get("summary", "")
-                disk_cache_put("llm_" + ph, result)
+                result = {"source": name, "risk": int(d.get("risk_pick", 50)),
+                          "conf": int(d.get("confidence", 50)),
+                          "veto": bool(d.get("veto", False)),
+                          "mult": float(d.get("suggested_stake_multiplier", 1.0)),
+                          "veto_reason": d.get("veto_reason", ""),
+                          "summary": d.get("summary", "")}
+                disk_cache_put(f"llm_{ph}", result)
                 return result
             _mark_llm_bad(name)
         except Exception as e:
@@ -1628,15 +1856,11 @@ def heuristic_risk(ctx):
     r += max(0.0, (0.60 - ctx.get("prob", 0.5))) * 100
     if ctx.get("games", 0) < 5:
         r += 10
+    r += max(0, (ctx.get("rh", 14) - ctx.get("ra", 14))) * 3
     risk = int(max(5, min(95, r)))
-    out = {}
-    out["source"] = "heuristic"
-    out["risk"] = risk
-    out["conf"] = 40
-    out["veto"] = (ctx.get("games", 0) < 2)
-    out["mult"] = 1.0
-    out["summary"] = "Эвристика"
-    return out
+    return {"source": "heuristic", "risk": risk, "conf": 40,
+            "veto": (ctx.get("games", 0) < 2), "mult": 1.0,
+            "veto_reason": "мало данных", "summary": "Эвристика."}
 
 
 def should_veto(risk):
@@ -1655,50 +1879,12 @@ def apply_llm_to_stake(stake, risk):
     if should_veto(risk):
         return 0.0, "LLM veto"
     mult = max(0.5, min(1.5, risk.get("mult", 1.0)))
-    return round(stake * mult, 2), "x" + str(round(mult, 2))
+    return round(stake * mult, 2), f"×{mult:.2f}"
 
 
 def api_football_fixtures(api_key, d_from, d_to):
-    if not api_key:
-        return [], ["API fixtures: ключ не задан"]
-    ck = "api_fixtures_" + d_from + "_" + d_to
-    cached = disk_cache_get(ck, 900)
-    if cached is not None:
-        return cached[0], cached[1] + ["(кэш)"]
-    out = []
-    rep = []
-    headers = {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
-    url = "https://v3.football.api-sports.io/fixtures?from=" + d_from + "&to=" + d_to + "&timezone=UTC"
-    try:
-        r = _sess.get(url, headers=headers, timeout=25, proxies=NO_PROXY)
-        if r.status_code != 200:
-            rep.append("API: HTTP " + str(r.status_code))
-            disk_cache_put(ck, (out, rep))
-            return out, rep
-        resp = (r.json() or {}).get("response") or []
-        rep.append("API fixtures: " + str(len(resp)))
-        for f in resp:
-            fix = f.get("fixture") or {}
-            teams = f.get("teams") or {}
-            lg = f.get("league") or {}
-            dt = fix.get("date") or ""
-            h = (teams.get("home") or {}).get("name")
-            a = (teams.get("away") or {}).get("name")
-            if not h or not a:
-                continue
-            item = {}
-            item["Div"] = "API_" + str(lg.get("id", ""))
-            item["League"] = lg.get("name") or "Матч"
-            item["Date"] = dt[:10]
-            item["Time"] = dt[11:16]
-            item["HomeTeam"] = h
-            item["AwayTeam"] = a
-            item["fixture_id"] = fix.get("id")
-            out.append(item)
-    except Exception as e:
-        rep.append("API: " + type(e).__name__)
-    disk_cache_put(ck, (out, rep))
-    return out, rep
+    """Обёртка для обратной совместимости."""
+    return src_api_football(api_key, d_from, d_to)
 
 
 def api_football_live(api_key, league_ids=None):
@@ -1707,7 +1893,7 @@ def api_football_live(api_key, league_ids=None):
     ck = "api_live_all"
     cached = disk_cache_get(ck, 300)
     if cached is not None:
-        return cached[0], cached[1] + ["(кэш)"]
+        return cached[0], cached[1] + ["(кэш 5мин)"]
     out = []
     rep = []
     headers = {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
@@ -1715,7 +1901,7 @@ def api_football_live(api_key, league_ids=None):
     try:
         r = _sess.get(url, headers=headers, timeout=20, proxies=NO_PROXY)
         if r.status_code != 200:
-            rep.append("API live: HTTP " + str(r.status_code))
+            rep.append(f"API live: HTTP {r.status_code}")
             return out, rep
         n = 0
         for f in (r.json() or {}).get("response") or []:
@@ -1726,59 +1912,62 @@ def api_football_live(api_key, league_ids=None):
             lid = lg.get("id")
             if lid not in set(API_LG.values()):
                 continue
-            item = {}
-            item["league"] = API_NAMES.get(lid, lg.get("name", str(lid)))
-            item["fixture_id"] = fix.get("id")
-            item["home"] = (teams.get("home") or {}).get("name")
-            item["away"] = (teams.get("away") or {}).get("name")
-            item["home_score"] = goals.get("home") or 0
-            item["away_score"] = goals.get("away") or 0
-            item["minute"] = fix.get("status", {}).get("elapsed") or 0
-            item["stats"] = {}
-            item["source"] = "API"
-            out.append(item)
+            out.append({"league": API_NAMES.get(lid, lg.get("name", str(lid))),
+                        "fixture_id": fix.get("id"),
+                        "home": (teams.get("home") or {}).get("name"),
+                        "away": (teams.get("away") or {}).get("name"),
+                        "home_score": goals.get("home") or 0,
+                        "away_score": goals.get("away") or 0,
+                        "minute": fix.get("status", {}).get("elapsed") or 0,
+                        "stats": {}, "source": "API"})
             n += 1
-        rep.append("API live: " + str(n))
+        rep.append(f"API live: {n}")
     except Exception as e:
-        rep.append("API live: " + type(e).__name__)
+        rep.append(f"API live: {type(e).__name__}")
     disk_cache_put(ck, (out, rep))
     return out, rep
 
 
+def api_football_fixture(api_key, fixture_id):
+    if not api_key:
+        return None
+    headers = {"x-apisports-key": api_key, "x-rapidapi-host": "v3.football.api-sports.io"}
+    url = f"https://v3.football.api-sports.io/fixtures?id={fixture_id}"
+    try:
+        r = _sess.get(url, headers=headers, timeout=15, proxies=NO_PROXY)
+        resp = (r.json() or {}).get("response") or []
+        if not resp:
+            return None
+        f = resp[0]
+        fix = f.get("fixture") or {}
+        goals = f.get("goals") or {}
+        return {"finished": (fix.get("status") or {}).get("short") in ("FT", "AET", "PEN"),
+                "home": goals.get("home") or 0, "away": goals.get("away") or 0}
+    except Exception:
+        return None
+
+
 def load_fixtures(season=None):
-    rep = []
-    rows = []
-    seen = set()
-    season = season or "2526"
-    urls = [("https://www.football-data.co.uk/mmz4281/" + season + "/fixtures.csv", "fixtures_" + season),
-            ("https://www.football-data.co.uk/fixtures.csv", "fixtures_global")]
-    for u, ck in urls:
-        content, source, err = robust_get(u, timeout=25, cache_key=ck, cache_max_age=1800, retries=3)
-        if content is None:
-            rep.append(ck + ": " + str(err))
-            continue
-        try:
-            rd = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
-            n = 0
-            for x in rd:
-                k = (x.get("Div"), x.get("Date"), x.get("HomeTeam"), x.get("AwayTeam"))
-                if k in seen or not x.get("HomeTeam"):
-                    continue
-                seen.add(k)
-                rows.append(x)
-                n += 1
-            rep.append(ck + ": " + source + ", " + str(n) + " строк")
-            if n:
-                break
-        except Exception as e:
-            log_err("load_fixtures " + ck, e)
+    """Обёртка для обратной совместимости."""
+    season = season or find_season()
+    rows, status = src_football_data_co_uk(season)
+    rep = [f"{status.name}: {status.status}, {status.count}"]
+    if status.err:
+        rep.append(status.err)
+    return rows, rep
+
+
+def load_tsdb():
+    """Обёртка для обратной совместимости."""
+    rows, status = src_thesportsdb_next()
+    rep = [f"{status.name}: {status.status}, {status.count}"]
     return rows, rep
 
 
 def tsdb_day(dstr):
-    ck = "tsdb_day_" + dstr
+    ck = f"tsdb_day_{dstr}"
     content, _, err = robust_get(
-        "https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=" + dstr + "&s=Soccer",
+        f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={dstr}&s=Soccer",
         timeout=15, cache_key=ck, cache_max_age=1800, retries=2)
     if content is None:
         return []
@@ -1790,29 +1979,18 @@ def tsdb_day(dstr):
             a = e.get("strAwayTeam")
             if not h or not a:
                 continue
-            item = {}
-            item["Div"] = "TSDB"
-            item["League"] = e.get("strLeague") or "Матч"
-            item["Date"] = (e.get("dateEvent") or "")[:10]
-            item["Time"] = (e.get("strTime") or "")[:5]
-            item["HomeTeam"] = h
-            item["AwayTeam"] = a
-            out.append(item)
+            out.append({"Div": "TSDB", "League": e.get("strLeague") or "Матч",
+                        "Date": (e.get("dateEvent") or "")[:10],
+                        "Time": (e.get("strTime") or "")[:5],
+                        "HomeTeam": h, "AwayTeam": a})
         return out
     except Exception:
         return []
 
 
 def tsdb_days_parallel(days_list):
-    out = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futs = {ex.submit(tsdb_day, d): d for d in days_list}
-        for fut in as_completed(futs):
-            try:
-                out += fut.result()
-            except Exception:
-                pass
-    return out
+    rows, _ = src_thesportsdb_day(days_list)
+    return rows
 
 
 def load_livescores():
@@ -1827,15 +2005,12 @@ def load_livescores():
         for e in (json.loads(content) or {}).get("events") or []:
             hk = re.sub(r"[^a-zа-я0-9]", "", (e.get("strHomeTeam", "") or "").lower())
             ak = re.sub(r"[^a-zа-я0-9]", "", (e.get("strAwayTeam", "") or "").lower())
-            item = {}
-            item["home"] = e.get("intHomeScore")
-            item["away"] = e.get("intAwayScore")
-            item["home_name"] = e.get("strHomeTeam", "")
-            item["away_name"] = e.get("strAwayTeam", "")
-            item["status"] = (e.get("strStatus") or "").strip()
-            item["progress"] = (e.get("strProgress") or "").strip()
-            item["league"] = e.get("strLeague") or ""
-            out[(hk, ak)] = item
+            out[(hk, ak)] = {"home": e.get("intHomeScore"), "away": e.get("intAwayScore"),
+                             "home_name": e.get("strHomeTeam", ""),
+                             "away_name": e.get("strAwayTeam", ""),
+                             "status": (e.get("strStatus") or "").strip(),
+                             "progress": (e.get("strProgress") or "").strip(),
+                             "league": e.get("strLeague") or ""}
         return out
     except Exception:
         return {}
@@ -1858,9 +2033,9 @@ FINISHED_STATUSES = {"match finished", "ft", "aet", "ap", "finished", "full time
 def _odd_s(rw):
     o = rw.get("odd")
     if o:
-        return "{:.2f}".format(o)
+        return f"{o:.2f}"
     p = max(rw.get("prob") or 0.01, 0.01)
-    return "фейр {:.2f}".format(1 / p)
+    return f"фейр {1 / p:.2f}"
 
 
 def ai_verdict(c):
@@ -1881,13 +2056,27 @@ def ai_verdict(c):
     lg = c.get("lams_g", (0, 0))
     ls = c.get("lams_s", (0, 0))
     lh, la = c.get("lams", (0, 0))
-    parts = ["xG {:.2f}-{:.2f}".format(lg[0], lg[1])]
+    parts = [f"xG {lg[0]:.2f}–{lg[1]:.2f}, удары {ls[0]:.2f}–{ls[1]:.2f}; итог {lh:.2f}–{la:.2f}."]
     if c.get("fh", "—") != "—":
-        parts.append("Форма: " + c["fh"] + " vs " + c["fa"])
+        parts.append(f"Форма: {c['fh']} vs {c['fa']}.")
     if c.get("h2h_n", 0) >= 5:
-        parts.append("H2H: " + str(c["h2h_n"]))
+        parts.append(f"H2H: {c['h2h_n']} встреч.")
+    m = c.get("mkt")
+    if m:
+        gap = max(abs(c.get("p1", 0) - m[0]), abs(c.get("px", c.get("x", 0)) - m[1]),
+                  abs(c.get("p2", 0) - m[2]))
+        parts.append(f"Gap {gap * 100:.0f} п.п.")
     if c.get("best"):
-        parts.append("Вывод: " + c["best"][1] + " @ " + "{:.2f}".format(c["best"][2]))
+        steam = ""
+        for r in c["rows"]:
+            if r["pick"] == c["best"][1] and r.get("steam"):
+                steam = f" [{r['steam']}]"
+                break
+        parts.append(f"Вывод: {c['best'][1]} @ {c['best'][2]:.2f} (EV {c['best'][3] * 100:+.1f}%){steam}.")
+    elif c.get("hot"):
+        parts.append(f"Высокая P {c['hot'][0][0]} ({c['hot'][0][1] * 100:.0f}%).")
+    else:
+        parts.append("Наблюдение.")
     return main, alt, avoid, " ".join(parts)
 
 
@@ -1928,29 +2117,18 @@ def build_picks(cards, thr, bank, kf):
         if row is None:
             continue
         main, alt, avoid, text = ai_verdict(c)
+        if c.get("risk") and c["risk"].get("summary"):
+            text += f" | 🤖 {c['risk']['summary']}"
         stake = kelly(row["prob"], row["odd"], bank, kf) if row["odd"] else round(bank * 0.01, 2)
         stake = round(stake * row.get("steam_mult", 1.0), 2)
-        item = {}
-        item["league"] = c["league"]
-        item["match"] = c["match"]
-        item["date"] = c["date"]
-        item["when"] = c["when"]
-        item["pick"] = row["pick"]
-        item["prob"] = row["prob"]
-        item["odd"] = row["odd"]
-        item["odd_s"] = _odd_s(row)
-        item["stake"] = stake
-        item["stars"] = stars_for(row, thr)
-        item["type"] = ptype
-        item["verdict"] = text
-        item["main"] = main
-        item["alt"] = alt
-        item["avoid"] = avoid
-        item["clv"] = c.get("clv")
-        item["ev"] = row.get("ev")
-        item["score"] = (row.get("ev") or 0 if ptype == "value" else 0) + row["prob"]
-        item["steam"] = row.get("steam")
-        picks.append(item)
+        picks.append({"league": c["league"], "match": c["match"], "date": c["date"],
+                      "when": c["when"], "pick": row["pick"], "prob": row["prob"],
+                      "odd": row["odd"], "odd_s": _odd_s(row), "stake": stake,
+                      "stars": stars_for(row, thr), "type": ptype, "verdict": text,
+                      "main": main, "alt": alt, "avoid": avoid,
+                      "clv": c.get("clv"), "ev": row.get("ev"),
+                      "score": (row.get("ev") or 0 if ptype == "value" else 0) + row["prob"],
+                      "steam": row.get("steam")})
     picks.sort(key=lambda p: (p["type"] == "value", p["score"]), reverse=True)
     return picks[:10]
 
@@ -1958,36 +2136,32 @@ def build_picks(cards, thr, bank, kf):
 def strat_stats(bets):
     out = {}
     for s in ("VALUE", "HOT"):
-        sb = [b for b in bets if b.get("strat", "VALUE") == s and b.get("status") in ("won", "lost", "push")]
+        sb = [b for b in bets if b.get("strat", "VALUE") == s
+              and b.get("status") in ("won", "lost", "push")]
         n = len(sb)
         w = sum(1 for b in sb if b["status"] == "won")
-        pnl = sum(b["stake"] * (b["odds"] - 1) if b["status"] == "won" else (0.0 if b["status"] == "push" else -b["stake"]) for b in sb)
+        pnl = sum(b["stake"] * (b["odds"] - 1) if b["status"] == "won"
+                  else (0.0 if b["status"] == "push" else -b["stake"]) for b in sb)
         staked = sum(b["stake"] for b in sb if b["status"] != "push")
-        item = {}
-        item["n"] = n
-        item["w"] = w
-        item["pnl"] = pnl
-        item["roi"] = pnl / staked * 100 if staked else 0.0
-        item["wr"] = w / n * 100 if n else 0.0
-        out[s] = item
+        out[s] = dict(n=n, w=w, pnl=pnl,
+                      roi=(pnl / staked * 100 if staked else 0.0),
+                      wr=(w / n * 100 if n else 0.0))
     return out
 
 
 def clv_stats(bets):
     out = {}
     for s in ("VALUE", "HOT"):
-        clvs = [b["clv"] for b in bets if b.get("strat") == s and b.get("clv") is not None and b.get("status") in ("won", "lost", "push")]
-        item = {}
+        clvs = [b["clv"] for b in bets
+                if b.get("strat") == s and b.get("clv") is not None
+                and b.get("status") in ("won", "lost", "push")]
         if not clvs:
-            item["n"] = 0
-            out[s] = item
+            out[s] = {"n": 0}
             continue
         pos = sum(1 for c in clvs if c > 0)
-        item["n"] = len(clvs)
-        item["mean"] = sum(clvs) / len(clvs)
-        item["median"] = sorted(clvs)[len(clvs) // 2]
-        item["pos_pct"] = pos / len(clvs) * 100
-        out[s] = item
+        out[s] = {"n": len(clvs), "mean": sum(clvs) / len(clvs),
+                  "median": sorted(clvs)[len(clvs) // 2],
+                  "pos_pct": pos / len(clvs) * 100}
     return out
 
 
@@ -1999,10 +2173,8 @@ def calibration_rows(bets):
         if len(sb) >= 3:
             wr = sum(1 for b in sb if b["status"] == "won") / len(sb) * 100
             avgp = sum(b["prob"] for b in sb) / len(sb) * 100
-            rows.append({"Бин P": "{:.0f}-{:.0f}%".format(lo * 100, hi * 100),
-                         "Ставок": len(sb),
-                         "Предсказано": "{:.1f}%".format(avgp),
-                         "Факт WR": "{:.1f}%".format(wr)})
+            rows.append({"Бин P": f"{lo * 100:.0f}–{hi * 100:.0f}%", "Ставок": len(sb),
+                         "Предсказано": f"{avgp:.1f}%", "Факт WR": f"{wr:.1f}%"})
     return rows
 
 
@@ -2019,9 +2191,8 @@ def weekly_rows(bets):
         wk[(iso[0], iso[1])][0] += 1
         wk[(iso[0], iso[1])][1] += 1 if b["status"] == "won" else 0
         wk[(iso[0], iso[1])][2] += pnl
-    return [{"Неделя": "{}-W{:02d}".format(y, w), "Ставок": v[0],
-             "WR": "{:.0f}%".format(v[1] / v[0] * 100), "PnL": "{:+.1f}".format(v[2])}
-            for (y, w), v in sorted(wk.items())]
+    return [{"Неделя": f"{y}-W{w:02d}", "Ставок": v[0], "WR": f"{v[1] / v[0] * 100:.0f}%",
+             "PnL": f"{v[2]:+.1f}"} for (y, w), v in sorted(wk.items())]
 
 
 def card_sort_val(c, key):
@@ -2077,64 +2248,81 @@ def render_match_card(c, thr, PR):
     val = c.get("best") is not None
     hot = any(r["prob"] >= thr for r in c["rows"]) and not val
     badge = ("<span class='badge val'>🟢 ВАЛУЙ</span>" if val
-             else ("<span class='badge hot'>🔥 P≥" + str(int(thr * 100)) + "%</span>" if hot
+             else (f"<span class='badge hot'>🔥 P≥{int(thr * 100)}%</span>" if hot
                    else "<span class='badge no'>фон</span>"))
-    chips = "<span class='chip'>" + esc(c["league"]) + "</span>" + "<span class='chip when'>📅 " + esc(c["date"]) + " · " + esc(c["when"]) + "</span>"
+    chips = (f"<span class='chip'>{esc(c['league'])}</span>"
+             f"<span class='chip when'>📅 {esc(c['date'])} · {esc(c['when'])}</span>")
     if c["games"] < PR["min_games"]:
         chips += "<span class='chip warn'>⚠️ мало данных</span>"
     if c.get("cup"):
         chips += "<span class='chip warn'>🏆 Кубок</span>"
+    if c.get("risk"):
+        chips += f"<span class='chip'>🤖 риск {c['risk'].get('risk', '?')}/100</span>"
     main, alt, avoid, vtext = ai_verdict(c)
-    m_s = "✅ <b class='y'>" + esc(main["pick"]) + "</b> @ " + main["odd_s"] if main else ""
-    a_s = "🔁 <b class='g'>" + esc(alt["pick"]) + "</b>" if alt else ""
-    v_s = "⛔ <b class='r'>" + esc(avoid["pick"]) + "</b>" if avoid else ""
+    m_s = (f"✅ <b class='y'>{esc(main['pick'])}</b> @ {main['odd_s']} "
+           f"(P {main['prob'] * 100:.0f}%)") if main else ""
+    a_s = f"🔁 <b class='g'>{esc(alt['pick'])}</b>" if alt else ""
+    v_s = f"⛔ <b class='r'>{esc(avoid['pick'])}</b>" if avoid else ""
     rows_html = ""
     for rw in c["rows"]:
-        if rw["ev"] is not None:
-            ev_s = "<span class='" + ("evpos" if rw["ev"] > 0 else "evneg") + "'>" + "{:+.1f}%".format(rw["ev"] * 100) + "</span>"
-        else:
-            ev_s = "<span style='color:#64748b'>—</span>"
-        be_s = "{:.1f}%".format(rw["be"] * 100) if rw["be"] else "—"
-        if rw["ok"]:
-            mk = "<span class='ok'>✅</span>"
-        elif rw["prob"] >= thr:
-            mk = "<span style='color:#fde047;font-weight:800'>🔥</span>"
-        else:
-            mk = "<span class='nok'>·</span>"
-        odd_txt = "{:.2f}".format(rw["odd"]) if rw["odd"] else "—"
-        rows_html += ("<div class='mrow'><span style='color:#8b93a7'>" + rw["mkt"] + "</span>"
-                      + "<b style='color:#fbbf24'>" + esc(rw["pick"]) + "</b>"
-                      + "<span style='color:#34d399;font-weight:700'>" + "{:.1f}%".format(rw["prob"] * 100) + "</span>"
-                      + "<span style='color:#f87171'>" + be_s + "</span>"
-                      + "<span style='color:#fff;font-weight:700'>" + odd_txt + "</span>"
-                      + ev_s + mk + "</div>")
+        ev_s = (f"<span class='{'evpos' if rw['ev'] > 0 else 'evneg'}'>"
+                f"{rw['ev'] * 100:+.1f}%</span>") if rw["ev"] is not None else (
+            "<span style='color:#64748b'>—</span>")
+        be_s = f"{rw['be'] * 100:.1f}%" if rw["be"] else "—"
+        mk = ("<span class='ok'>✅</span>" if rw["ok"]
+              else ("<span style='color:#fde047;font-weight:800'>🔥</span>"
+                    if rw["prob"] >= thr else "<span class='nok'>·</span>"))
+        odd_txt = f"{rw['odd']:.2f}" if rw["odd"] else "—"
+        rows_html += (f"<div class='mrow'><span style='color:#8b93a7'>{rw['mkt']}</span>"
+                      f"<b style='color:#fbbf24'>{esc(rw['pick'])}</b>"
+                      f"<span style='color:#34d399;font-weight:700'>{rw['prob'] * 100:.1f}%</span>"
+                      f"<span style='color:#f87171'>{be_s}</span>"
+                      f"<span style='color:#fff;font-weight:700'>{odd_txt}</span>"
+                      f"{ev_s}{mk}</div>")
     ch, ca = c["corners"]
     yh, ya = c["yellows"]
-    best_html = ("<span>💰 Келли: <b>" + "{:.2f}".format(c["best"][5]) + "</b></span>") if val else ""
+    best_html = (f"<span>💰 Келли: <b>{c['best'][5]:.2f}</b> на "
+                 f"<b>{esc(c['best'][1])}</b> @ <b>{c['best'][2]:.2f}</b></span>") if val else ""
     h, a = c["match"].split(" vs ")
-    return ("<div class='mcard" + (" value" if val else (" hot" if hot else "")) + "'>"
-            + "<div>" + chips + badge + "</div>"
-            + "<div class='teams'>" + esc(h) + " <span>—</span> " + esc(a) + "</div>"
-            + "<div class='verdict'>🤖 " + m_s + " · " + a_s + " · " + v_s + "<br>"
-            + "<span style='color:#c9d2e3'>" + esc(vtext) + "</span></div>"
-            + rows_html
-            + "<div class='mfoot'><span>xG: <b>" + "{:.2f}-{:.2f}".format(c["lams"][0], c["lams"][1]) + "</b></span>"
-            + "<span>🚩 угл <b>" + "{:.1f}".format(ch + ca) + "</b></span>"
-            + "<span>🟨 жёл <b>" + "{:.1f}".format(yh + ya) + "</b></span>"
-            + "<span>📚 игр <b>" + str(c["games"]) + "</b></span>" + best_html + "</div></div>")
+    return f"""
+<div class="mcard {'value' if val else ('hot' if hot else '')}">
+ <div>{chips}{badge}</div>
+ <div class="teams">{esc(h)} <span>—</span> {esc(a)}</div>
+ <div class="verdict">🤖 <b>Вердикт:</b> {m_s} · {a_s} · {v_s}<br>
+  <span style="color:#c9d2e3">{esc(vtext)}</span></div>
+ {rows_html}
+ <div class="mfoot"><span>xG: <b>{c['lams'][0]:.2f}–{c['lams'][1]:.2f}</b></span>
+  <span>🚩 угл <b>{ch + ca:.1f}</b></span><span>🟨 жёл <b>{yh + ya:.1f}</b></span>
+  <span>📚 игр <b>{c['games']}</b></span>{best_html}</div>
+</div>"""
 
 
 def bet_card_html(b, live=None):
     st_ = b.get("status", "pending")
     icon = {"pending": "⏳", "won": "🟢", "lost": "🔴", "push": "⚪"}.get(st_, "⏳")
-    score = "<span class='score'>" + esc(b["score"]) + "</span>" if b.get("score") else ""
-    strat = "<span style='color:#7dd3fc;font-size:.72rem'>[" + esc(b.get("strat", "VALUE")) + "]</span>"
-    odds_s = "{:.2f}".format(b["odds"]) if b.get("odds") is not None else "—"
-    stake_s = "{:.2f}".format(b["stake"]) if b.get("stake") is not None else "0.00"
-    prob_s = "{:.0f}%".format(b.get("prob", 0) * 100) if b.get("prob") is not None else "—"
-    return ("<div class='betcard " + st_ + "'>" + icon + " <b>" + esc(b["match"]) + "</b>" + score
-            + strat + "<br><b style='color:#fbbf24'>" + esc(b["pick"]) + "</b> @ " + odds_s
-            + " · " + stake_s + " у.е. · P=" + prob_s + "</div>")
+    score = f"<span class='score'>{esc(b['score'])}</span>" if b.get("score") else ""
+    strat = (f"<span style='color:#7dd3fc;font-size:.72rem;margin-left:6px'>"
+             f"[{esc(b.get('strat', 'VALUE'))}]</span>")
+    clv_badge = ""
+    if b.get("clv") is not None:
+        color = "#34d399" if b["clv"] > 0 else "#f87171"
+        clv_badge = (f"<span style='color:{color};font-size:.72rem;margin-left:6px'>"
+                     f"CLV {b['clv'] * 100:+.1f}%</span>")
+    if live and st_ == "pending":
+        lst = (live.get("status") or "").strip().lower()
+        if lst not in FINISHED_STATUSES and live.get("home") not in (None, ""):
+            prog = f" {live['progress']}" if live.get("progress") else ""
+            score = (f"<span class='score' style='background:rgba(248,113,113,.3);"
+                     f"color:#fecaca'>🔴 LIVE {esc(str(live['home']))}:"
+                     f"{esc(str(live['away']))}{esc(prog)}</span>")
+    odds_s = f"{b['odds']:.2f}" if b.get("odds") is not None else "—"
+    stake_s = f"{b['stake']:.2f}" if b.get("stake") is not None else "0.00"
+    prob_s = f"{b.get('prob', 0) * 100:.0f}%" if b.get("prob") is not None else "—"
+    return (f"<div class='betcard {st_}'>{icon} <b>{esc(b['match'])}</b>{score}"
+            f"{strat}{clv_badge}<br>"
+            f"<span style='color:#8b93a7'>{esc(b.get('market', ''))}</span> "
+            f"<b style='color:#fbbf24'>{esc(b['pick'])}</b> @ <b>{odds_s}</b> · "
+            f"{stake_s} у.е. · P={prob_s}</div>")
 
 
 # ============= UI =============
@@ -2155,72 +2343,88 @@ if wall_key not in WALLS:
     wall_key = "🌃 Неон-стадион"
 WALL_CSS = WALLS[wall_key]
 
-st.markdown("<style>"
-            "html,body,#root,.stApp,.stApp>div,"
-            "[data-testid='stAppViewContainer'],[data-testid='stAppViewContainer']>div,"
-            "[data-testid='stAppViewContainer']>section,[data-testid='stHeader'],"
-            "[data-testid='stToolbar'],[data-testid='stBottom'],"
-            "[data-testid='stBottom']>div,[data-testid='stBottomBlockContainer'],"
-            "[data-testid='stAppViewBlockContainer'],[data-testid='stVerticalBlock'],"
-            "section.main,section.main>div,.main,.main>div,.block-container{"
-            "background-color:#05070f!important;background-image:" + WALL_CSS + "!important;"
-            "background-attachment:scroll!important;background-size:cover!important;"
-            "background-position:center!important;background-repeat:no-repeat!important;}"
-            "[data-testid='stHeader'],[data-testid='stToolbar'],"
-            "[data-testid='stBottom']>div,[data-testid='stBottomBlockContainer']{"
-            "background:transparent!important;}"
-            ".stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2!important;}"
-            "div[data-testid='stMetricValue']{color:#f8fafc!important;}"
-            "header,#MainMenu{visibility:hidden;}"
-            "section[data-testid='stSidebar']{background:rgba(8,11,20,.72)!important;}"
-            "section[data-testid='stSidebar'] p,section[data-testid='stSidebar'] label,"
-            "section[data-testid='stSidebar'] span{color:#e6eaf2!important;}"
-            ".hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;"
-            "border:1px solid rgba(255,255,255,.10);"
-            "background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16) 45%,rgba(236,72,153,.14));}"
-            ".hero h1{margin:0;font-size:2.5rem;font-weight:800;"
-            "background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);"
-            "-webkit-background-clip:text;-webkit-text-fill-color:transparent;}"
-            ".hero p{margin:6px 0 0;color:#c9d2e3;font-size:.93rem;}"
-            ".kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px;}"
-            ".kpi{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);"
-            "border-radius:18px;padding:14px 16px;}"
-            ".kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;font-weight:700;}"
-            ".kpi .v{font-size:1.5rem;font-weight:800;color:#fff;}"
-            ".kpi .v.g{color:#34d399;}.kpi .v.y{color:#fbbf24;}.kpi .v.r{color:#f87171;}"
-            ".mcard{background:rgba(10,14,24,.72);border:1px solid rgba(255,255,255,.09);"
-            "border-radius:20px;padding:18px 20px;margin-bottom:14px;}"
-            ".mcard.value{border-color:rgba(52,211,153,.55);}"
-            ".mcard.hot{border-color:rgba(251,191,36,.5);}"
-            ".chip{background:rgba(34,211,238,.14);color:#a5f3fc;"
-            "border:1px solid rgba(34,211,238,.35);padding:3px 11px;border-radius:999px;"
-            "font-size:.72rem;font-weight:700;margin-right:6px;}"
-            ".chip.when{background:rgba(251,191,36,.14);color:#fde68a;}"
-            ".chip.warn{background:rgba(248,113,113,.15);color:#fecaca;}"
-            ".badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}"
-            ".badge.val{background:rgba(52,211,153,.25);color:#6ee7b7;}"
-            ".badge.hot{background:rgba(251,191,36,.25);color:#fde68a;}"
-            ".badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;}"
-            ".teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;}"
-            ".teams span{color:#8b93a7;font-weight:400;}"
-            ".verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);"
-            "border-radius:14px;padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}"
-            ".mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;"
-            "gap:8px;padding:6px 0;border-top:1px solid rgba(255,255,255,.07);"
-            "font-size:.83rem;color:#e2e8f0;}"
-            ".ok{color:#34d399;font-weight:800;}.nok{color:#64748b;}"
-            ".evpos{color:#34d399;font-weight:700;}.evneg{color:#f87171;font-weight:700;}"
-            ".mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}"
-            ".mfoot b{color:#fbbf24;}"
-            ".betcard{background:rgba(10,14,24,.72);border:1px solid rgba(255,255,255,.09);"
-            "border-left:4px solid rgba(148,163,184,.4);border-radius:16px;padding:11px 15px;"
-            "margin-bottom:9px;font-size:.87rem;color:#e6eaf2;}"
-            ".betcard.pending{border-left-color:#fbbf24;}"
-            ".betcard.won{border-left-color:#34d399;}"
-            ".betcard.lost{border-left-color:#f87171;}"
-            ".betcard.push{border-left-color:#94a3b8;}"
-            ".betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}"
-            "</style>", unsafe_allow_html=True)
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;600;800&display=swap');
+html, body, #root, .stApp, .stApp > div,
+[data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > div,
+[data-testid="stAppViewContainer"] > section, [data-testid="stHeader"],
+[data-testid="stToolbar"], [data-testid="stDecoration"],
+[data-testid="stBottom"], [data-testid="stBottom"] > div,
+[data-testid="stBottomBlockContainer"], [data-testid="stAppViewBlockContainer"],
+[data-testid="stVerticalBlock"], [data-testid="stVerticalBlockBorderWrapper"],
+section.main, section.main > div, .main, .main > div, .block-container {
+    background-color: #05070f !important;
+    background-image: __WALL__ !important;
+    background-attachment: scroll !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+[data-testid="stHeader"], [data-testid="stToolbar"] { background: transparent !important; }
+[data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background-color: transparent !important; }
+footer, [data-testid="stStatusWidget"] { background: transparent !important; color: #8b93a7 !important; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,.3); }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,.5); border-radius: 5px; }
+@media (min-width: 992px){
+ section[data-testid="stSidebar"]{visibility:visible!important;transform:none!important;width:320px!important;z-index:999!important;}
+ section[data-testid="stSidebar"]>div{width:320px!important;overflow-y:auto!important;height:100vh!important;}
+ button[kind="header"]{display:none!important;}
+ section.main{margin-left:320px!important;}
+}
+@media (max-width: 991px){
+ .stApp{display:flex;flex-direction:column;}
+ section[data-testid="stSidebar"]{position:static!important;transform:none!important;visibility:visible!important;width:100%!important;order:-1;max-height:none!important;}
+ section[data-testid="stSidebar"]>div{width:100%!important;}
+ button[kind="header"]{display:none!important;}
+}
+.stMarkdown,.stMarkdown p,.stMarkdown li{color:#e6eaf2;font-family:'Inter',sans-serif;}
+.stCaption,.stCaption *{color:#8b93a7 !important;}
+div[data-testid="stMetricValue"]{color:#f8fafc !important;font-family:'Unbounded',sans-serif;font-size:1.3rem;}
+div[data-testid="stMetricLabel"] p{color:#8b93a7 !important;}
+header,#MainMenu{visibility:hidden}
+section[data-testid="stSidebar"]{background:rgba(8,11,20,.72);backdrop-filter:blur(18px);border-right:1px solid rgba(255,255,255,.07);}
+section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] span{color:#e6eaf2 !important;}
+section.stButton>button{background:linear-gradient(135deg,#0ea5e9 0%,#8b5cf6 55%,#ec4899 110%);color:#fff;border:none;border-radius:14px;font-weight:800;font-family:'Inter',sans-serif;box-shadow:0 8px 26px rgba(139,92,246,.35);transition:.18s;}
+section.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(14,165,233,.45);}
+div[data-baseweb="select"]>div{background:rgba(255,255,255,.05)!important;border:1px solid rgba(255,255,255,.10)!important;border-radius:12px;}
+.hero{padding:26px 30px;border-radius:26px;margin-bottom:18px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(130deg,rgba(14,165,233,.20),rgba(139,92,246,.16) 45%,rgba(236,72,153,.14));backdrop-filter:blur(20px);}
+.hero h1{margin:0;font-size:2.5rem;font-weight:800;font-family:'Unbounded',sans-serif;background:linear-gradient(92deg,#22d3ee,#a78bfa 50%,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero p{margin:6px 0 0;color:#c9d2e3;font-size:.93rem}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+.kpi{background:rgba(255,255,255,.05);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:14px 16px;}
+.kpi .t{color:#7dd3fc;font-size:.66rem;text-transform:uppercase;letter-spacing:1.4px;font-weight:700}
+.kpi .v{font-size:1.5rem;font-weight:800;font-family:'Unbounded',sans-serif;color:#fff}
+.kpi .v.g{color:#34d399}.kpi .v.y{color:#fbbf24}.kpi .v.r{color:#f87171}
+.mcard{background:rgba(10,14,24,.72);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.09);border-radius:20px;padding:18px 20px;margin-bottom:14px;transition:.2s;}
+.mcard.value{border-color:rgba(52,211,153,.55);}
+.mcard.hot{border-color:rgba(251,191,36,.5);}
+.chip{background:rgba(34,211,238,.14);color:#a5f3fc;border:1px solid rgba(34,211,238,.35);padding:3px 11px;border-radius:999px;font-size:.72rem;font-weight:700;margin-right:6px;}
+.chip.when{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4);}
+.chip.warn{background:rgba(248,113,113,.15);color:#fecaca;border-color:rgba(248,113,113,.4);}
+.badge{float:right;padding:4px 13px;border-radius:999px;font-size:.72rem;font-weight:800;}
+.badge.val{background:linear-gradient(135deg,rgba(52,211,153,.25),rgba(16,185,129,.15));color:#6ee7b7;border:1px solid rgba(52,211,153,.6);}
+.badge.hot{background:linear-gradient(135deg,rgba(251,191,36,.25),rgba(245,158,11,.15));color:#fde68a;border:1px solid rgba(251,191,36,.55);}
+.badge.no{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.teams{font-size:1.3rem;font-weight:800;color:#fff;margin:9px 0 3px;}
+.teams span{color:#8b93a7;font-weight:400}
+.verdict{background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:14px;padding:11px 15px;margin:9px 0;color:#e6eaf2;font-size:.88rem;}
+.verdict b.y{color:#fbbf24}.verdict b.g{color:#34d399}.verdict b.r{color:#f87171}
+.mrow{display:grid;grid-template-columns:70px 96px 70px 70px 62px 74px 26px;gap:8px;padding:6px 0;border-top:1px solid rgba(255,255,255,.07);font-size:.83rem;color:#e2e8f0;}
+.ok{color:#34d399;font-weight:800}.nok{color:#64748b}
+.evpos{color:#34d399;font-weight:700}.evneg{color:#f87171;font-weight:700}
+.mfoot{margin-top:9px;color:#c9d2e3;font-size:.78rem;display:flex;gap:16px;flex-wrap:wrap;}
+.mfoot b{color:#fbbf24}
+.betcard{background:rgba(10,14,24,.72);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.09);border-left:4px solid rgba(148,163,184,.4);border-radius:16px;padding:11px 15px;margin-bottom:9px;font-size:.87rem;color:#e6eaf2;}
+.betcard.pending{border-left-color:#fbbf24}.betcard.won{border-left-color:#34d399}
+.betcard.lost{border-left-color:#f87171}.betcard.push{border-left-color:#94a3b8}
+.betcard .score{font-weight:900;padding:2px 10px;border-radius:9px;margin-left:6px;}
+.betcard.won .score{background:rgba(52,211,153,.25);color:#6ee7b7}
+.betcard.lost .score{background:rgba(248,113,113,.25);color:#fca5a5}
+.side-link{display:block;padding:8px 12px;margin:3px 0;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#e6eaf2 !important;text-decoration:none !important;font-size:.85rem;}
+.side-section{margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);}
+.side-section h4{margin:0 0 8px 0;color:#7dd3fc;font-size:.72rem;text-transform:uppercase;letter-spacing:1.3px;font-weight:700;}
+</style>""".replace("__WALL__", WALL_CSS), unsafe_allow_html=True)
 
 if not st.session_state.get("_auto_settled_done"):
     D2, n = auto_settle(D, force=False)
@@ -2228,41 +2432,49 @@ if not st.session_state.get("_auto_settled_done"):
         st.session_state.data = D2
         save_data(D2)
         D = D2
+        st.toast(f"Автосинхронизация: закрыто {n} ставок", icon="🔄")
     st.session_state["_auto_settled_done"] = True
 
 cloud_badge = "☁️ CLOUD" if CLOUD_IS_CLOUD else "💾 LOCAL"
 mode_label = "📄 PAPER" if D.get("mode") == "paper" else "💰 REAL"
-st.markdown("<div class='hero'><h1>NEURO BET PRO</h1><p>v" + APP_VERSION + " · " + cloud_badge + " · " + mode_label + "</p>"
-            + "<div class='kpis'>"
-            + "<div class='kpi'><div class='t'>Банкролл</div><div class='v y'>" + "{:.0f}".format(D["bank"]) + " у.е.</div></div>"
-            + "<div class='kpi'><div class='t'>В работе</div><div class='v'>" + str(sum(1 for b in D["bets"] if b["status"] == "pending")) + "</div></div>"
-            + "<div class='kpi'><div class='t'>Прибыль</div><div class='v " + ("g" if D["stats"]["profit"] >= 0 else "r") + "'>" + "{:+.0f}".format(D["stats"]["profit"]) + "</div></div>"
-            + "<div class='kpi'><div class='t'>Ошибок</div><div class='v " + ("r" if ERR else "g") + "'>" + str(len(ERR)) + "</div></div>"
-            + "</div></div>", unsafe_allow_html=True)
+st.markdown(f"""
+<div class="hero">
+ <h1>NEURO BET PRO</h1>
+ <p>v{APP_VERSION} · {cloud_badge} · {mode_label} · 🔗 4 источника данных · 🛡 engine в Gist</p>
+ <div class="kpis">
+  <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
+  <div class="kpi"><div class="t">В работе</div><div class="v">{sum(1 for b in D['bets'] if b['status'] == 'pending')}</div></div>
+  <div class="kpi"><div class="t">Прибыль</div><div class="v {'g' if D['stats']['profit'] >= 0 else 'r'}">{D['stats']['profit']:+.0f}</div></div>
+  <div class="kpi"><div class="t">Ошибок</div><div class="v {'r' if ERR else 'g'}">{len(ERR)}</div></div>
+ </div>
+</div>""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("⚙️ Настройки")
     if CLOUD_IS_CLOUD:
-        st.success("☁️ Cloud mode", icon="✅")
+        st.success("☁️ Cloud mode: данные в Gist", icon="✅")
     else:
         st.info("💾 Local mode", icon="💾")
     if st.checkbox("🐞 Proxy debug"):
-        st.text("trust_env = " + str(_sess.trust_env))
-        st.text("HTTP_PROXY = " + os.environ.get("HTTP_PROXY", "—"))
-        st.text("HTTPS_PROXY = " + os.environ.get("HTTPS_PROXY", "—"))
+        st.text(f"trust_env = {_sess.trust_env}")
+        st.text(f"HTTP_PROXY = {os.environ.get('HTTP_PROXY', '—')}")
+        st.text(f"HTTPS_PROXY = {os.environ.get('HTTPS_PROXY', '—')}")
+        st.text(f"httpx = {_HAS_HTTPX}")
     if st.checkbox("🔬 Network test"):
         import socket
-        for host in ["www.football-data.co.uk", "api.github.com"]:
+        for host in ["www.football-data.co.uk", "api.github.com",
+                     "www.thesportsdb.com", "v3.football.api-sports.io"]:
             try:
                 ip = socket.gethostbyname(host)
-                st.text("✅ " + host + " → " + ip)
+                st.text(f"✅ {host} → {ip}")
             except Exception as e:
-                st.text("❌ " + host + " → " + type(e).__name__)
+                st.text(f"❌ {host} → {type(e).__name__}")
         try:
-            r = _sess.get("https://www.football-data.co.uk/mmz4281/2526/E0.csv", timeout=10, proxies=NO_PROXY)
-            st.text("📡 football-data: HTTP " + str(r.status_code) + ", " + str(len(r.content)) + " bytes")
+            r = _sess.get("https://www.football-data.co.uk/mmz4281/2526/E0.csv",
+                          timeout=10, proxies=NO_PROXY)
+            st.text(f"📡 football-data: HTTP {r.status_code}, {len(r.content)} bytes")
         except Exception as e:
-            st.text("❌ " + type(e).__name__ + ": " + str(e)[:80])
+            st.text(f"❌ {type(e).__name__}: {str(e)[:80]}")
 
     new_wall = st.selectbox("🖼 Обои", list(WALLS.keys()), index=list(WALLS.keys()).index(wall_key))
     if new_wall != wall_key:
@@ -2275,6 +2487,7 @@ with st.sidebar:
     if new_mode != D.get("mode"):
         D["mode"] = new_mode
         save_data(D)
+        st.rerun()
 
     st.markdown("**🔑 Ключи**")
     gk = st.text_input("Gemini", value=D.get("meta", {}).get("gemini_key", ""), type="password")
@@ -2285,11 +2498,12 @@ with st.sidebar:
             or ak != D.get("meta", {}).get("api_key", "")):
         D.setdefault("meta", {}).update({"gemini_key": gk, "grok_key": xk, "api_key": ak})
         save_data(D)
+        st.toast("Ключи сохранены", icon="🔑")
 
     if CLOUD_IS_CLOUD:
         if st.button("💾 В Gist"):
             if _gist_save(CLOUD_GIST_ID, HISTORY_FILE, D):
-                st.toast("OK")
+                st.toast("Сохранено в Gist", icon="☁️")
             else:
                 st.error("Ошибка Gist")
         if st.button("⬇️ Из Gist"):
@@ -2298,35 +2512,43 @@ with st.sidebar:
                 st.session_state.data = migrate(gd)
                 save_data(st.session_state.data)
                 st.rerun()
+            else:
+                st.error("Ошибка загрузки")
 
     refresh_sec = st.selectbox("Автообновление",
-                                ["5 минут", "7 минут", "15 минут", "Отключено"], index=0)
+                               ["5 минут", "7 минут", "15 минут", "Отключено"], index=0)
     refresh_map = {"5 минут": 300, "7 минут": 420, "15 минут": 900, "Отключено": 0}
     refresh_seconds = refresh_map.get(refresh_sec, 300)
 
-    goal = st.selectbox("🎯 Цель", list(GOALS.keys()), index=0)
+    goal = st.selectbox("🎯 Цель стратегии", list(GOALS.keys()), index=0)
     PR0 = GOALS[goal]
-    kelly_frac = st.slider("Келли", 0.10, 0.40, 0.25, 0.05)
-    mode = st.radio("Лента", ["🎯 Проходимость", "💰 Валуи (EV)"])
+    kelly_frac = st.slider("Келли (дробь)", 0.10, 0.40, 0.25, 0.05)
+    mode = st.radio("Режим ленты", ["🎯 Проходимость", "💰 Валуи (EV)"])
     thr_min = max(30, int(PR0["thr"] * 100) - 20)
     thr_max = min(90, int(PR0["thr"] * 100) + 20)
     thr = st.slider("Порог, %", thr_min, thr_max, int(PR0["thr"] * 100)) / 100
     min_edge = st.slider("Edge, п.п.", 0, 8, int(PR0["edge"] * 100)) / 100
-    min_ev = st.slider("Мин EV, %", 0, 10, int(PR0["ev"] * 100)) / 100
-    use_dis = st.checkbox("Только gap", value=PR0["dis"])
+    min_ev = st.slider("Мин. EV, %", 0, 10, int(PR0["ev"] * 100)) / 100
+    use_dis = st.checkbox("Только gap с рынком", value=PR0["dis"])
     use_bl = st.checkbox("Блэклист", value=True)
-    quota_base = st.slider("Мин событий", 3, 10, 5)
+    quota_base = st.slider("Мин. событий", 3, 10, 5)
 
-    with st.expander("🐞 Ошибки (" + str(len(ERR)) + ")"):
+    lp = D.get("meta", {}).get("lp", {})
+    if lp:
+        st.markdown("**🧠 Лиги**")
+        for k, v in list(lp.items())[:6]:
+            st.caption(f"{DIV_NAMES.get(k, k)}: ws={v['w_shots']:.2f} ρ={v['rho']:.2f} n={v.get('n_train', 0)}")
+
+    with st.expander(f"🐞 Ошибки ({len(ERR)})"):
         if ERR:
             for line in ERR[-20:]:
                 st.text(line)
         else:
-            st.text("Нет ошибок")
+            st.text("Ошибок нет.")
     if st.button("🧹 Очистить лог"):
         ERR.clear()
         st.rerun()
-    if st.button("🔄 Сброс"):
+    if st.button("🔄 Сброс данных"):
         st.session_state.data = new_data()
         save_data(st.session_state.data)
         st.rerun()
@@ -2340,33 +2562,76 @@ with st.sidebar:
             pass
         st.rerun()
 
+    if st.checkbox("🐞 engine.pkl"):
+        if os.path.exists(ENGINE_SNAPSHOT_FILE):
+            with open(ENGINE_SNAPSHOT_FILE, "rb") as f:
+                st.download_button("⬇️ Скачать", f, file_name="engine.pkl", mime="application/octet-stream")
+        else:
+            st.warning("engine.pkl ещё нет")
+
+    st.markdown("""
+<div class="side-section"><h4>ℹ️ О системе</h4>
+<span class="side-link" style="cursor:default">🧬 <b>v11.1 fixed</b></span>
+<span class="side-link" style="cursor:default">🔗 4 источника данных</span>
+<span class="side-link" style="cursor:default">🛡 engine в Gist</span>
+<span class="side-link" style="cursor:default">🚀 triple proxy defense</span></div>
+""", unsafe_allow_html=True)
+
 tab1, tab2, tab3, tab_clv, tab4, tab5, tab6 = st.tabs(
     ["🏟 Сканер", "💼 Портфель", "📈 Статистика", "📊 CLV", "🧮 Калькулятор",
      "🧪 Бэктест", "🔴 Онлайн"])
 
 with tab1:
     c1, c2 = st.columns([4, 1])
-    days = c1.slider("Горизонт", 1, 21, 10)
+    days = c1.slider("Горизонт, дней", 1, 21, 10)
     scan = c2.button("⚡ СКАН", type="primary")
     blacklist = set(D.get("meta", {}).get("blacklist", [])) if use_bl else set()
     if scan:
-        with st.spinner("Сканирование..."):
+        with st.spinner("Сканирование... (4 источника + обучение)"):
+            # [FIX] Динамический сезон вместо hardcoded "2526"
+            cur_season = find_season()
+            pseason = prev_season(cur_season)
+
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             now = datetime.now()
             limit = today + timedelta(days=days)
-            fix, rep1 = load_fixtures()
-            rep_all = list(rep1)
-            ak_ = D.get("meta", {}).get("api_key", "")
             d_from = today.strftime("%Y-%m-%d")
             d_to = limit.strftime("%Y-%m-%d")
-            api_rows, api_rep = (api_football_fixtures(ak_, d_from, d_to) if ak_ else ([], ["API: нет ключа"]))
-            rep_all += api_rep
-            day_list = [(today + timedelta(days=off)).strftime("%Y-%m-%d") for off in range(0, min(days, 7))]
-            tsdb_rows = tsdb_days_parallel(day_list)
-            rep_all.append("TSDB: " + str(len(tsdb_rows)))
+
+            # === 4 ИСТОЧНИКА ДАННЫХ ===
+            source_statuses = []
+
+            # Источник 1: football-data.co.uk (основной)
+            fix, src1_status = src_football_data_co_uk(cur_season)
+            source_statuses.append(src1_status)
+
+            # Источник 2: API-Football (резерв с ключом)
+            ak_ = D.get("meta", {}).get("api_key", "")
+            api_rows, src2_status = src_api_football(ak_, d_from, d_to)
+            source_statuses.append(src2_status)
+
+            # Источник 3: TheSportsDB eventsday (без ключа)
+            day_list = [(today + timedelta(days=off)).strftime("%Y-%m-%d")
+                        for off in range(0, min(days, 7))]
+            tsdb_rows, src3_status = src_thesportsdb_day(day_list)
+            source_statuses.append(src3_status)
+
+            # Источник 4: TheSportsDB eventsnextleague (для добора квоты)
+            tsdb_next_rows, src4_status = src_thesportsdb_next()
+            source_statuses.append(src4_status)
+
+            # Формируем отчёт по источникам
+            rep_all = []
+            for s in source_statuses:
+                status_icon = {"ok": "✅", "error": "❌", "cache": "💾",
+                               "empty": "⚠️", "no_key": "🔑"}.get(s.status, "?")
+                rep_all.append(f"{status_icon} {s.name}: {s.status}, {s.count} матчей "
+                               f"({s.latency_ms}ms)" + (f" [{s.err[:80]}]" if s.err else ""))
+
+            # Дедупликация по (Home, Away, Date)
             seen = set()
             src_rows = []
-            for r in (fix + api_rows + tsdb_rows):
+            for r in (fix + api_rows + tsdb_rows + tsdb_next_rows):
                 k = (r.get("HomeTeam"), r.get("AwayTeam"), r.get("Date"))
                 if k in seen:
                     continue
@@ -2376,18 +2641,9 @@ with tab1:
             train_divs = sorted({r.get("Div") for r in fix
                                  if r.get("Div") and not str(r.get("Div")).startswith("API_")
                                  and r.get("Div") != "TSDB"}) or ["E0", "SP1", "I1", "D1", "F1"]
-            pseason = prev_season("2526")
-            cur_season = "2526"
-            hist_data = load_history_gist()
-            if hist_data:
-                dp = {}
-                dc = {}
-                for dv in train_divs:
-                    dp[dv] = (hist_data.get("data", {}) or {}).get(dv, {}).get(pseason, [])
-                    dc[dv] = (hist_data.get("data", {}) or {}).get(dv, {}).get(cur_season, [])
-            else:
-                dp = load_many(train_divs, pseason)
-                dc = load_many(train_divs, cur_season)
+
+            dp = load_many(train_divs, pseason)
+            dc = load_many(train_divs, cur_season)
             div_counts = {}
             for dv in train_divs:
                 cnt = 0
@@ -2401,7 +2657,7 @@ with tab1:
             trained = 0
             if engine is None:
                 engine = Engine()
-                prog = st.progress(0.0, text="Обучение...")
+                prog = st.progress(0.0, text="Обучение (2 сезона)...")
                 for i, dv in enumerate(train_divs):
                     for src in (dp, dc):
                         rr = sorted([r for r in src.get(dv, []) if parse_date(r.get("Date", ""))],
@@ -2414,23 +2670,49 @@ with tab1:
                                                       lg=dv, match_num=j, total=max(1, len(rr)),
                                                       match_date=parse_date(r.get("Date", "")))
                                     trained += 1
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    log_err(f"train {dv}", e)
                     prog.progress((i + 1) / len(train_divs))
+                # Если football-data не дал данных — учимся на TSDB past
+                if trained == 0:
+                    prog.progress(0.9, text="Обучаюсь на TheSportsDB past...")
+                    tsdb_past = src_thesportsdb_past_for_training()
+                    for j, r in enumerate(tsdb_past):
+                        try:
+                            engine.learn_step(r["HomeTeam"], r["AwayTeam"],
+                                              float(r["FTHG"]), float(r["FTAG"]), r,
+                                              lg="TSDB", match_num=j, total=max(1, len(tsdb_past)),
+                                              match_date=parse_date(r.get("Date", "")))
+                            trained += 1
+                        except Exception:
+                            pass
                 prog.empty()
                 engine_cache_put(fp, engine)
 
             PR = dict(PR0)
             PR.update(thr=thr, edge=min_edge, ev=min_ev, bank=D["bank"], kelly=kelly_frac)
             meta = {"temp": engine.calibrator.temp,
-                    "api_key": D.get("meta", {}).get("api_key", ""),
+                    "blacklist": D.get("meta", {}).get("blacklist", []),
+                    "wall": D.get("meta", {}).get("wall", ""),
                     "gemini_key": D.get("meta", {}).get("gemini_key", ""),
-                    "grok_key": D.get("meta", {}).get("grok_key", "")}
+                    "grok_key": D.get("meta", {}).get("grok_key", ""),
+                    "api_key": D.get("meta", {}).get("api_key", ""),
+                    "season": cur_season,
+                    "lp": {k: {**v, "temp": engine.calibrator.temp}
+                           for k, v in list(engine.lp.items())[:15]}}
             cands_all = []
             for r in src_rows:
                 d = parse_date(r.get("Date", ""))
                 if not d or not (today <= d <= limit):
                     continue
+                tm = (r.get("Time") or "").strip()
+                if tm:
+                    try:
+                        hh, mm = tm.split(":")[:2]
+                        if now >= d.replace(hour=int(hh), minute=int(mm)) + timedelta(hours=2, minutes=15):
+                            continue
+                    except Exception:
+                        pass
                 h = (r.get("HomeTeam") or "").strip()
                 a = (r.get("AwayTeam") or "").strip()
                 if not h or not a:
@@ -2439,14 +2721,13 @@ with tab1:
                 P = engine.predict(h, a, lg, match_date=d, cup=is_cup(r))
                 mkt = market_probs(r)
                 Pb = blend_market(P, mkt, PR["w_market"])
-                league = r.get("League") or DIV_NAMES.get(lg, "Лига")
+                league = r.get("League") or DIV_NAMES.get(lg, "Лига " + str(lg))
                 cc = build_candidates(Pb, r, PR, blacklist)
                 rows, best, hot, card_clv, gap = evaluate_rows(cc, Pb, mkt, PR, engine, use_dis, row=r)
                 advance = d.date() > today.date()
-                cands_all.append({"r": r, "d": d, "tm": (r.get("Time") or "").strip(),
-                                  "h": h, "a": a, "lg": lg, "league": league, "P": Pb,
-                                  "rows": rows, "best": best, "hot": hot, "clv": card_clv,
-                                  "gap": gap, "advance": advance})
+                cands_all.append({"r": r, "d": d, "tm": tm, "h": h, "a": a, "lg": lg,
+                                  "league": league, "P": Pb, "rows": rows, "best": best,
+                                  "hot": hot, "clv": card_clv, "gap": gap, "advance": advance})
 
             def tier_of(cand):
                 b = cand["best"]
@@ -2468,20 +2749,29 @@ with tab1:
             quota = max(quota_base, min(12, round(volume * 0.12)))
             sel = []
             calls = 0
+            MAXCALLS = quota + 10
             for cand in cands_all:
                 if cand["tier"] in (3, 4) and len(sel) >= quota:
                     break
-                if calls < quota + 10:
+                if calls < MAXCALLS:
                     ctx = {"home": cand["h"], "away": cand["a"], "league": cand["league"],
-                           "pick": (cand["best"][1] if cand["best"] else "П1"),
+                           "pick": (cand["best"][1] if cand["best"]
+                                    else (cand["hot"][0][0] if cand["hot"] else "П1")),
                            "odd": (cand["best"][2] if cand["best"] else 1.8),
-                           "prob": (cand["best"][4] if cand["best"] else 0.5),
-                           "games": cand["P"]["games"]}
+                           "prob": (cand["best"][4] if cand["best"]
+                                    else (cand["hot"][0][1] if cand["hot"] else 0.5)),
+                           "h2h": engine.h2h_text(cand["h"], cand["a"]),
+                           "fh": engine.form_str(cand["h"]),
+                           "fa": engine.form_str(cand["a"]),
+                           "lh": cand["P"]["lams"][0], "la": cand["P"]["lams"][1],
+                           "rh": 14, "ra": 14,
+                           "mkt_p": (1 / (cand["best"][2]) if cand["best"] else 0.5),
+                           "gap": cand["gap"] or 0, "games": cand["P"]["games"]}
                     risk = llm_risk(ctx, meta) or heuristic_risk(ctx)
                     calls += 1
                 else:
                     risk = heuristic_risk({"prob": (cand["best"][4] if cand["best"] else 0.5),
-                                           "games": cand["P"]["games"]})
+                                           "games": cand["P"]["games"], "rh": 14, "ra": 14})
                 if should_veto(risk):
                     continue
                 cand["risk"] = risk
@@ -2504,24 +2794,35 @@ with tab1:
                     pick_h, prob_h, odd_h = cand["hot"][0]
                     if not odd_h or prob_h < thr:
                         continue
-                    mkt = "1X2" if pick_h in ("П1", "X", "П2") else "STAT"
+                    mkt = "1X2" if pick_h in ("П1", "X", "П2") else ("OU" if pick_h.startswith("Т") else "STAT")
                     pick, odd, prob, ev = pick_h, odd_h, prob_h, prob_h * odd_h - 1
                     stake = round(D["bank"] * 0.01, 2)
                     t = 3
                 else:
                     continue
+                steam_mult = 1.0
+                for rr in cand["rows"]:
+                    if rr["pick"] == pick:
+                        steam_mult = rr.get("steam_mult", 1.0)
+                        break
+                stake = round(stake * steam_mult, 2)
                 stake, _ = apply_llm_to_stake(stake, cand.get("risk"))
                 if stake <= 0:
                     continue
-                key = cand["h"] + " vs " + cand["a"] + "|" + pick
+                key = f"{cand['h']} vs {cand['a']}|{pick}"
                 if key in existing:
                     continue
-                dt_full = cand["d"].strftime("%Y-%m-%d %H:%M") if cand["tm"] else cand["d"].strftime("%Y-%m-%d")
-                bet = {"match": cand["h"] + " vs " + cand["a"], "div": cand["lg"],
+                dt_full = (cand["d"].strftime("%Y-%m-%d %H:%M") if cand["tm"]
+                           else cand["d"].strftime("%Y-%m-%d"))
+                bet = {"match": f"{cand['h']} vs {cand['a']}", "div": cand["lg"],
                        "league": cand["league"], "market": mkt, "pick": pick,
-                       "odds": odd, "stake": stake, "prob": prob, "clv": cand["clv"],
-                       "status": "pending", "strat": ("VALUE" if t in (1, 2) else "HOT"),
-                       "tier": t, "mode": D.get("mode", "paper"),
+                       "odds": odd, "stake": stake, "prob": prob,
+                       "clv": cand["clv"], "status": "pending",
+                       "strat": ("VALUE" if t in (1, 2) else "HOT"), "tier": t,
+                       "risk": cand["risk"].get("risk"),
+                       "llm": cand["risk"].get("summary", ""),
+                       "steam_mult": steam_mult,
+                       "mode": D.get("mode", "paper"),
                        "date": cand["d"].strftime("%d.%m.%Y"),
                        "date_iso": cand["d"].strftime("%Y-%m-%d"),
                        "date_time": dt_full, "score": None}
@@ -2536,20 +2837,24 @@ with tab1:
             for cand in sel:
                 P = cand["P"]
                 cards.append({"div": cand["lg"], "league": cand["league"],
-                              "match": cand["h"] + " vs " + cand["a"],
-                              "date": cand["d"].strftime("%d.%m") + ((" " + cand["tm"]) if cand["tm"] else ""),
+                              "match": f"{cand['h']} vs {cand['a']}",
+                              "date": cand["d"].strftime("%d.%m") +
+                                      (f" {cand['tm']}" if cand["tm"] else ""),
                               "when": ("advance" if cand["advance"] else "сегодня"),
                               "dt": cand["d"].strftime("%Y-%m-%d %H:%M"),
                               "rows": cand["rows"], "best": cand["best"],
-                              "hot": cand["hot"][:3], "lams": P["lams"],
-                              "lams_g": P["lams_g"], "lams_s": P["lams_s"],
-                              "mkt": P.get("mkt"), "gap": cand["gap"],
-                              "agree": P["agree"], "clv": cand["clv"],
-                              "p1": P["p1"], "px": P["x"], "p2": P["p2"],
-                              "corners": P["corners"], "yellows": P["yellows"],
-                              "games": P["games"], "fh": engine.form_str(cand["h"]),
-                              "fa": engine.form_str(cand["a"]), "cup": is_cup(cand["r"]),
-                              "tier": cand["tier"], "risk": cand["risk"]})
+                              "hot": cand["hot"][:3],
+                              "tag": ("value" if cand["best"] else "hot"),
+                              "lams": P["lams"], "lams_g": P["lams_g"],
+                              "lams_s": P["lams_s"], "mkt": P.get("mkt"),
+                              "gap": cand["gap"], "agree": P["agree"],
+                              "clv": cand["clv"], "p1": P["p1"], "px": P["x"],
+                              "p2": P["p2"], "corners": P["corners"],
+                              "yellows": P["yellows"], "games": P["games"],
+                              "fh": engine.form_str(cand["h"]),
+                              "fa": engine.form_str(cand["a"]),
+                              "cup": is_cup(cand["r"]), "tier": cand["tier"],
+                              "risk": cand["risk"]})
             picks = build_picks(cards, thr, D["bank"], kelly_frac)
             D2 = clone(D)
             D2["cards"] = cards
@@ -2557,44 +2862,49 @@ with tab1:
             D2["report"] = rep_all
             D2["meta"] = meta
             D2["bets"] = D2["bets"] + new_bets
-            D2["funnel"] = {"trained": trained, "src": len(src_rows), "passed": len(sel),
-                            "added": len(new_bets), "quota": quota}
+            D2["funnel"] = {"trained": trained, "fix": len(fix), "inwin": volume,
+                            "passed": len(sel), "added": len(new_bets), "quota": quota,
+                            "src_total": len(src_rows), "season": cur_season}
             st.session_state.data = D2
             save_data(D2)
             st.rerun()
 
     fn = D.get("funnel")
     if fn:
-        st.caption("Обучено " + str(fn.get("trained", 0)) + " · источников " + str(fn.get("src", 0))
-                   + " · квота " + str(fn.get("quota", 5)) + " · отобрано " + str(fn.get("passed", 0))
-                   + " · +" + str(fn.get("added", 0)))
-    with st.expander("🔌 Диагностика"):
+        st.caption(f"Сезон {fn.get('season', '?')} · обучено {fn.get('trained', 0)} · "
+                   f"источников {fn.get('src_total', 0)} · в окне {fn.get('inwin', 0)} · "
+                   f"квота {fn.get('quota', 5)} · отобрано {fn.get('passed', 0)} · +{fn.get('added', 0)}")
+    with st.expander("🔌 Диагностика источников"):
         for line in D.get("report", []):
             st.text(line)
 
     sc1, sc2 = st.columns([3, 1])
     sort_key = sc1.selectbox("Сортировка", SORT_OPTIONS, index=0, key="sort_key")
-    invert = sc2.checkbox("🔄", value=False, key="sort_inv")
+    invert = sc2.checkbox("🔄 Инверт", value=False, key="sort_inv")
     eff_desc = SORT_DEFAULT_DESC.get(sort_key, True) if not invert else (not SORT_DEFAULT_DESC.get(sort_key, True))
 
     picks = D.get("picks", [])
     if picks:
-        st.markdown("### 🎯 НА ЧТО СТАВИТЬ")
+        st.markdown(f"### 🎯 НА ЧТО СТАВИТЬ (квота ≥{quota_base}/день)")
         pv = sorted(picks, key=lambda p: pick_sort_val(p, sort_key), reverse=eff_desc)
         for i, p in enumerate(pv, 1):
             green = p["type"] == "value" or p["prob"] >= 0.60
             cls = "value" if green else "hot"
-            m = p["main"]
-            m_s = ("✅ <b>" + esc(m["pick"]) + "</b> @ " + m["odd_s"]) if m else ""
-            st.markdown("<div class='mcard " + cls + "'>"
-                        + "<span class='chip'>" + esc(p["league"]) + "</span>"
-                        + "<span class='chip when'>📅 " + esc(p["date"]) + "</span>"
-                        + "<span class='badge " + ("val" if green else "hot") + "'>" + p["stars"] + "</span>"
-                        + "<div class='teams'>" + str(i) + ". " + esc(p["match"]) + "</div>"
-                        + "<div class='verdict'>🤖 " + m_s + "<br>"
-                        + "➤ Ставь <b>" + esc(p["pick"]) + "</b> @ <b>" + p["odd_s"] + "</b> · P "
-                        + "{:.0f}%".format(p["prob"] * 100) + " · сумма <b>" + "{:.2f}".format(p["stake"]) + " у.е.</b></div></div>",
-                        unsafe_allow_html=True)
+            btype = "🟢 ВАЛУЙ" if p["type"] == "value" else ("🟢 высокая P" if green else "🟡 добивка")
+            m, alt, av = p["main"], p["alt"], p["avoid"]
+            m_s = (f"✅ <b class='y'>{esc(m['pick'])}</b> @ {m['odd_s']} (P {m['prob'] * 100:.0f}%)") if m else ""
+            a_s = f"🔁 <b class='g'>{esc(alt['pick'])}</b>" if alt else ""
+            v_s = f"⛔ <b class='r'>{esc(av['pick'])}</b>" if av else ""
+            st.markdown(f"""
+<div class="mcard {cls}">
+ <span class='chip'>{esc(p['league'])}</span><span class='chip when'>📅 {esc(p['date'])} · {esc(p['when'])}</span>
+ <span class="badge {'val' if green else 'hot'}">{p['stars']}</span>
+ <div class="teams">{i}. {esc(p['match'])}</div>
+ <div class="verdict">🤖 {m_s} · {a_s} · {v_s}<br>➤ Ставь <b class="y">{esc(p['pick'])}</b> @
+  <b class="y">{p['odd_s']}</b> · P <b class="g">{p['prob'] * 100:.0f}%</b> ·
+  сумма <b class="y">{p['stake']:.2f} у.е.</b> · {btype}<br>
+  <span style="color:#c9d2e3">{esc(p['verdict'])}</span></div>
+</div>""", unsafe_allow_html=True)
 
     cards_view = sorted(D.get("cards", []), key=lambda c: card_sort_val(c, sort_key), reverse=eff_desc)
     shown = 0
@@ -2608,15 +2918,19 @@ with tab1:
 
 with tab2:
     st.header("💼 Портфель")
-    cbtn1, cbtn2 = st.columns(2)
+    cbtn1, cbtn2, cbtn3 = st.columns(3)
     if cbtn1.button("🔄 Автосинхронизация"):
         D2, n = auto_settle(D, force=True)
         if n > 0:
             st.session_state.data = D2
             save_data(D2)
+            st.toast(f"Закрыто {n}", icon="🔄")
+        else:
+            st.toast("Нечего закрывать", icon="ℹ️")
         st.rerun()
     if cbtn2.button("🧐 Перепроверить"):
         D2 = clone(D)
+        fixed = 0
         for idx, b in enumerate(D["bets"]):
             if b.get("div") in (None, "TSDB") or (isinstance(b.get("div"), str) and b["div"].startswith("API_")):
                 continue
@@ -2625,30 +2939,41 @@ with tab2:
             res = find_result(b.get("div"), h, a, bd)
             if not res:
                 continue
-            D2 = recompute_bet(D2, idx, res[0], res[1], "{}:{}".format(int(res[0]), int(res[1])))
+            D2 = recompute_bet(D2, idx, res[0], res[1], f"{int(res[0])}:{int(res[1])}")
+            fixed += 1
         st.session_state.data = D2
         save_data(D2)
+        st.success(f"Исправлено {fixed}")
         st.rerun()
+    live = None
+    if cbtn3.button("🔴 LIVE"):
+        live = load_livescores()
+        st.session_state["_live"] = live
+    live = live or st.session_state.get("_live")
 
     ps1, ps2 = st.columns([3, 1])
     port_sort = ps1.selectbox("Сортировка", PORT_SORT, index=0, key="port_sort")
-    port_invert = ps2.checkbox("🔄", value=False, key="port_inv")
+    port_invert = ps2.checkbox("🔄 Инверт", value=False, key="port_inv")
     p_base = PORT_DEFAULT_DESC.get(port_sort, False)
     p_desc = p_base if not port_invert else (not p_base)
     if not D["bets"]:
         st.info("Пусто.")
     pairs = sorted(enumerate(D["bets"]), key=lambda pr: bet_sort_key(pr, port_sort), reverse=p_desc)
     for i, b in pairs:
-        st.markdown(bet_card_html(b), unsafe_allow_html=True)
+        lv = None
+        if b["status"] == "pending" and live:
+            h, a = b["match"].split(" vs ")
+            lv = match_live(live, h, a)
+        st.markdown(bet_card_html(b, lv), unsafe_allow_html=True)
         if b["status"] == "pending":
             cc = st.columns([1, 1, 1])
-            sin = cc[0].text_input("Счёт", key="sc" + str(i), label_visibility="collapsed", placeholder="2:1")
+            sin = cc[0].text_input("Счёт", key=f"sc{i}", label_visibility="collapsed", placeholder="2:1")
             sc = sin.strip() if re.match(r"^\d+\s*:\s*\d+$", sin.strip()) else None
-            if cc[1].button("✅", key="w" + str(i)):
+            if cc[1].button("✅ Зашло", key=f"w{i}"):
                 st.session_state.data = apply_settle(D, i, "won", score=sc)
                 save_data(st.session_state.data)
                 st.rerun()
-            if cc[2].button("❌", key="l" + str(i)):
+            if cc[2].button("❌ Мимо", key=f"l{i}"):
                 st.session_state.data = apply_settle(D, i, "lost", score=sc)
                 save_data(st.session_state.data)
                 st.rerun()
@@ -2658,16 +2983,17 @@ with tab3:
     s = D["stats"]
     tot = s["won"] + s["lost"]
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Банк", "{:.2f}".format(D["bank"]))
+    m1.metric("Банк", f"{D['bank']:.2f}")
     m2.metric("Ставок", tot)
-    m3.metric("WinRate", "{:.1f}%".format((s["won"] / tot * 100) if tot else 0))
-    m4.metric("Profit", "{:+.2f}".format(s["profit"]))
+    m3.metric("WinRate", f"{(s['won'] / tot * 100) if tot else 0:.1f}%")
+    m4.metric("Profit", f"{s['profit']:+.2f}")
     settled = [b for b in D["bets"] if b.get("status") in ("won", "lost", "push")]
     if settled:
         curve = []
         run = 0.0
         for b in settled:
-            run += b["stake"] * (b["odds"] - 1) if b["status"] == "won" else (-b["stake"] if b["status"] == "lost" else 0)
+            run += b["stake"] * (b["odds"] - 1) if b["status"] == "won" else (
+                -b["stake"] if b["status"] == "lost" else 0)
             curve.append(run)
         st.line_chart(curve, height=180)
         ss = strat_stats(D["bets"])
@@ -2675,13 +3001,16 @@ with tab3:
         for col, strat in ((cA, "VALUE"), (cB, "HOT")):
             v = ss[strat]
             with col:
-                st.markdown("**" + strat + "**")
+                st.markdown(f"**{strat}**")
                 st.metric("Ставок", v["n"])
-                st.metric("WinRate", "{:.1f}%".format(v["wr"]))
-                st.metric("ROI", "{:+.2f}%".format(v["roi"]))
+                st.metric("WinRate", f"{v['wr']:.1f}%")
+                st.metric("ROI", f"{v['roi']:+.2f}%")
         cal = calibration_rows(D["bets"])
         if cal:
             st.dataframe(cal, use_container_width=True, hide_index=True)
+        wk = weekly_rows(D["bets"])
+        if wk:
+            st.dataframe(wk, use_container_width=True, hide_index=True)
 
 with tab_clv:
     st.header("📊 CLV")
@@ -2690,13 +3019,13 @@ with tab_clv:
     for col, strat in ((cA, "VALUE"), (cB, "HOT")):
         v = cs[strat]
         with col:
-            st.markdown("**" + strat + "**")
+            st.markdown(f"**{strat}**")
             if v.get("n", 0) == 0:
                 st.info("Нет данных")
             else:
                 st.metric("Ставок", v["n"])
-                st.metric("Средний CLV", "{:+.2f}%".format(v["mean"] * 100))
-                st.metric("% положительных", "{:.0f}%".format(v["pos_pct"]))
+                st.metric("Средний CLV", f"{v['mean'] * 100:+.2f}%")
+                st.metric("% положительных", f"{v['pos_pct']:.0f}%")
 
 with tab4:
     st.header("🧮 EV-калькулятор")
@@ -2705,7 +3034,7 @@ with tab4:
     o = q2.number_input("Кэф", 1.01, 30.0, 1.80)
     bk = q3.number_input("Банк", 100.0, 1e6, float(D["bank"]))
     ev = (p / 100) * o - 1
-    st.markdown("**EV:** " + "{:+.1f}%".format(ev * 100) + " · **Келли:** " + "{:.2f}".format(kelly(p / 100, o, bk, kelly_frac)))
+    st.markdown(f"**EV:** {ev * 100:+.1f}% · **Келли:** {kelly(p / 100, o, bk, kelly_frac):.2f}")
     if ev > 0.02:
         st.success("✅ Можно ставить")
     else:
@@ -2713,21 +3042,38 @@ with tab4:
 
 with tab5:
     st.header("🧪 Бэктест")
-    st.info("Бэктест доступен в следующей версии")
-    b1, b2 = st.columns(2)
+    b1, b2, b3, b4 = st.columns(4)
     bt_div = b1.selectbox("Лига", list(DIV_NAMES.keys()), format_func=lambda k: DIV_NAMES[k])
     bt_season = b2.selectbox("Сезон", ["2526", "2425", "2324"], index=1)
-    if st.button("▶️ Прогнать"):
-        st.info("Бэктест временно отключён")
+    bt_edge = b3.slider("Edge, п.п.", 0, 8, int(PR0["edge"] * 100), key="bte") / 100
+    bt_mode = b4.selectbox("Стейк", ["Flat", "Kelly"])
+    if st.button("▶️ Прогнать", type="primary"):
+        PRb = dict(PR0)
+        PRb.update(thr=thr, edge=bt_edge, ev=min_ev, bank=10000.0, kelly=0.25)
+        log, eng = backtest(bt_div, bt_season, PRb, use_dis, bt_mode)
+        if not log:
+            st.warning("Нет сигналов.")
+        else:
+            n = len(log)
+            wins = sum(1 for x in log if x["won"])
+            profit = sum(x["pnl"] for x in log)
+            staked = sum(x["stake"] for x in log)
+            roi = profit / staked * 100 if staked else 0
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Ставок", n)
+            k2.metric("WinRate", f"{wins / n * 100:.1f}%")
+            k3.metric("ROI", f"{roi:+.2f}%")
 
 with tab6:
     st.header("🔴 Онлайн")
+    api_key = D.get("meta", {}).get("api_key", "")
     if refresh_seconds > 0:
         import streamlit.components.v1 as components
-        components.html("<script>setInterval(function(){window.parent.location.reload();}," + str(refresh_seconds * 1000) + ");</script>", height=0)
+        components.html(
+            f"<script>setInterval(function(){{window.parent.location.reload();}},{refresh_seconds * 1000});</script>",
+            height=0)
     if st.button("🔄 Обновить"):
         st.rerun()
-    api_key = D.get("meta", {}).get("api_key", "")
     api_lives, api_rep = (api_football_live(api_key) if api_key else ([], ["Нет ключа"]))
     tsdb_raw = load_livescores()
     tsdb_lives = []
@@ -2752,13 +3098,14 @@ with tab6:
     with st.expander("🔌 Диагностика"):
         for line in api_rep:
             st.text(line)
-        st.text("TSDB live: " + str(len(tsdb_lives)) + " · всего: " + str(len(live_all)))
+        st.text(f"TSDB live: {len(tsdb_lives)} · всего: {len(live_all)}")
     live_models = load_live_model()
+    save_live_model(live_models)
     ls = live_stats(live_models)
     m1, m2, m3 = st.columns(3)
     m1.metric("Live", len(live_all))
     m2.metric("Обучено", live_models.get("n_learned", 0))
-    m3.metric("Hit-rate", ("{:.1f}%".format(ls["hit_rate"])) if ls.get("hit_rate") else "—")
+    m3.metric("Hit-rate", f"{ls['hit_rate']:.1f}%" if ls["hit_rate"] else "—")
     sig_count = 0
     if not live_all:
         st.info("Живых матчей нет.")
@@ -2770,12 +3117,12 @@ with tab6:
         strong = sig["p_goal"] >= 0.60
         if strong:
             sig_count += 1
-        st.markdown("<div class='mcard" + (" value" if strong else "") + "'>"
-                    + "<span class='chip'>🔴 " + str(minute) + "'</span>"
-                    + "<span class='chip'>" + esc(str(m.get("league", ""))) + "</span>"
-                    + "<div class='teams'>" + esc(str(m.get("home", ""))) + " <span>" + str(hs) + ":" + str(as_) + "</span> "
-                    + esc(str(m.get("away", ""))) + "</div>"
-                    + "<div class='verdict'>P(ещё гол) = <b>" + "{:.0f}%".format(sig["p_goal"] * 100) + "</b> · тотал ≈ <b>"
-                    + "{:.1f}".format(sig["proj_total"]) + "</b></div></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+<div class="mcard {'value' if strong else ''}">
+ <span class='chip'>🔴 {minute}'</span>
+ <span class='chip'>{esc(str(m.get('league', '')))}</span>
+ <div class="teams">{esc(str(m.get('home', '')))} <span>{hs}:{as_}</span> {esc(str(m.get('away', '')))}</div>
+ <div class="verdict">P(ещё гол) = <b>{sig['p_goal'] * 100:.0f}%</b> · тотал ≈ <b>{sig['proj_total']:.1f}</b></div>
+</div>""", unsafe_allow_html=True)
     if sig_count:
-        st.success("Сигналов: " + str(sig_count))
+        st.success(f"Сигналов «возможен гол»: {sig_count}")
