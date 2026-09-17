@@ -1,4 +1,4 @@
-"""NEURO BET PRO v11.6 — portfolio fix + bank on add + low threshold."""
+"""NEURO BET PRO v11.7 — safe render + portfolio fix + bank on add."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip
 from datetime import datetime, timedelta
@@ -17,10 +17,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v11.6", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v11.7", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "11.6"
+APP_VERSION = "11.7"
 HISTORY_FILE = "neuro_bet_pro.json"
 DISK_CACHE_DIR = "neuro_cache"
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
@@ -45,15 +45,6 @@ DIV_NAMES = {
     "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ",
 }
 
-GOALS = {
-    "🎯 Проходимость": dict(w_market=0.65, thr=0.62, dis=False, edge=0.01, ev=0.01,
-                            corr=(1.30, 2.30), min_games=10),
-    "⚖️ Баланс":      dict(w_market=0.40, thr=0.55, dis=True, edge=0.02, ev=0.02,
-                            corr=(1.40, 4.20), min_games=8),
-    "💰 Value":       dict(w_market=0.20, thr=0.45, dis=True, edge=0.03, ev=0.02,
-                            corr=(1.40, 4.20), min_games=6),
-}
-
 STADIUM_WALLS = {
     "E0": "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
     "SP1": "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
@@ -63,9 +54,6 @@ STADIUM_WALLS = {
     "R1": "https://images.unsplash.com/photo-1551958219-acbc608c6377?q=80&w=1200",
     "DEFAULT": "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200",
 }
-
-SORT_OPTIONS = ["🔥 Сначала высокая P", "По дате", "По лиге"]
-SORT_DEFAULT_DESC = {"🔥 Сначала высокая P": True, "По дате": False, "По лиге": False}
 
 
 def _get_secret(key, default=""):
@@ -219,8 +207,7 @@ def parse_date(s):
 def is_cup(row):
     if not isinstance(row, dict):
         return False
-    dv = row.get("Div", "")
-    return dv in ("C1", "EL", "EC")
+    return row.get("Div", "") in ("C1", "EL", "EC")
 
 
 def kelly(prob, odds, bank, frac):
@@ -587,39 +574,44 @@ class Engine:
         return P
 
 
-# ============= CANDIDATES =============
-def build_candidates(P, row, PR, blacklist=()):
-    probs = {"П1": P["p1"], "X": P["x"], "П2": P["p2"], "ТБ 2.5": P["over"],
-             "ТМ 2.5": 1 - P["over"], "BTTS да": P["btts"], "BTTS нет": 1 - P["btts"]}
-    cands = []
-    for pick, prob in probs.items():
-        mkt = "1X2" if pick in ("П1", "X", "П2") else ("OU" if pick.startswith("Т") else "STAT")
-        cands.append((mkt, pick, prob))
-    return cands
-
-
+# ============= EVALUATE =============
 def evaluate_match(P, PR, row):
-    """Возвращает лучший исход по вероятности + все строки."""
-    cands = build_candidates(P, row, PR)
+    """Возвращает (rows, best). В каждой row ГАРАНТИРОВАННО есть fair_odd, ok, prob, mkt, pick."""
+    probs = {
+        "П1": P["p1"], "X": P["x"], "П2": P["p2"],
+        "ТБ 2.5": P["over"], "ТМ 2.5": 1 - P["over"],
+        "BTTS да": P["btts"], "BTTS нет": 1 - P["btts"],
+    }
     rows = []
     best = None
-    for mkt, pick, prob in cands:
-        # фейр-кэф = 1/P, реальный ~ fair × 0.94
-        fair_odd = 1.0 / max(prob, 0.01)
+    for pick, prob in probs.items():
+        prob = float(prob) if prob is not None else 0.0
+        prob = min(max(prob, 0.01), 0.99)
+        fair_odd = 1.0 / prob
         est_odd = fair_odd * 0.94
-        ev = prob * est_odd - 1 if est_odd > 1.01 else None
-        rows.append({"mkt": mkt, "pick": pick, "prob": prob, "odd": est_odd,
-                     "fair_odd": fair_odd, "ev": ev, "ok": prob >= PR["thr"]})
-        if prob >= PR["thr"]:
+        ev = prob * est_odd - 1 if est_odd > 1.01 else 0.0
+        mkt = "1X2" if pick in ("П1", "X", "П2") else ("OU" if pick.startswith("Т") else "STAT")
+        ok = prob >= PR["thr"]
+        row_item = {
+            "mkt": mkt,
+            "pick": pick,
+            "prob": prob,
+            "odd": est_odd,
+            "fair_odd": fair_odd,
+            "ev": ev,
+            "ok": ok,
+        }
+        rows.append(row_item)
+        if ok:
             if best is None or prob > best[4]:
-                best = (mkt, pick, est_odd, ev, prob,
-                        kelly(prob, est_odd, PR["bank"], PR["kelly"]))
+                stake = kelly(prob, est_odd, PR["bank"], PR["kelly"])
+                best = (mkt, pick, est_odd, ev, prob, stake)
     return rows, best
 
 
 # ============= DATA =============
 def new_data():
-    return {"version": 11, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
+    return {"version": 12, "bank": 10000.0, "bets": [], "cards": [], "picks": [],
             "funnel": None, "report": [], "meta": {},
             "stats": {"won": 0, "lost": 0, "profit": 0, "push": 0},
             "mode": "paper"}
@@ -635,6 +627,12 @@ def migrate(D):
     for key in ("cards", "picks", "bets", "report"):
         if not isinstance(D.get(key), list):
             D[key] = []
+    # ФИКС: чистим устаревшие cards (без fair_odd)
+    D["cards"] = [
+        c for c in D["cards"]
+        if isinstance(c, dict) and isinstance(c.get("rows"), list)
+        and all(isinstance(r, dict) and "fair_odd" in r for r in c["rows"])
+    ]
     if not isinstance(D.get("stats"), dict):
         D["stats"] = base["stats"]
     for s in ("won", "lost", "profit", "push"):
@@ -706,7 +704,7 @@ def apply_settle(D, idx, outcome, score=None):
     return D2
 
 
-# ============= UI =============
+# ============= UI HELPERS =============
 def stars_for(prob):
     if prob >= 0.80:
         return "⭐⭐⭐⭐⭐"
@@ -723,39 +721,60 @@ def stadium_bg(div):
     return STADIUM_WALLS.get(div, STADIUM_WALLS["DEFAULT"])
 
 
-def render_match_card(c, PR):
-    val = c.get("best") is not None
-    badge = ("<span class='badge val'>🎯 P≥" + str(int(PR["thr"] * 100)) + "%</span>"
+def render_match_card(c, thr):
+    """Безопасный рендер — не падает на отсутствующих ключах."""
+    best = c.get("best") if isinstance(c.get("best"), (list, tuple)) else None
+    val = best is not None
+    badge = (f"<span class='badge val'>🎯 P≥{int(thr * 100)}%</span>"
              if val else "<span class='badge no'>фон</span>")
-    chips = (f"<span class='chip'>{esc(c['league'])}</span>"
-             f"<span class='chip when'>📅 {esc(c['date'])} · {esc(c['when'])}</span>")
+    chips = (f"<span class='chip'>{esc(c.get('league', '—'))}</span>"
+             f"<span class='chip when'>📅 {esc(c.get('date', '—'))} · {esc(c.get('when', '—'))}</span>")
     rows_html = ""
-    for rw in c["rows"]:
-        ok_icon = "<span class='ok'>✅</span>" if rw["ok"] else "<span class='nok'>·</span>"
-        rows_html += (f"<div class='mrow'>"
-                      f"<span style='color:#8b93a7'>{rw['mkt']}</span>"
-                      f"<b style='color:#fbbf24'>{esc(rw['pick'])}</b>"
-                      f"<span style='color:#34d399;font-weight:700'>{rw['prob'] * 100:.1f}%</span>"
-                      f"<span style='color:#a5f3fc'>{rw['fair_odd']:.2f}</span>"
-                      f"{ok_icon}</div>")
-    h, a = c["match"].split(" vs ")
+    for rw in (c.get("rows") or []):
+        if not isinstance(rw, dict):
+            continue
+        prob_val = float(rw.get("prob") or 0.0)
+        fair_odd = rw.get("fair_odd")
+        if fair_odd is None:
+            fair_odd = 1.0 / max(prob_val, 0.01)
+        ok_icon = "<span class='ok'>✅</span>" if rw.get("ok") else "<span class='nok'>·</span>"
+        rows_html += (
+            f"<div class='mrow'>"
+            f"<span style='color:#8b93a7'>{esc(str(rw.get('mkt', '—')))}</span>"
+            f"<b style='color:#fbbf24'>{esc(str(rw.get('pick', '—')))}</b>"
+            f"<span style='color:#34d399;font-weight:700'>{prob_val * 100:.1f}%</span>"
+            f"<span style='color:#a5f3fc'>{fair_odd:.2f}</span>"
+            f"{ok_icon}</div>"
+        )
+    if rows_html == "":
+        rows_html = "<div style='color:#64748b;font-size:.8rem'>нет данных</div>"
+    match_str = c.get("match", "— vs —")
+    parts = match_str.split(" vs ")
+    h = parts[0] if len(parts) > 0 else "—"
+    a = parts[1] if len(parts) > 1 else "—"
     bg = stadium_bg(c.get("div", ""))
+    games = c.get("games", 0)
     return f"""
 <div class="mcard {'value' if val else ''}" style="background-image:linear-gradient(rgba(10,14,24,.80),rgba(10,14,24,.92)),url('{bg}');background-size:cover;background-position:center;">
  <div>{chips}{badge}</div>
  <div class="teams">{esc(h)} <span>—</span> {esc(a)}</div>
  {rows_html}
- <div class="mfoot">📚 игр <b>{c['games']}</b></div>
+ <div class="mfoot">📚 игр <b>{games}</b></div>
 </div>"""
 
 
 def bet_card_html(b):
+    if not isinstance(b, dict):
+        return ""
     st_ = b.get("status", "pending")
     icon = {"pending": "⏳", "won": "🟢", "lost": "🔴"}.get(st_, "⏳")
-    score = f"<span class='score'>{esc(b['score'])}</span>" if b.get("score") else ""
-    return (f"<div class='betcard {st_}'>{icon} <b>{esc(b['match'])}</b>{score}<br>"
-            f"<b style='color:#fbbf24'>{esc(b['pick'])}</b> · P {b['prob'] * 100:.0f}% · "
-            f"ставка {b['stake']:.2f} у.е.</div>")
+    score = f"<span class='score'>{esc(b.get('score', ''))}</span>" if b.get("score") else ""
+    prob = float(b.get("prob") or 0.0)
+    odds = float(b.get("odds") or 1.0)
+    stake = float(b.get("stake") or 0.0)
+    return (f"<div class='betcard {st_}'>{icon} <b>{esc(str(b.get('match', '—')))}</b>{score}<br>"
+            f"<b style='color:#fbbf24'>{esc(str(b.get('pick', '—')))}</b> · P {prob * 100:.0f}% · "
+            f"кэф {odds:.2f} · ставка {stake:.2f} у.е.</div>")
 
 
 st.markdown("""<style>
@@ -812,6 +831,7 @@ section.stButton>button{background:linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec489
 </style>""", unsafe_allow_html=True)
 
 
+# ============= UI =============
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 D = st.session_state.data
@@ -820,12 +840,12 @@ if "meta" not in D:
 if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
     D["meta"]["api_key"] = CLOUD_API_FOOTBALL_KEY
 
-pending_count = sum(1 for b in D["bets"] if b["status"] == "pending")
+pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("status") == "pending")
 
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🎯 Фокус: высокая P · 🏟 Stadium backgrounds</p>
+ <p>v{APP_VERSION} · 🎯 Фокус: высокая P · 🏟 Stadium</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -848,7 +868,7 @@ with st.sidebar:
 
     st.markdown("**🎯 Минимальная вероятность**")
     min_prob = st.slider("", 50, 85, 55, 1, label_visibility="collapsed") / 100
-    st.caption(f"Текущий порог: **{min_prob * 100:.0f}%** · матчей с такой P будет {'много' if min_prob < 0.6 else 'мало'}")
+    st.caption(f"Порог: **{min_prob * 100:.0f}%**")
 
     kelly_frac = st.slider("Келли (доля)", 0.10, 0.40, 0.25, 0.05)
 
@@ -989,7 +1009,7 @@ with tab1:
             update_loader(f"Поиск матчей с P≥{min_prob * 100:.0f}%...", 0.97, logs)
             PR = {"thr": min_prob, "bank": D["bank"], "kelly": kelly_frac}
 
-            cands_all = []
+            cards = []
             matches_with_best = 0
             for r in src_rows:
                 d = parse_date(r.get("Date", ""))
@@ -1004,53 +1024,59 @@ with tab1:
                 rows, best = evaluate_match(P, PR, r)
                 if best:
                     matches_with_best += 1
-                cands_all.append({"r": r, "d": d, "h": h, "a": a, "lg": lg,
-                                  "league": r.get("League") or DIV_NAMES.get(lg, "Лига"),
-                                  "P": P, "rows": rows, "best": best})
+                cards.append({
+                    "div": lg,
+                    "league": r.get("League") or DIV_NAMES.get(lg, "Лига"),
+                    "match": f"{h} vs {a}",
+                    "date": d.strftime("%d.%m") + (f" {r.get('Time', '')}" if r.get("Time") else ""),
+                    "when": "сегодня" if d.date() == today.date() else "скоро",
+                    "rows": rows,
+                    "best": best,
+                    "games": P["games"],
+                })
 
             logs.append(f"🎯 Найдено с P≥{min_prob * 100:.0f}%: {matches_with_best}")
 
-            # ВАЖНО: добавляем ВСЕ с best, не блокируем по existing
             new_bets = []
-            for cand in cands_all:
-                b = cand["best"]
+            for c in cards:
+                b = c.get("best")
                 if not b:
                     continue
                 mkt, pick, odd, ev, prob, stake = b
-                stake = round(min(stake, D["bank"] * 0.05), 2)  # cap 5% банка
+                stake = round(min(max(stake, 1.0), D["bank"] * 0.05), 2)
                 if stake <= 0:
                     continue
-                tm = (cand["r"].get("Time") or "").strip()
-                dt_full = (cand["d"].strftime("%Y-%m-%d %H:%M") if tm else cand["d"].strftime("%Y-%m-%d"))
-                new_bets.append({"match": f"{cand['h']} vs {cand['a']}", "div": cand["lg"],
-                                 "league": cand["league"], "market": mkt, "pick": pick,
-                                 "odds": odd, "stake": stake, "prob": prob,
-                                 "status": "pending", "strat": "HOT",
-                                 "mode": D.get("mode", "paper"),
-                                 "date": cand["d"].strftime("%d.%m.%Y"),
-                                 "date_iso": cand["d"].strftime("%Y-%m-%d"),
-                                 "date_time": dt_full, "score": None})
-
-            cards = []
-            for cand in cands_all:
-                P = cand["P"]
-                cards.append({"div": cand["lg"], "league": cand["league"],
-                              "match": f"{cand['h']} vs {cand['a']}",
-                              "date": cand["d"].strftime("%d.%m") + (f" {cand['r'].get('Time', '')}" if cand["r"].get("Time") else ""),
-                              "when": "сегодня" if cand["d"].date() == today.date() else "скоро",
-                              "rows": cand["rows"], "best": cand["best"],
-                              "games": P["games"]})
+                new_bets.append({
+                    "match": c["match"],
+                    "div": c["div"],
+                    "league": c["league"],
+                    "market": mkt,
+                    "pick": pick,
+                    "odds": odd,
+                    "stake": stake,
+                    "prob": prob,
+                    "status": "pending",
+                    "strat": "HOT",
+                    "mode": D.get("mode", "paper"),
+                    "date": datetime.now().strftime("%d.%m.%Y"),
+                    "date_iso": datetime.now().strftime("%Y-%m-%d"),
+                    "date_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "score": None,
+                })
 
             D2 = clone(D)
             D2["cards"] = cards
             D2["report"] = api_rep + [f"TSDB: {len(tsdb_rows)}"]
             D2["bets"] = D2["bets"] + new_bets
-            # БАНК: замораживаем stake при постановке
             total_stake = sum(b["stake"] for b in new_bets)
-            D2["bank"] = max(0, D2["bank"] - total_stake)
-            D2["funnel"] = {"trained": trained, "src": len(src_rows),
-                            "found": matches_with_best, "added": len(new_bets),
-                            "frozen": total_stake}
+            D2["bank"] = max(0.0, D2["bank"] - total_stake)
+            D2["funnel"] = {
+                "trained": trained,
+                "src": len(src_rows),
+                "found": matches_with_best,
+                "added": len(new_bets),
+                "frozen": total_stake,
+            }
             st.session_state.data = D2
             save_data(D2)
 
@@ -1071,12 +1097,16 @@ with tab1:
         for line in D.get("report", []):
             st.text(line)
 
-    cards_view = sorted(D.get("cards", []),
-                        key=lambda c: max([r["prob"] for r in c["rows"]], default=0),
-                        reverse=True)
+    cards_view = sorted(
+        D.get("cards", []),
+        key=lambda c: max([r.get("prob", 0) for r in c.get("rows", [])], default=0),
+        reverse=True,
+    )
     shown = 0
     for c in cards_view:
-        st.markdown(render_match_card(c, {"thr": min_prob, "min_games": 5}), unsafe_allow_html=True)
+        if not isinstance(c, dict):
+            continue
+        st.markdown(render_match_card(c, min_prob), unsafe_allow_html=True)
         shown += 1
     if not shown:
         st.info("Нажми ⚡ СКАН.")
@@ -1089,7 +1119,7 @@ with tab2:
         st.caption(f"Всего: {len(D['bets'])} · В работе: {pending_count}")
         for i, b in enumerate(D["bets"]):
             st.markdown(bet_card_html(b), unsafe_allow_html=True)
-            if b["status"] == "pending":
+            if isinstance(b, dict) and b.get("status") == "pending":
                 cc = st.columns([1, 1, 1])
                 sin = cc[0].text_input("Счёт", key=f"sc{i}", label_visibility="collapsed", placeholder="2:1")
                 sc = sin.strip() if re.match(r"^\d+\s*:\s*\d+$", sin.strip()) else None
