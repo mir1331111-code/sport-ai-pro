@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+
+# Streamlit локальные данные (не коммитим — теряются при reboot, но восстановятся из Gist)
+neuro_errors.log
+neuro_cache/
+live_model.json
+live_model.json.tmp
+*.tmp
+
+# Streamlit secrets (НИКОГДА!)
+.streamlit/secrets.toml
+
+# НЕ игнорируем engine.pkl — его надо коммитить после скачивания!
+# НЕ игнорируем neuro_bet_pro.json — используется как fallback если нет Gist
+
+# ОС
+.DS_Store
+Thumbs.db
+desktop.ini
