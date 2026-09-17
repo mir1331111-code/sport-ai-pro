@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.6 — fatal fix + honest backtest + fixed flags."""
+"""NEURO BET PRO v12.7 — backtest loader + trimmed odds + NR calibrator."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64
 from datetime import datetime, timedelta
@@ -17,10 +17,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.6", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.7", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.6"
+APP_VERSION = "12.7"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
@@ -42,10 +42,10 @@ DIV_TO_APILG = {
 }
 
 DIV_NAMES = {
-    "E0": "🏴󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁢󠁮󠁿 Чемпионшип",
-    "D1": "🇩🇪 Бундеслига", "D2": "🇩🇪 2. Бундеслига", "I1": "🇮🇹 Серия A",
+    "E0": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ", "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип",
+    "D1": "🇩🇪 Бундеслига", "D2": "🇩🇪 2.Бундеслига", "I1": "🇮🇹 Серия A",
     "I2": "🇮🇹 Серия B", "SP1": "🇪🇸 Ла Лига", "SP2": "🇪🇸 Сегунда",
-    "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇱 Эредивизи",
+    "F1": "🇫🇷 Лига 1", "F2": "🇫🇷 Лига 2", "N1": "🇳🇱 Эредивизи",
     "B1": "🇧🇪 Про-лига", "P1": "🇵🇹 Примейра", "T1": "🇹🇷 Суперлига",
     "G1": "🇬🇷 Греция", "R1": "🇷🇺 РПЛ",
 }
@@ -764,7 +764,25 @@ def api_fixture_odds(api_key, fixture_id):
                     elif name in ("Both Teams Score", "Both Teams To Score"):
                         if val == "Yes": acc["BTTS да"].append(odd)
                         elif val == "No": acc["BTTS нет"].append(odd)
-    out = {k: sum(v) / len(v) for k, v in acc.items() if v}
+    
+    # [v12.7] Trimmed mean: обрезаем 10% крайних значений
+    def trimmed_mean(values, trim_pct=0.10):
+        if len(values) < 3:
+            return sum(values) / len(values) if values else None
+        sorted_v = sorted(values)
+        n_trim = int(len(sorted_v) * trim_pct)
+        if n_trim > 0:
+            trimmed = sorted_v[n_trim:-n_trim]
+        else:
+            trimmed = sorted_v
+        return sum(trimmed) / len(trimmed) if trimmed else None
+    
+    out = {}
+    for k, v in acc.items():
+        tm = trimmed_mean(v)
+        if tm:
+            out[k] = tm
+    
     if not (("П1" in out and "X" in out and "П2" in out) or
             ("ТБ 2.5" in out and "ТМ 2.5" in out) or
             ("BTTS да" in out and "BTTS нет" in out)):
@@ -844,6 +862,63 @@ def tsdb_days_parallel(days_list):
     return out
 
 
+def load_seasonal(div, season):
+    """[v12.7] Загружает сезонные CSV с football-data.co.uk для бэктеста."""
+    fd_names = {
+        "E0": "E0", "E1": "E1",
+        "SP1": "SP1", "SP2": "SP2",
+        "I1": "I1", "I2": "I2",
+        "D1": "D1", "D2": "D2",
+        "F1": "F1", "F2": "F2",
+        "N1": "N1",
+        "B1": "B1",
+        "P1": "P1",
+        "T1": "T1",
+        "G1": "G1",
+        "R1": "R1",
+    }
+    fd_name = fd_names.get(div)
+    if not fd_name:
+        return []
+    ck = f"fd_season_{div}_{season}"
+    cached = disk_cache_get(ck, 86400 * 30)
+    if cached is not None:
+        return cached if isinstance(cached, list) else []
+    url = f"https://www.football-data.co.uk/mmz4281/{season}/{fd_name}.csv"
+    try:
+        r = _sess.get(url, timeout=20, proxies=NO_PROXY)
+        if r.status_code != 200:
+            return []
+        text = r.text
+        lines = text.strip().split("\n")
+        if len(lines) < 2:
+            return []
+        header = lines[0].split(",")
+        rows = []
+        for line in lines[1:]:
+            parts = line.split(",")
+            if len(parts) < len(header):
+                continue
+            row = dict(zip(header, parts))
+            row["Div"] = div
+            row["Date"] = row.get("Date", "")
+            row["HomeTeam"] = row.get("HomeTeam", "")
+            row["AwayTeam"] = row.get("AwayTeam", "")
+            row["FTHG"] = row.get("FTHG", "")
+            row["FTAG"] = row.get("FTAG", "")
+            row["PSH"] = row.get("PSH", "")
+            row["PSD"] = row.get("PSD", "")
+            row["PSA"] = row.get("PSA", "")
+            row["B365H"] = row.get("B365H", "")
+            row["B365D"] = row.get("B365D", "")
+            row["B365A"] = row.get("B365A", "")
+            rows.append(row)
+        disk_cache_put(ck, rows)
+        return rows
+    except Exception:
+        return []
+
+
 class Calibrator:
     def __init__(self):
         self.platt_a = [1.0, 1.0, 1.0]
@@ -855,29 +930,41 @@ class Calibrator:
             return
         try:
             lr = 0.01
+            reg = 0.01  # L2 regularization
             for c in range(3):
                 zs = logits[c::3]
                 ys = outcomes[c::3]
                 if len(zs) < 20:
                     continue
+                # [v12.7] Normalization: центрируем и масштабируем логиты
+                z_mean = sum(zs) / len(zs)
+                z_std = (sum((z - z_mean) ** 2 for z in zs) / len(zs)) ** 0.5 or 1.0
+                zs_norm = [(z - z_mean) / z_std for z in zs]
+                
                 a, b = 1.0, 0.0
                 for _ in range(300):
                     ga, gb = 0.0, 0.0
-                    for z, y in zip(zs, ys):
+                    for z, y in zip(zs_norm, ys):
                         p = 1 / (1 + math.exp(-max(-30, min(30, a * z + b))))
                         err = p - y
                         ga += err * z
                         gb += err
-                    a -= lr * ga / max(1, len(zs))
-                    b -= lr * gb / max(1, len(zs))
-                self.platt_a[c], self.platt_b[c] = a, b
-            self.method = "platt"
+                    # Gradient descent + L2 regularization
+                    ga = ga / max(1, len(zs_norm)) + reg * a
+                    gb = gb / max(1, len(zs_norm))
+                    a -= lr * ga
+                    b -= lr * gb
+                
+                # [v12.7] Denormalization: обратно трансформируем коэффициенты
+                self.platt_a[c] = a / z_std
+                self.platt_b[c] = b - a * z_mean / z_std
+            self.method = "platt_nr"  # Normalized + Regularized
         except Exception:
             pass
 
     def calibrate(self, p, ci=0):
         p = min(max(p, 1e-6), 1 - 1e-6)
-        if self.method == "platt":
+        if self.method in ("platt", "platt_nr"):
             z = math.log(p / (1 - p))
             a = self.platt_a[ci]
             b = self.platt_b[ci]
