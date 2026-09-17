@@ -1,3 +1,1 @@
-python -m py_compile nb_engine.py     # тишина = синтаксис ОК
-python -m py_compile App.py           # тишина = ОК
-python test_nb_engine.py              # ALL TESTS PASSED
+streamlit run neuro_bet_pro.py
