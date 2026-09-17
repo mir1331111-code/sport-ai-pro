@@ -1,4 +1,4 @@
 git add App.py
-git commit -m "v12.6: fatal predict fix + honest backtest + flags"
+git commit -m "v12.7: backtest loader + trimmed odds + NR calibrator"
 git push
 # Streamlit Cloud → Reboot → Ctrl+Shift+R
