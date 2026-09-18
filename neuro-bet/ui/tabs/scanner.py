@@ -338,4 +338,36 @@ def render(min_prob: float, kelly_frac: float, matrix_n: int) -> None:
         st.success(f"🧠 Обучено {fn.get('trained', 0)} · "
                    f"🔗 источников {fn.get('src', 0)} · "
                    f"🎯 найдено {fn.get('found', 0)} · "
-                   f"➕ в пор
+                   f"➕ в портфель {fn.get('added', 0)} · "
+                   f"💰 заморожено {fn.get('frozen', 0):.0f} · "
+                   f"🤖 LLM: {fn.get('llm', 0)}")
+    with st.expander("🔌 Диагностика"):
+        for line in D.get("report", []):
+            st.text(line)
+
+    all_cards = D.get("cards", [])
+    cards_view = sorted([c for c in all_cards if isinstance(c, dict)],
+                        key=lambda c: (c.get("verdict", {}).get("prob") or 0),
+                        reverse=True)
+    shown = hidden = 0
+    for c in cards_view:
+        v = c.get("verdict") or {}
+        if not v.get("is_action", False):
+            hidden += 1
+            continue
+        st.markdown(render_verdict_card(c, min_prob), unsafe_allow_html=True)
+        shown += 1
+    if shown == 0 and hidden == 0:
+        st.info("Нажми ⚡ СКАН.")
+    elif shown == 0 and hidden > 0:
+        st.warning(f"⚠️ Ни один матч не прошёл порог "
+                   f"**{min_prob*100:.0f}%**. Скрыто **{hidden}**.")
+        with st.expander(f"👀 Показать {hidden} скрытых"):
+            for c in cards_view:
+                v = c.get("verdict") or {}
+                if v.get("is_action", False):
+                    continue
+                st.markdown(render_verdict_card(c, min_prob),
+                            unsafe_allow_html=True)
+    elif hidden > 0:
+        st.caption(f"✅ Показано **{shown}** · скрыто **{hidden}**")
