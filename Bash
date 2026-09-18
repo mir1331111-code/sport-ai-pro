@@ -1,4 +1,5 @@
-# Замени App.py кодом выше
-git add App.py
-git commit -m "v12.9.3: +estimate odds + TSDB auto-settle + LLM analyst"
-git push
+cd neuro_bet_pro
+python -m venv .venv
+source .venv/bin/activate    # Linux/Mac
+# .venv\Scripts\activate     # Windows
+pip install -r requirements.txt
