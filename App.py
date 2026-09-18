@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.9.6 — 100% free (football-data + TheSportsDB + The Odds API)."""
+"""NEURO BET PRO v12.9.7 — every prediction goes to portfolio + 100% free sources."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64, hmac, sqlite3
 from contextlib import contextmanager
@@ -18,10 +18,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.9.6", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.9.7", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.9.6"
+APP_VERSION = "12.9.7"
 DATA_VERSION = 16
 LOCAL_FILE = "neuro_local.json"
 DISK_CACHE_DIR = "neuro_cache"
@@ -50,20 +50,17 @@ LLM_PROVIDERS = {
     "DeepSeek (дёшево)": {"base":"https://api.deepseek.com/v1","model":"deepseek-chat","key_url":"https://platform.deepseek.com/api_keys"},
 }
 
-# Коды лиг на football-data.co.uk (используются в CSV URL)
 DIV_NAMES = {"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип","D1":"🇩🇪 Бундеслига",
  "D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B","SP1":"🇪🇸 Ла Лига",
- "SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
+ "SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
  "B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига","G1":"🇬🇷 Греция",
  "R1":"🇷🇺 РПЛ","C1":"🏆 Лига Чемпионов","EL":"🏆 Лига Европы","EC":"🏆 Лига Конференций"}
 
-# Коды TheSportsDB league ID (для past events)
 DIV_TO_TSDB = {"E0":"4328","E1":"4386","D1":"4331","D2":"4389","I1":"4332","I2":"4388",
  "SP1":"4335","SP2":"4340","F1":"4334","F2":"4387","N1":"4337",
  "B1":"4355","P1":"4344","T1":"4339","G1":"4356","R1":"4357",
  "C1":"4480","EL":"4481"}
 
-# The Odds API sport keys
 DIV_TO_ODDS = {"E0":"soccer_epl","E1":"soccer_efl_champ","D1":"soccer_germany_bundesliga",
  "D2":"soccer_germany_bundesliga2","I1":"soccer_italy_serie_a","I2":"soccer_italy_serie_b",
  "SP1":"soccer_spain_la_liga","SP2":"soccer_spain_segunda","F1":"soccer_france_ligue_one",
@@ -453,10 +450,9 @@ def determine_outcome(market,pick,hg,ag):
     return None
 
 # ============================================================
-# [v12.9.6] Бесплатные источники данных
+# Бесплатные источники
 # ============================================================
 def load_seasonal(div,season):
-    """История матчей с football-data.co.uk (CSV с кэфами Pinnacle/B365, без ключа)."""
     ck = f"fd_{div}_{season}"
     cached = disk_cache_get(ck,86400*3)
     if cached is not None: return cached if isinstance(cached,list) else []
@@ -476,44 +472,7 @@ def load_seasonal(div,season):
     except Exception as e:
         log_err("load_seasonal",e); return []
 
-def tsdb_today_matches(days=7):
-    """Матчи ближайших N дней с TheSportsDB (бесплатно, без ключа)."""
-    today = datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
-    out = []
-    for off in range(0,days):
-        d = today + timedelta(days=off)
-        dstr = d.strftime("%Y-%m-%d")
-        ck = f"tsdb_day_{dstr}"
-        cached = disk_cache_get(ck,1800)
-        if cached is not None:
-            if isinstance(cached,list): out += cached
-            continue
-        try:
-            r = _sess.get("https://www.thesportsdb.com/api/v1/json/3/eventsday.php",
-                          params={"d":dstr,"s":"Soccer"},timeout=15,proxies=NO_PROXY)
-            if r.status_code!=200: continue
-            ev = (r.json() or {}).get("events") or []
-            rows = []
-            for e in ev:
-                if not isinstance(e,dict): continue
-                h = e.get("strHomeTeam"); a = e.get("strAwayTeam")
-                if not h or not a: continue
-                league = e.get("strLeague") or "Матч"
-                # Пытаемся сопоставить лигу с нашими кодами
-                div_code = _match_tsdb_league(league)
-                rows.append({"Div":div_code,"League":league,
-                             "Date":(e.get("dateEvent") or "")[:10],
-                             "Time":(e.get("strTime") or "")[:5],
-                             "HomeTeam":h,"AwayTeam":a,
-                             "fixture_id":e.get("idEvent")})
-            out += rows
-            disk_cache_put(ck,rows)
-        except Exception as e_:
-            log_err("tsdb_today",e_)
-    return out
-
 def _match_tsdb_league(league_name):
-    """Сопоставляет название лиги TheSportsDB с нашим кодом."""
     if not league_name: return None
     ln = league_name.lower()
     mapping = {
@@ -540,8 +499,41 @@ def _match_tsdb_league(league_name):
         if key in ln: return code
     return None
 
+def tsdb_today_matches(days=7):
+    today = datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+    out = []
+    for off in range(0,days):
+        d = today + timedelta(days=off)
+        dstr = d.strftime("%Y-%m-%d")
+        ck = f"tsdb_day_{dstr}"
+        cached = disk_cache_get(ck,1800)
+        if cached is not None:
+            if isinstance(cached,list): out += cached
+            continue
+        try:
+            r = _sess.get("https://www.thesportsdb.com/api/v1/json/3/eventsday.php",
+                          params={"d":dstr,"s":"Soccer"},timeout=15,proxies=NO_PROXY)
+            if r.status_code!=200: continue
+            ev = (r.json() or {}).get("events") or []
+            rows = []
+            for e in ev:
+                if not isinstance(e,dict): continue
+                h = e.get("strHomeTeam"); a = e.get("strAwayTeam")
+                if not h or not a: continue
+                league = e.get("strLeague") or "Матч"
+                div_code = _match_tsdb_league(league)
+                rows.append({"Div":div_code,"League":league,
+                             "Date":(e.get("dateEvent") or "")[:10],
+                             "Time":(e.get("strTime") or "")[:5],
+                             "HomeTeam":h,"AwayTeam":a,
+                             "fixture_id":e.get("idEvent")})
+            out += rows
+            disk_cache_put(ck,rows)
+        except Exception as e_:
+            log_err("tsdb_today",e_)
+    return out
+
 def tsdb_past_league(tsdb_id,limit=60):
-    """Прошедшие матчи лиги с TheSportsDB (как fallback для обучения)."""
     if not tsdb_id: return []
     ck = f"tsdb_past_{tsdb_id}"
     cached = disk_cache_get(ck,86400*3)
@@ -563,7 +555,6 @@ def tsdb_past_league(tsdb_id,limit=60):
     except Exception: return []
 
 def tsdb_match_result(fixture_id):
-    """Результат матча по ID TheSportsDB (бесплатно, для auto-settle)."""
     if not fixture_id: return None
     ck = f"tsdb_result_{fixture_id}"
     cached = disk_cache_get(ck,86400)
@@ -583,12 +574,11 @@ def tsdb_match_result(fixture_id):
     except Exception as e_:
         log_err("tsdb_result",e_); return None
 
+def _norm_team_name(s): return re.sub(r"[^a-zа-я0-9]","",(s or "").lower())
+
 def odds_api_fixture(sport_key,home,away,api_key):
-    """Реальные кэфы букмекеров с The Odds API (500/мес бесплатно).
-    Возвращает dict {"П1":odds,"X":odds,"П2":odds,"ТБ 2.5":...,"BTTS да":...}"""
     if not api_key or not sport_key: return None
     if odds_usage_remaining()<=0: return None
-    # Кэш по (sport, home, away) на 2 часа
     ck = f"odds_{sport_key}_{_norm_team_name(home)}_{_norm_team_name(away)}"
     cached = disk_cache_get(ck,7200)
     if cached is not None: return cached or None
@@ -607,7 +597,6 @@ def odds_api_fixture(sport_key,home,away,api_key):
             ea = _norm_team_name(ev.get("away_team",""))
             if eh==hn and ea==an:
                 target = ev; break
-            # Частичное совпадение (например "Man United" vs "Manchester United")
             if (eh in hn or hn in eh) and (ea in an or an in ea):
                 target = ev; break
         if not target: return None
@@ -641,8 +630,6 @@ def odds_api_fixture(sport_key,home,away,api_key):
         disk_cache_put(ck,out or None); return out or None
     except Exception as e:
         log_err("odds_api",e); return None
-
-def _norm_team_name(s): return re.sub(r"[^a-zа-я0-9]","",(s or "").lower())
 
 # ============================================================
 # LLM Analyst
@@ -797,7 +784,7 @@ class Engine:
         t[h]["form"].append(3 if hg>ag else (1 if hg==ag else 0))
         t[a]["form"].append(3 if ag>hg else (1 if hg==ag else 0))
         self.hg.append(hg); self.ag.append(ag)
-        div = (row or {}).get("Div") or (row or {}).get("div") or "G" if isinstance(row,dict) else "G"
+        div = (row or {}).get("Div") or "G" if isinstance(row,dict) else "G"
         self.lg_hg[div].append(hg); self.lg_ag[div].append(ag)
         self.h2h[(h,a)].append(hg-ag); self.h2h[(h,a)] = self.h2h[(h,a)][-8:]
         for team in (h,a):
@@ -1016,7 +1003,6 @@ def apply_settle(D,idx,outcome,score=None):
     return D2
 
 def auto_settle(D):
-    """Автозакрытие ставок через TheSportsDB (бесплатно)."""
     D2 = clone(D); changed = 0; now = datetime.now()
     for idx,b in enumerate(D2["bets"][:]):
         if b.get("status")!="pending": continue
@@ -1024,7 +1010,6 @@ def auto_settle(D):
         bd = parse_date(dt_iso) if dt_iso else None
         if bd and bd>now: continue
         if not fid: continue
-        # TheSportsDB lookup
         res = tsdb_match_result(fid)
         if not res: continue
         hg,ag = res["home"],res["away"]
@@ -1034,17 +1019,6 @@ def auto_settle(D):
         outcome = determine_outcome(b.get("market"),b.get("pick"),hg,ag)
         if outcome is None: continue
         D2 = apply_settle(D2,idx,outcome,score=f"{hg}:{ag}"); changed += 1
-        # CLV: берём closing odds из football-data (Pinnacle) если есть
-        try:
-            if b.get("date_iso") and b.get("match"):
-                parts = b["match"].split(" vs ")
-                if len(parts)==2:
-                    # Ищем в кэше seasonal по лиге
-                    div_code = b.get("div")
-                    if div_code:
-                        # CLV обновим только если знаем Pinnacle odds
-                        pass
-        except Exception as e: log_err("clv_auto",e)
     for idx,b in enumerate(D2["bets"][:]):
         if b.get("status")!="pending": continue
         dt_iso = b.get("date_iso") or b.get("date")
@@ -1086,8 +1060,8 @@ def render_verdict_card(c,thr):
     reasons_html = "".join(f"<li>{esc(r)}</li>" for r in reasons)
     warn = ""
     if is_action and not has_real:
-        warn = ("<div style='color:#fde68a;font-size:.78rem;margin-top:8px;'>⚠️ Реального кэфа не нашли — "
-                "используется estimate odd (fair × 0.94). Добавь ключ The Odds API для реальных кэфов.</div>")
+        warn = ("<div style='color:#fde68a;font-size:.78rem;margin-top:8px;'>⚠️ Реального кэфа нет — "
+                "estimate odd (fair × 0.94). Добавь ключ The Odds API для реальных кэфов.</div>")
     llm_opinion = c.get("llm_opinion") or ""
     llm_html = ""
     if llm_opinion:
@@ -1192,7 +1166,7 @@ if _now_ts-_last_auto>AUTO_SETTLE_THROTTLE_SEC:
 pending_count = sum(1 for b in D["bets"] if isinstance(b,dict) and b.get("status")=="pending")
 st.markdown(f"""
 <div class="hero"><h1>NEURO BET PRO</h1>
-<p>v{APP_VERSION} · 🆓 100% БЕСПЛАТНО · 🤖 Gemini/Grok/Groq ИИ ·  football-data + TheSportsDB + The Odds API · 🗄 SQLite</p>
+<p>v{APP_VERSION} · 🆓 100% БЕСПЛАТНО · 🤖 ИИ-аналитик · 📥 прогнозы→портфель · 🗄 SQLite</p>
 <div class="kpis">
  <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
  <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1316,7 +1290,6 @@ with tab1:
             update_loader("📡 Сбор матчей...",0.05,logs)
             tsdb_rows = safe_filter(tsdb_today_matches(days))
             logs.append(f"📡 TheSportsDB (дней {days}): {len(tsdb_rows)} матчей")
-            # Уникальные (TheSportsDB + фильтруем неизвестные лиги)
             seen = set(); src_rows = []
             for r in tsdb_rows:
                 h = r.get("HomeTeam"); a = r.get("AwayTeam")
@@ -1325,13 +1298,12 @@ with tab1:
                 if k in seen: continue
                 seen.add(k); src_rows.append(r)
             logs.append(f"🔗 Уникальных: {len(src_rows)}")
-            # Обучение
             cur_year = today.year if today.month>=7 else today.year-1
             prev_year = cur_year-1
             trained = 0
             engine = None
             try:
-                eng_key = "neuro_engine_v1296"
+                eng_key = "neuro_engine_v1297"
                 eng_cached = disk_cache_get(eng_key,86400*14)
                 if eng_cached and eng_cached.get("fp")==APP_VERSION:
                     engine = eng_cached.get("engine")
@@ -1344,10 +1316,8 @@ with tab1:
                 for i,dv in enumerate(train_divs):
                     pct = 0.1+(i+1)/len(train_divs)*0.4
                     update_loader(f"История [{i+1}/{len(train_divs)}] — {DIV_NAMES.get(dv,dv)}",pct,logs)
-                    # football-data.co.uk (основной источник)
                     dp[dv] = load_seasonal(dv,_season_str(prev_year))
                     dc[dv] = load_seasonal(dv,_season_str(cur_year))
-                    # Fallback: TheSportsDB
                     if len(dp[dv])<20:
                         dp[dv] = dp[dv] + tsdb_past_league(DIV_TO_TSDB.get(dv,""),limit=60)
                     if len(dc[dv])<20:
@@ -1370,7 +1340,7 @@ with tab1:
                                 update_loader(f"Обучение [{processed}/{total_matches}]",
                                               0.5+processed/max(1,total_matches)*0.3,logs)
                 engine.trained_n = trained
-                try: disk_cache_put("neuro_engine_v1296",{"fp":APP_VERSION,"engine":engine})
+                try: disk_cache_put("neuro_engine_v1297",{"fp":APP_VERSION,"engine":engine})
                 except Exception: pass
                 logs.append(f"🧠 Обучено: {trained}")
             update_loader("Анализ матчей...",0.85,logs)
@@ -1388,26 +1358,26 @@ with tab1:
                 verdict,rows,_ = build_verdict(P,min_prob,D["bank"],kelly_frac,h_ru,a_ru,fh,fa,P.get("h2h_n",0))
                 best = None
                 if verdict.get("is_action"):
-                    # Реальные кэфы с The Odds API (если есть ключ и лимит)
                     sport_key = DIV_TO_ODDS.get(lg)
                     real_odds = None
                     if sport_key and odds_key and odds_usage_remaining()>0 and matches_with_best<15:
                         real_odds = odds_api_fixture(sport_key,h_en,a_en,odds_key)
                     if real_odds:
                         verdict,best = refine_with_real_odds(verdict,rows,real_odds,D["bank"],kelly_frac)
-                    # Fallback: estimate
-                    if best is None and verdict.get("is_action"):
-                        est_odd = verdict.get("odd") or verdict.get("fair_odd")
+                    # [FIX v12.9.7] Прогноз ВСЕГДА идёт в портфель:
+                    # если Kelly=0 (EV мал) или нет кэфов — минимальная ставка 1%
+                    if best is None:
+                        est_odd = (real_odds or {}).get(verdict["pick"]) or verdict.get("odd") or verdict.get("fair_odd")
                         if est_odd and est_odd>1.01:
                             prob_ = verdict["prob"]
                             ev_ = prob_*est_odd-1
-                            stake_ = kelly(prob_,est_odd,D["bank"],kelly_frac)
-                            if stake_>0:
-                                verdict["real_odds"] = False
-                                verdict["odd"] = est_odd; verdict["ev"] = ev_
-                                verdict["odds_source"] = "estimated"
-                                best = (_market_type(verdict["pick"]),verdict["pick"],est_odd,ev_,prob_,stake_)
-                                logs.append(f"⚠️ {h_ru} vs {a_ru}: estimate odd {est_odd:.2f}")
+                            min_stake = round(D["bank"]*0.01,2)
+                            stake_ = max(kelly(prob_,est_odd,D["bank"],kelly_frac), min_stake)
+                            verdict["real_odds"] = bool(real_odds)
+                            verdict["odd"] = est_odd; verdict["ev"] = ev_
+                            verdict["odds_source"] = ("market" if real_odds else "estimated")
+                            best = (_market_type(verdict["pick"]),verdict["pick"],est_odd,ev_,prob_,stake_)
+                            logs.append(f"📥 {h_ru} vs {a_ru}: прогноз в портфель @ {est_odd:.2f} · stake {stake_:.2f}")
                 if best: matches_with_best += 1
                 cards.append({"div":lg,"league":r.get("League") or DIV_NAMES.get(lg,"Лига"),
                     "match":f"{h_en} vs {a_en}","match_ru":f"{h_ru} — {a_ru}",
@@ -1418,7 +1388,6 @@ with tab1:
                     "lam_h":P["lams"][0],"lam_a":P["lams"][1],
                     "p1":P["p1"],"px":P["x"],"p2":P["p2"],"over":P["over"],"btts":P["btts"]})
             logs.append(f"🎯 Найдено с P≥{min_prob*100:.0f}%: {matches_with_best}")
-            # LLM
             llm_key_ = D.get("meta",{}).get("llm_api_key","")
             llm_prov_ = D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)")
             llm_model_ = D.get("meta",{}).get("llm_model","")
@@ -1448,14 +1417,15 @@ with tab1:
                     logs.append(f"🤖 {card.get('match_ru','')}: {opinion[:50]}...")
             if llm_done>0: logs.append(f"✅ LLM: {llm_done} мнений")
             elif not llm_key_: logs.append("🤖 LLM: ключ не задан — пропущено")
-            # Ставки
+            # [FIX v12.9.7] Ставки из ВСЕХ прогнозов
             new_bets = []
             existing = {f"{b['match']}|{b['pick']}" for b in D["bets"] if isinstance(b,dict) and b.get("status")=="pending"}
             for c in cards:
                 b = c.get("best")
                 if not b: continue
                 mkt,pick,odd,ev,prob,stake = b
-                stake = round(min(stake,D["bank"]*0.05),2)
+                # [FIX] минимум 0.5% банка, максимум 5%
+                stake = round(min(max(stake, D["bank"]*0.005), D["bank"]*0.05),2)
                 if stake<=0: continue
                 bk_ = f"{c['match']}|{pick}"
                 if bk_ in existing: continue
@@ -1582,8 +1552,7 @@ with tab3:
         st.divider(); st.subheader("🗄 SQLite + CLV + Drawdown")
         sb_ = cached_db_fetch_bets(status=None,limit=100000)
         if sb_:
-            n = len(sb_)
-            st.caption(f"SQLite: {n} ставок")
+            st.caption(f"SQLite: {len(sb_)} ставок")
         clv = cached_clv_summary(); ib = float(D.get("meta",{}).get("initial_bank",10000.0))
         dd = cached_drawdown_stats(ib); shp = cached_sharpe_ratio(ib)
         c1,c2,c3,c4 = st.columns(4)
