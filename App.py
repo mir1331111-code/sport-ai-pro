@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.9.4 — local key persistence + LLM analyst + estimate odds + TSDB auto-settle."""
+"""NEURO BET PRO v12.9.5 — Gemini/Grok LLM + training without API + API breaker."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64, hmac, sqlite3
 from contextlib import contextmanager
@@ -18,10 +18,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.9.4", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.9.5", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.9.4"
+APP_VERSION = "12.9.5"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 LOCAL_FILE = "neuro_local.json"
@@ -46,27 +46,14 @@ AUTO_SETTLE_THROTTLE_SEC = 21600
 LLM_DAILY_LIMIT = 20
 LLM_TOP_N = 8
 
+# [v12.9.5] Провайдеры ИИ: Gemini и Grok возвращены + OpenAI-совместимые
 LLM_PROVIDERS = {
-    "Groq (бесплатно, быстро)": {
-        "base": "https://api.groq.com/openai/v1",
-        "model": "llama-3.3-70b-versatile",
-        "key_url": "https://console.groq.com/keys",
-    },
-    "OpenRouter (Llama 3.3)": {
-        "base": "https://openrouter.ai/api/v1",
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "key_url": "https://openrouter.ai/keys",
-    },
-    "OpenAI (gpt-4o-mini)": {
-        "base": "https://api.openai.com/v1",
-        "model": "gpt-4o-mini",
-        "key_url": "https://platform.openai.com/api-keys",
-    },
-    "DeepSeek (дёшево)": {
-        "base": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "key_url": "https://platform.deepseek.com/api_keys",
-    },
+    "Groq (бесплатно, быстро)": {"base":"https://api.groq.com/openai/v1","model":"llama-3.3-70b-versatile","key_url":"https://console.groq.com/keys"},
+    "Gemini (Google, бесплатно)": {"base":"https://generativelanguage.googleapis.com/v1beta/openai","model":"gemini-2.0-flash","key_url":"https://aistudio.google.com/apikey"},
+    "Grok (x.ai)": {"base":"https://api.x.ai/v1","model":"grok-beta","key_url":"https://console.x.ai"},
+    "OpenRouter (Llama 3.3)": {"base":"https://openrouter.ai/api/v1","model":"meta-llama/llama-3.3-70b-instruct:free","key_url":"https://openrouter.ai/keys"},
+    "OpenAI (gpt-4o-mini)": {"base":"https://api.openai.com/v1","model":"gpt-4o-mini","key_url":"https://platform.openai.com/api-keys"},
+    "DeepSeek (дёшево)": {"base":"https://api.deepseek.com/v1","model":"deepseek-chat","key_url":"https://platform.deepseek.com/api_keys"},
 }
 
 API_TO_DIV = {"API_39":"E0","API_40":"E1","API_140":"SP1","API_141":"SP2","API_135":"I1",
@@ -77,8 +64,8 @@ DIV_TO_APILG = {"E0":39,"E1":40,"SP1":140,"SP2":141,"I1":135,"I2":136,"D1":78,"D
  "F1":61,"F2":62,"N1":88,"B1":144,"P1":94,"T1":203,"R1":235,"G1":197}
 DIV_NAMES = {"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип","D1":"🇩🇪 Бундеслига",
  "D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B","SP1":"🇪🇸 Ла Лига",
- "SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
- "B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига","G1":"🇬🇷 Греция",
+ "SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
+ "B1":"🇧 Про-лига","P1":"🇵 Примейра","T1":"🇹🇷 Суперлига","G1":"🇬 Греция",
  "R1":"🇷🇺 РПЛ","C1":"🏆 Лига Чемпионов","EL":"🏆 Лига Европы","EC":"🏆 Лига Конференций"}
 STADIUM_WALLS = {
  "E0":"linear-gradient(135deg, rgba(30,64,175,.55), rgba(15,23,42,.95))",
@@ -455,7 +442,6 @@ def _usage_load(fn):
             if g.get("date")!=_today_str(): return d
             return g
     else:
-        # [v12.9.4] локальный счётчик из neuro_local.json
         try:
             if os.path.exists(LOCAL_PATH):
                 with open(LOCAL_PATH,"r",encoding="utf-8") as f:
@@ -469,7 +455,9 @@ def _usage_save_local(fn,d):
     try:
         ld = {}
         if os.path.exists(LOCAL_PATH):
-            with open(LOCAL_PATH,"r",encoding="utf-8") as f: ld = json.load(f)
+            try:
+                with open(LOCAL_PATH,"r",encoding="utf-8") as f: ld = json.load(f)
+            except Exception: ld = {}
         ld.setdefault("usage",{})[fn] = d
         with open(LOCAL_PATH,"w",encoding="utf-8") as f:
             json.dump(ld,f,ensure_ascii=False,indent=2,default=str)
@@ -516,6 +504,8 @@ def parse_date(s):
             return datetime.strptime(sc,fmt)
         except Exception: continue
     return None
+def _season_str(y):
+    return f"{y%100:02d}{(y+1)%100:02d}"
 def is_cup(row):
     if not isinstance(row,dict): return False
     return norm_div(row.get("Div","")) in ("C1","EL","EC")
@@ -575,8 +565,9 @@ def api_request(api_key,endpoint,params=None,timeout=15,count_usage=True):
     url = f"https://v3.football.api-sports.io/{endpoint}"
     try:
         r = _sess.get(url,headers=h,params=params or {},timeout=timeout,proxies=NO_PROXY)
+        if r.status_code!=200:
+            return None,f"HTTP {r.status_code}"
         if count_usage: api_usage_increment(1)
-        if r.status_code!=200: return None,f"HTTP {r.status_code}"
         data = r.json()
         if data.get("errors"): return None,str(data["errors"])[:120]
         return data,None
@@ -631,7 +622,13 @@ def api_fixtures_by_league(api_key,d_from,d_to,progress_cb=None):
             out += cached; rep.append(f"API {name}: {len(cached)} (кэш)"); continue
         data,err = api_request(api_key,"fixtures",{"league":lid,"from":d_from,"to":d_to,"timezone":"UTC"})
         if err:
-            rep.append(f"API {name}: {err[:50]}"); disk_cache_put(ck,[]); continue
+            rep.append(f"API {name}: {err[:50]}")
+            disk_cache_put(ck,[])
+            # [v12.9.5] аварийный останов при приостановленном API / невалидном ключе
+            if any(t in err for t in ("401","403","Invalid","unauthorized","suspended")):
+                rep.append("⛔ API приостановлен / ключ недействителен — остальные лиги не запрашиваю")
+                break
+            continue
         rows = []
         for f in (data or {}).get("response") or []:
             if not isinstance(f,dict): continue
@@ -764,7 +761,7 @@ def load_seasonal(div,season):
 
 # ============= LLM Analyst =============
 LLM_SYSTEM_PROMPT = """Ты — эксперт-аналитик футбола и ставок. Отвечай на русском.
-Тебе дают данные о матче: команды, лига, модельные xG, вероятности, форма, личные встречи, вердикт ML-модели.
+Тебе дают данные о матче: команды, лига, модельные xG, вероятности, форма, вердикт ML-модели.
 Твоя задача:
 1. Дать КРАТКОЕ мнение (1-3 предложения) по этому матчу.
 2. Согласиться или возразить модели, если видишь что-то упущенное.
@@ -797,7 +794,6 @@ def llm_analyze_match(match_ctx):
         f"Вероятности: П1 {match_ctx.get('p1',0)*100:.0f}%, X {match_ctx.get('px',0)*100:.0f}%, П2 {match_ctx.get('p2',0)*100:.0f}%\n"
         f"ТБ 2.5: {match_ctx.get('over',0)*100:.0f}%, BTTS: {match_ctx.get('btts',0)*100:.0f}%\n"
         f"Форма хозяев: {match_ctx.get('fh','—')}, гостей: {match_ctx.get('fa','—')}\n"
-        f"Личных встреч учтено: {match_ctx.get('h2h_n',0)}\n"
         f"Вердикт ML-модели: {match_ctx.get('pick','')} с P={match_ctx.get('prob',0)*100:.0f}% (уверенность: {match_ctx.get('confidence','')})\n"
         f"EV: {match_ctx.get('ev',0)*100:+.1f}%\n"
     )
@@ -1065,7 +1061,6 @@ def migrate(D):
     if "initial_bank" not in D["meta"]: D["meta"]["initial_bank"] = float(D.get("bank",10000.0))
     D["version"] = DATA_VERSION
     return D
-# [v12.9.4] load/save с локальным файлом (ключи не теряются)
 def load_data():
     if CLOUD_IS_CLOUD:
         gd = gist_load_json(CLOUD_GIST_ID,HISTORY_FILE)
@@ -1075,7 +1070,6 @@ def load_data():
             with open(LOCAL_PATH,"r",encoding="utf-8") as f:
                 ld = json.load(f)
             if isinstance(ld,dict):
-                # локальный файл хранит и данные, и usage
                 data_part = ld.get("data") or ld
                 return migrate(data_part)
     except Exception as e:
@@ -1383,7 +1377,7 @@ if _now_ts-_last_auto>AUTO_SETTLE_THROTTLE_SEC:
 pending_count = sum(1 for b in D["bets"] if isinstance(b,dict) and b.get("status")=="pending")
 st.markdown(f"""
 <div class="hero"><h1>NEURO BET PRO</h1>
-<p>v{APP_VERSION} · 🤖 LLM аналитик · estimate odds · TSDB auto-settle · 🇷 переводы ·  SQLite · 🔑 локальное хранение ключей</p>
+<p>v{APP_VERSION} · 🤖 Gemini/Grok ИИ · обучение без API · estimate odds · TSDB auto-settle · 🗄 SQLite</p>
 <div class="kpis">
  <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
  <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1434,13 +1428,14 @@ with st.sidebar:
     if ak!=D.get("meta",{}).get("api_key",""):
         D["meta"]["api_key"] = ak; save_data(D)
     st.markdown("**🤖 ИИ-аналитик**")
-    llm_prov = st.selectbox("Провайдер",list(LLM_PROVIDERS.keys()),
-                            index=list(LLM_PROVIDERS.keys()).index(D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)")) if D.get("meta",{}).get("llm_provider") in LLM_PROVIDERS else 0)
+    _prov_keys = list(LLM_PROVIDERS.keys())
+    _cur = D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)")
+    llm_prov = st.selectbox("Провайдер",_prov_keys,index=_prov_keys.index(_cur) if _cur in _prov_keys else 0)
     cur_prov = LLM_PROVIDERS[llm_prov]
     st.caption(f"Получить ключ: [{cur_prov['key_url']}]({cur_prov['key_url']})")
     st.caption(f"Модель по умолчанию: `{cur_prov['model']}`")
     llm_key = st.text_input("LLM API Key",value=D.get("meta",{}).get("llm_api_key",""),
-                            type="password",help="Ключ от Groq / OpenRouter / OpenAI / DeepSeek")
+                            type="password",help="Ключ от Groq / Gemini / Grok / OpenRouter / OpenAI / DeepSeek")
     llm_model = st.text_input("Модель (override)",value=D.get("meta",{}).get("llm_model",""),
                               placeholder=cur_prov["model"],
                               help="Оставь пустым — модель по умолчанию провайдера")
@@ -1538,7 +1533,9 @@ with tab1:
                     for i,dv in enumerate(train_divs):
                         pct = 0.3+(i+1)/len(train_divs)*0.35
                         update_loader(f"История [{i+1}/{len(train_divs)}] — {DIV_NAMES.get(dv,dv)}",pct,logs)
-                        dp[dv] = api_season_history(ak_,dv,prev_year); dc[dv] = api_season_history(ak_,dv,cur_year)
+                        # [v12.9.5] fallback: если API пуст/приостановлен — берём бесплатный football-data.co.uk
+                        dp[dv] = api_season_history(ak_,dv,prev_year) or load_seasonal(dv,_season_str(prev_year))
+                        dc[dv] = api_season_history(ak_,dv,cur_year) or load_seasonal(dv,_season_str(cur_year))
                         logs.append(f"✅ {DIV_NAMES.get(dv,dv)}: {len(dp[dv])+len(dc[dv])}")
                     total_matches = sum(len(dp.get(dv,[]))+len(dc.get(dv,[])) for dv in train_divs)
                     processed = 0
