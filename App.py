@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.9.1 — absolute DB path + sqlite diagnostics + real initial bank."""
+"""NEURO BET PRO v12.9.2 — security + hold-out + caching + clean code."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64, hmac, sqlite3
 from contextlib import contextmanager
@@ -18,10 +18,10 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.9.1", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.9.2", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.9.1"
+APP_VERSION = "12.9.2"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
@@ -30,7 +30,6 @@ SETTLE_USAGE_FILE = "settle_usage.json"
 DISK_CACHE_DIR = "neuro_cache"
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
 
-# v12.9.1 — абсолютный путь к БД (рядом с app.py, не зависит от CWD)
 try:
     _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
@@ -41,6 +40,7 @@ esc = html.escape
 API_LIMIT_DAILY = 100
 AUTO_SETTLE_LIMIT = 20
 AUTO_SETTLE_THROTTLE_SEC = 21600
+CALIB_HOLDOUT = 500  # [v12.9.2] P1: hold-out для калибратора
 
 API_TO_DIV = {
     "API_39": "E0", "API_40": "E1",
@@ -171,6 +171,13 @@ CLOUD_GIST_TOKEN = _get_secret("GIST_TOKEN", "")
 ENGINE_HMAC_KEY = _get_secret("ENGINE_HMAC_KEY", "")
 CLOUD_IS_CLOUD = bool(CLOUD_GIST_ID and CLOUD_GIST_TOKEN)
 
+# [v12.9.2] P0: Предупреждение если HMAC не задан в Cloud
+_HMAC_WARNING = ""
+if CLOUD_IS_CLOUD and not ENGINE_HMAC_KEY:
+    _HMAC_WARNING = ("⚠️ ENGINE_HMAC_KEY не задан в secrets! "
+                     "Engine не будет загружаться из Gist (безопасность). "
+                     "Добавь в .streamlit/secrets.toml: ENGINE_HMAC_KEY = 'secret-string'")
+
 ERR = []
 
 
@@ -292,7 +299,7 @@ def db_set_meta(key, value):
 def db_get_meta(key, default=None):
     with _db() as c:
         row = c.execute("SELECT value FROM meta WHERE key=?", (str(key),)).fetchone()
-        return row[0] if row else default
+    return row[0] if row else default
 
 
 def db_insert_bet(bet):
@@ -631,6 +638,10 @@ def _engine_sign(blob_bytes):
 def engine_save_gist(fp, engine):
     if not CLOUD_IS_CLOUD:
         return False
+    # [v12.9.2] P0: Требуем HMAC для сохранения
+    if not ENGINE_HMAC_KEY:
+        log_err("engine_save_gist", "ENGINE_HMAC_KEY not set — refusing to save unsigned pickle")
+        return False
     try:
         raw = gzip.compress(pickle.dumps({
             "fp": fp, "engine": engine,
@@ -642,7 +653,7 @@ def engine_save_gist(fp, engine):
         if len(blob) > 900000:
             log_err("engine_save_gist", f"engine too big: {len(blob)} bytes")
             return False
-        payload = sig + "\n" + blob if sig else blob
+        payload = sig + "\n" + blob
         return _gist_save_raw(CLOUD_GIST_ID, ENGINE_GIST_FILE, payload)
     except Exception as e:
         log_err("engine_save_gist", e)
@@ -652,18 +663,23 @@ def engine_save_gist(fp, engine):
 def engine_load_gist(fp):
     if not CLOUD_IS_CLOUD:
         return None
+    # [v12.9.2] P0: Требуем HMAC для загрузки — без ключа отказываемся
+    if not ENGINE_HMAC_KEY:
+        log_err("engine_load_gist", "ENGINE_HMAC_KEY not set — rejecting unsigned pickle (security)")
+        return None
     try:
         payload = _gist_load_raw(CLOUD_GIST_ID, ENGINE_GIST_FILE)
         if not payload:
             return None
-        if "\n" in payload:
-            sig, blob = payload.split("\n", 1)
-            raw = base64.b64decode(blob)
-            if ENGINE_HMAC_KEY and _engine_sign(raw) != sig:
-                log_err("engine_load_gist", "HMAC mismatch — engine rejected")
-                return None
-        else:
-            raw = base64.b64decode(payload)
+        # Обязательная проверка подписи
+        if "\n" not in payload:
+            log_err("engine_load_gist", "No signature found — rejecting")
+            return None
+        sig, blob = payload.split("\n", 1)
+        raw = base64.b64decode(blob)
+        if _engine_sign(raw) != sig:
+            log_err("engine_load_gist", "HMAC mismatch — engine rejected")
+            return None
         data = pickle.loads(gzip.decompress(raw))
         if not isinstance(data, dict):
             return None
@@ -1366,13 +1382,22 @@ class Engine:
     def learn_step(self, h, a, hg, ag, row=None, lg="G", match_num=None, total=None, match_date=None):
         P = self.predict(h, a, norm_div(lg), match_date=match_date, cup=is_cup(row))
         out = 0 if hg > ag else (1 if hg == ag else 2)
-        self.calib_logits += [self._logit(P["p1_raw"]), self._logit(P["x_raw"]), self._logit(P["p2_raw"])]
-        self.calib_outcomes += [1.0 if out == 0 else 0.0, 1.0 if out == 1 else 0.0, 1.0 if out == 2 else 0.0]
-        if len(self.calib_logits) > 6000:
-            del self.calib_logits[:-6000]
-            del self.calib_outcomes[:-6000]
+
+        # [v12.9.2] P1: Hold-out — последние CALIB_HOLDOUT матчей не идут в калибратор
+        # Это предотвращает переобучение на тех же данных, что использует модель
+        is_holdout = False
+        if total and match_num is not None:
+            is_holdout = match_num >= (total - CALIB_HOLDOUT)
+
+        if not is_holdout:
+            self.calib_logits += [self._logit(P["p1_raw"]), self._logit(P["x_raw"]), self._logit(P["p2_raw"])]
+            self.calib_outcomes += [1.0 if out == 0 else 0.0, 1.0 if out == 1 else 0.0, 1.0 if out == 2 else 0.0]
+            if len(self.calib_logits) > 6000:
+                del self.calib_logits[:-6000]
+                del self.calib_outcomes[:-6000]
+
         self.match_count += 1
-        if self.match_count % 150 == 0:
+        if self.match_count % 150 == 0 and not is_holdout:
             self.refit_calibrator()
         self.add(h, a, hg, ag, row, match_num=match_num, total=total, match_date=match_date)
         return P
@@ -1537,7 +1562,6 @@ def migrate(D):
 
     if not isinstance(D.get("meta"), dict):
         D["meta"] = {}
-    # v12.9.1 — фиксируем реальный стартовый банк для drawdown
     if "initial_bank" not in D["meta"]:
         D["meta"]["initial_bank"] = float(D.get("bank", 10000.0))
     D["version"] = DATA_VERSION
@@ -1709,28 +1733,33 @@ def auto_settle(D):
             continue
         hg, ag = res["home"], res["away"]
         outcome = determine_outcome(b.get("market"), b.get("pick"), hg, ag)
-        if outcome:
-            D2 = apply_settle(D2, idx, outcome, score=f"{hg}:{ag}")
-            changed += 1
-            if use_sqlite_enabled(D2) and fid:
-                try:
-                    closing = api_fixture_odds(api_key, fid) or {}
-                    if closing:
-                        db_update_clv_for_fixture(fid, closing)
-                        if b.get("odds") and closing.get(b.get("pick")):
-                            clv = compute_clv(float(b["odds"]),
-                                              float(closing[b["pick"]]))
-                            if clv is not None:
-                                with _db() as _c:
-                                    _c.row_factory = sqlite3.Row
-                                    row = _c.execute(
-                                        "SELECT id FROM bets WHERE fixture_id=? AND pick=? LIMIT 1",
-                                        (int(fid), b.get("pick"))).fetchone()
-                                    if row:
-                                        db_update_bet(row["id"], clv=clv,
-                                                      closing_odds=float(closing[b["pick"]]))
-                except Exception as e:
-                    log_err("clv_update", e)
+        # [v12.9.2] P3: Логируем неизвестный outcome
+        if outcome is None:
+            log_err("auto_settle_unknown",
+                    f"bet_id={b.get('id')} market={b.get('market')} "
+                    f"pick={b.get('pick')} score={hg}:{ag}")
+            continue
+        D2 = apply_settle(D2, idx, outcome, score=f"{hg}:{ag}")
+        changed += 1
+        if use_sqlite_enabled(D2) and fid:
+            try:
+                closing = api_fixture_odds(api_key, fid) or {}
+                if closing:
+                    db_update_clv_for_fixture(fid, closing)
+                    if b.get("odds") and closing.get(b.get("pick")):
+                        clv = compute_clv(float(b["odds"]),
+                                          float(closing[b["pick"]]))
+                        if clv is not None:
+                            with _db() as _c:
+                                _c.row_factory = sqlite3.Row
+                                row = _c.execute(
+                                    "SELECT id FROM bets WHERE fixture_id=? AND pick=? LIMIT 1",
+                                    (int(fid), b.get("pick"))).fetchone()
+                                if row:
+                                    db_update_bet(row["id"], clv=clv,
+                                                  closing_odds=float(closing[b["pick"]]))
+            except Exception as e:
+                log_err("clv_update", e)
 
     for idx, b in enumerate(D2["bets"][:]):
         if b.get("status") != "pending":
@@ -1881,7 +1910,40 @@ section.stButton>button{background:linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec489
 
 
 # ============================================================
-# Boot — с явной диагностикой SQLite
+# [v12.9.2] P2: Кэширование тяжёлых SQLite-функций
+# ============================================================
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_sqlite_status():
+    return sqlite_status()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_clv_summary():
+    return clv_summary()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_drawdown_stats(initial_bank):
+    return drawdown_stats(initial_bank=initial_bank)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_sharpe_ratio(initial_bank):
+    return sharpe_ratio(initial_bank=initial_bank)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_db_fetch_bets(status=None, limit=100000):
+    return db_fetch_bets(status=status, limit=limit)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_db_bank_history(limit=5000):
+    return db_bank_history(limit=limit)
+
+
+# ============================================================
+# Boot
 # ============================================================
 _db_ok = db_init()
 if not _db_ok:
@@ -1891,6 +1953,10 @@ if not _db_ok:
     st.caption("Проверь права на запись в папку. Если папка read-only — "
                "укажи другой путь в переменной DB_FILE.")
 
+# [v12.9.2] P0: Показываем предупреждение о HMAC
+if _HMAC_WARNING:
+    st.warning(_HMAC_WARNING, icon="🔐")
+
 if "data" not in st.session_state:
     st.session_state.data = load_data()
 D = st.session_state.data
@@ -1899,12 +1965,10 @@ if "meta" not in D:
 if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
     D["meta"]["api_key"] = CLOUD_API_FOOTBALL_KEY
 
-# v12.9.1 — фиксируем initial_bank при первом запуске
 if "initial_bank" not in D["meta"]:
     D["meta"]["initial_bank"] = float(D.get("bank", 10000.0))
     save_data(D)
 
-# Одноразовая миграция Gist → SQLite
 if SQLITE_BOOT_OK and use_sqlite_enabled(D) and not db_get_meta("migrated_from_gist_at"):
     if db_migrate_from_gist(D):
         st.toast("📦 История мигрирована в SQLite", icon="🗄")
@@ -1919,6 +1983,13 @@ if _now_ts - _last_auto_ts > AUTO_SETTLE_THROTTLE_SEC:
         if use_sqlite_enabled(D2):
             sync_bets_to_sqlite(D2)
             db_log_bank(D2.get("bank", 10000.0), event="auto_settle")
+            # [v12.9.2] P2: инвалидация кэша после изменений
+            cached_sqlite_status.clear()
+            cached_clv_summary.clear()
+            cached_drawdown_stats.clear()
+            cached_sharpe_ratio.clear()
+            cached_db_fetch_bets.clear()
+            cached_db_bank_history.clear()
         D = D2
         st.toast(f"Авто-закрыто {n} ставок", icon="🔄")
     st.session_state["_last_auto_settle_ts"] = _now_ts
@@ -1928,7 +1999,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🇷🇺 переводы · 🎯 умные альтернативы · 🗄 SQLite · 📈 CLV · 📉 Drawdown</p>
+ <p>v{APP_VERSION} · 🔐 HMAC · 📊 hold-out · ⚡ caching · 🇷🇺 переводы · 🗄 SQLite · 📈 CLV</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1940,7 +2011,6 @@ st.markdown(f"""
 with st.sidebar:
     st.header("⚙️ Настройки")
 
-    # v12.9.1 — диагностика SQLite
     st.markdown(f"""
 <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
 <div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🗄 SQLite</div>
@@ -1971,12 +2041,21 @@ with st.sidebar:
 <div style="color:#8b93a7;font-size:.75rem;">авто-проверок ставок сегодня</div>
 </div>""", unsafe_allow_html=True)
 
+    # [v12.9.2] P0: Статус HMAC
+    if CLOUD_IS_CLOUD:
+        hmac_status = "🟢 Установлен" if ENGINE_HMAC_KEY else "🔴 НЕ задан (engine не загружается)"
+        st.markdown(f"""
+<div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
+<div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🔐 HMAC</div>
+<div style="font-size:.9rem;color:#e6eaf2;">{hmac_status}</div>
+</div>""", unsafe_allow_html=True)
+
     if SQLITE_BOOT_OK and use_sqlite_enabled(D):
-        s = sqlite_status()
-        clv = clv_summary()
+        s = cached_sqlite_status()
+        clv = cached_clv_summary()
         init_bank = float(D.get("meta", {}).get("initial_bank", 10000.0))
-        dd = drawdown_stats(initial_bank=init_bank)
-        sharpe = sharpe_ratio(initial_bank=init_bank)
+        dd = cached_drawdown_stats(init_bank)
+        sharpe = cached_sharpe_ratio(init_bank)
         st.markdown(f"""
 <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
 <div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🗄 SQLite stats</div>
@@ -2002,8 +2081,10 @@ with st.sidebar:
         st.success("☁️ Cloud mode", icon="✅")
     else:
         st.warning("💾 Local mode", icon="⚠️")
-    if ENGINE_HMAC_KEY:
-        st.caption("🔐 Engine signed (HMAC)")
+
+    # [v12.9.2] P1: Индикатор hold-out
+    st.caption(f"📊 Калибратор: hold-out последних {CALIB_HOLDOUT} матчей")
+
     st.markdown("**🔑 Ключи**")
     ak = st.text_input("API-Football", value=D.get("meta", {}).get("api_key", ""), type="password")
     if ak != D.get("meta", {}).get("api_key", ""):
@@ -2050,6 +2131,13 @@ with st.sidebar:
             D["stats"] = {"won": 0, "lost": 0, "profit": 0, "push": 0, "void": 0}
             D["meta"]["initial_bank"] = 10000.0
             save_data(D)
+            # [v12.9.2] P2: инвалидация кэша
+            cached_sqlite_status.clear()
+            cached_clv_summary.clear()
+            cached_drawdown_stats.clear()
+            cached_sharpe_ratio.clear()
+            cached_db_fetch_bets.clear()
+            cached_db_bank_history.clear()
             st.session_state.confirm_clear = False
             st.rerun()
         if cc2.button("❌ Нет", key="confirm_no"):
@@ -2162,6 +2250,9 @@ with tab1:
                                     update_loader(f"Обучение [{processed}/{total_matches}]", pct, logs)
                     engine.trained_n = trained
                     engine_cache_put(fp, engine)
+                    # [v12.9.2] P1: Логируем hold-out
+                    holdout_skipped = min(CALIB_HOLDOUT, total_matches)
+                    logs.append(f"📊 Hold-out: {holdout_skipped} матчей не использовались для калибратора")
                     logs.append(f"🧠 Обучено: {trained}")
                 else:
                     logs.append(f"💾 Engine из кэша (обучено {getattr(engine, 'trained_n', '?')})")
@@ -2182,7 +2273,8 @@ with tab1:
                     P = engine.predict(h_en, a_en, lg, match_date=d, cup=is_cup(r))
                     fh = engine.form_str(h_en)
                     fa = engine.form_str(a_en)
-                    verdict, rows, _legacy_best = build_verdict(
+                    # [v12.9.2] P3: Убран _legacy_best
+                    verdict, rows, _ = build_verdict(
                         P, min_prob, D["bank"], kelly_frac,
                         h_ru, a_ru, fh, fa, P.get("h2h_n", 0))
                     best = None
@@ -2266,6 +2358,13 @@ with tab1:
                 if use_sqlite_enabled(D2):
                     sync_bets_to_sqlite(D2)
                     db_log_bank(D2.get("bank", 10000.0), event="scan")
+                    # [v12.9.2] P2: инвалидация кэша
+                    cached_sqlite_status.clear()
+                    cached_clv_summary.clear()
+                    cached_drawdown_stats.clear()
+                    cached_sharpe_ratio.clear()
+                    cached_db_fetch_bets.clear()
+                    cached_db_bank_history.clear()
                 update_loader(f"✅ Готово! +{len(new_bets)} ставок", 1.0, logs)
                 time.sleep(1.5)
                 loader_ph.empty()
@@ -2376,6 +2475,12 @@ with tab2:
                     if use_sqlite_enabled(D):
                         sync_bets_to_sqlite(st.session_state.data)
                         db_log_bank(st.session_state.data.get("bank", 10000.0), event="manual_settle")
+                        cached_sqlite_status.clear()
+                        cached_clv_summary.clear()
+                        cached_drawdown_stats.clear()
+                        cached_sharpe_ratio.clear()
+                        cached_db_fetch_bets.clear()
+                        cached_db_bank_history.clear()
                     st.rerun()
                 if cc[2].button("❌", key=f"l{i}"):
                     st.session_state.data = apply_settle(D, i, "lost", score=sc)
@@ -2383,6 +2488,12 @@ with tab2:
                     if use_sqlite_enabled(D):
                         sync_bets_to_sqlite(st.session_state.data)
                         db_log_bank(st.session_state.data.get("bank", 10000.0), event="manual_settle")
+                        cached_sqlite_status.clear()
+                        cached_clv_summary.clear()
+                        cached_drawdown_stats.clear()
+                        cached_sharpe_ratio.clear()
+                        cached_db_fetch_bets.clear()
+                        cached_db_bank_history.clear()
                     st.rerun()
                 if cc[3].button("🚫", key=f"c{i}"):
                     st.session_state.data = cancel_bet(D, i)
@@ -2390,6 +2501,12 @@ with tab2:
                     if use_sqlite_enabled(D):
                         sync_bets_to_sqlite(st.session_state.data)
                         db_log_bank(st.session_state.data.get("bank", 10000.0), event="cancel")
+                        cached_sqlite_status.clear()
+                        cached_clv_summary.clear()
+                        cached_drawdown_stats.clear()
+                        cached_sharpe_ratio.clear()
+                        cached_db_fetch_bets.clear()
+                        cached_db_bank_history.clear()
                     st.toast("Ставка отменена, stake возвращён", icon="🚫")
                     st.rerun()
 
@@ -2410,7 +2527,8 @@ with tab3:
     if SQLITE_BOOT_OK and use_sqlite_enabled(D):
         st.divider()
         st.subheader("🗄 SQLite + CLV + Drawdown")
-        sqlite_bets = db_fetch_bets(limit=100000)
+        # [v12.9.2] P2: используем кэш
+        sqlite_bets = cached_db_fetch_bets(status=None, limit=100000)
         if sqlite_bets:
             n = len(sqlite_bets)
             n_pending_db = sum(1 for b in sqlite_bets if b.get("status") == "pending")
@@ -2420,17 +2538,17 @@ with tab3:
             n_void = sum(1 for b in sqlite_bets if b.get("status") == "void")
             st.caption(f"SQLite: {n} ставок · pending {n_pending_db} · won {n_won} · lost {n_lost} · push {n_push} · void {n_void}")
 
-        clv = clv_summary()
+        clv = cached_clv_summary()
         init_bank = float(D.get("meta", {}).get("initial_bank", 10000.0))
-        dd = drawdown_stats(initial_bank=init_bank)
-        sharpe = sharpe_ratio(initial_bank=init_bank)
+        dd = cached_drawdown_stats(init_bank)
+        sharpe = cached_sharpe_ratio(init_bank)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("CLV avg", f"{clv['avg_clv']*100:+.2f}%")
         c2.metric("CLV N", clv['n'])
         c3.metric("Max DD", f"-{dd['max_dd_pct']*100:.1f}%")
         c4.metric("Sharpe", f"{sharpe:.2f}")
 
-        hist = db_bank_history(limit=5000)
+        hist = cached_db_bank_history(limit=5000)
         if len(hist) > 1:
             try:
                 import pandas as pd
@@ -2509,6 +2627,7 @@ with tab5:
             log = []
             bank = 10000.0
             prog = st.progress(0.0)
+            total_bt = len(rows_all)
             for j, r in enumerate(rows_all):
                 h = (r.get("HomeTeam") or "").strip()
                 a = (r.get("AwayTeam") or "").strip()
@@ -2541,9 +2660,9 @@ with tab5:
                                     "edge": round(edge, 3), "stake": stake,
                                     "won": won, "pnl": round(pnl, 2)})
                 engine.learn_step(h, a, hg, ag, r, lg=bt_div, match_num=j,
-                                  total=len(rows_all), match_date=md)
+                                  total=total_bt, match_date=md)
                 if j % 25 == 0:
-                    prog.progress(j / len(rows_all))
+                    prog.progress(j / total_bt)
             prog.progress(1.0)
             if not log:
                 st.warning("Сигналов не найдено: edge выше порога не встретился. "
