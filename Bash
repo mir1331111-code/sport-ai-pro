@@ -1,4 +1,3 @@
-git add App.py
-git commit -m "v12.7: backtest loader + trimmed odds + NR calibrator"
+git add .
+git commit -m "v12.9.2: security + hold-out + caching"
 git push
-# Streamlit Cloud → Reboot → Ctrl+Shift+R
