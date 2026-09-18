@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.9.3 — estimate odds + TSDB auto-settle + LLM analyst."""
+"""NEURO BET PRO v12.9.4 — local key persistence + LLM analyst + estimate odds + TSDB auto-settle."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64, hmac, sqlite3
 from contextlib import contextmanager
@@ -18,12 +18,13 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.9.3", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.9.4", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.9.3"
+APP_VERSION = "12.9.4"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
+LOCAL_FILE = "neuro_local.json"
 ENGINE_GIST_FILE = "engine.b64"
 API_USAGE_FILE = "api_usage.json"
 SETTLE_USAGE_FILE = "settle_usage.json"
@@ -36,6 +37,7 @@ try:
 except NameError:
     _APP_DIR = os.getcwd()
 DB_FILE = os.path.join(_APP_DIR, "neuro.db")
+LOCAL_PATH = os.path.join(_APP_DIR, LOCAL_FILE)
 
 esc = html.escape
 API_LIMIT_DAILY = 100
@@ -75,7 +77,7 @@ DIV_TO_APILG = {"E0":39,"E1":40,"SP1":140,"SP2":141,"I1":135,"I2":136,"D1":78,"D
  "F1":61,"F2":62,"N1":88,"B1":144,"P1":94,"T1":203,"R1":235,"G1":197}
 DIV_NAMES = {"E0":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ","E1":"🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип","D1":"🇩🇪 Бундеслига",
  "D2":"🇩🇪 2.Бундеслига","I1":"🇮🇹 Серия A","I2":"🇮🇹 Серия B","SP1":"🇪🇸 Ла Лига",
- "SP2":"🇪🇸 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
+ "SP2":"🇪 Сегунда","F1":"🇫🇷 Лига 1","F2":"🇫🇷 Лига 2","N1":"🇳🇱 Эредивизи",
  "B1":"🇧🇪 Про-лига","P1":"🇵🇹 Примейра","T1":"🇹🇷 Суперлига","G1":"🇬🇷 Греция",
  "R1":"🇷🇺 РПЛ","C1":"🏆 Лига Чемпионов","EL":"🏆 Лига Европы","EC":"🏆 Лига Конференций"}
 STADIUM_WALLS = {
@@ -452,16 +454,37 @@ def _usage_load(fn):
         if g and isinstance(g,dict):
             if g.get("date")!=_today_str(): return d
             return g
+    else:
+        # [v12.9.4] локальный счётчик из neuro_local.json
+        try:
+            if os.path.exists(LOCAL_PATH):
+                with open(LOCAL_PATH,"r",encoding="utf-8") as f:
+                    ld = json.load(f)
+                u = (ld.get("usage") or {}).get(fn)
+                if isinstance(u,dict) and u.get("date")==_today_str():
+                    return u
+        except Exception: pass
     return d
+def _usage_save_local(fn,d):
+    try:
+        ld = {}
+        if os.path.exists(LOCAL_PATH):
+            with open(LOCAL_PATH,"r",encoding="utf-8") as f: ld = json.load(f)
+        ld.setdefault("usage",{})[fn] = d
+        with open(LOCAL_PATH,"w",encoding="utf-8") as f:
+            json.dump(ld,f,ensure_ascii=False,indent=2,default=str)
+    except Exception as e: log_err("usage_save_local",e)
 def _usage_increment(fn,n=1):
     d = _usage_load(fn); d["count"] = int(d.get("count",0))+n
     if CLOUD_IS_CLOUD: gist_save_json(CLOUD_GIST_ID,fn,d)
+    else: _usage_save_local(fn,d)
     return d
 def _usage_remaining(fn,limit):
     return max(0,limit-int(_usage_load(fn).get("count",0)))
 def _usage_reset(fn):
     d = {"date":_today_str(),"count":0}
     if CLOUD_IS_CLOUD: gist_save_json(CLOUD_GIST_ID,fn,d)
+    else: _usage_save_local(fn,d)
     return d
 def api_usage_load(): return _usage_load(API_USAGE_FILE)
 def api_usage_increment(n=1): return _usage_increment(API_USAGE_FILE,n)
@@ -739,9 +762,7 @@ def load_seasonal(div,season):
     except Exception as e:
         log_err("load_seasonal",e); return []
 
-# ============================================================
-# [v12.9.3] LLM Analyst
-# ============================================================
+# ============= LLM Analyst =============
 LLM_SYSTEM_PROMPT = """Ты — эксперт-аналитик футбола и ставок. Отвечай на русском.
 Тебе дают данные о матче: команды, лига, модельные xG, вероятности, форма, личные встречи, вердикт ML-модели.
 Твоя задача:
@@ -756,23 +777,18 @@ LLM_SYSTEM_PROMPT = """Ты — эксперт-аналитик футбола �
 НЕ добавляй пояснений, markdown, код. Только валидный JSON."""
 
 def llm_analyze_match(match_ctx):
-    """Запрос к LLM. match_ctx — словарь с контекстом матча. Возвращает opinion-строку или None."""
     api_key = match_ctx.get("api_key") or CLOUD_LLM_API_KEY
     if not api_key: return None
     if llm_usage_remaining()<=0: return None
-    
     provider = match_ctx.get("provider") or CLOUD_LLM_PROVIDER
     if provider not in LLM_PROVIDERS: provider = "Groq (бесплатно, быстро)"
     cfg = LLM_PROVIDERS[provider]
     model = match_ctx.get("model") or cfg["model"]
     base = cfg["base"]
-    
-    # Кэш по хэшу контекста (чтобы не дёргать LLM повторно по тому же матчу)
-    ctx_hash = hashlib.md5(json.dumps(match_ctx, sort_keys=True, default=str).encode()).hexdigest()
+    ctx_hash = hashlib.md5(json.dumps(match_ctx,sort_keys=True,default=str).encode()).hexdigest()
     ck = f"llm_{ctx_hash}"
-    cached = disk_cache_get(ck, 86400*3)
+    cached = disk_cache_get(ck,86400*3)
     if cached is not None: return cached
-    
     user_msg = (
         f"Матч: {match_ctx.get('home','')} — {match_ctx.get('away','')}\n"
         f"Лига: {match_ctx.get('league','')}\n"
@@ -785,56 +801,39 @@ def llm_analyze_match(match_ctx):
         f"Вердикт ML-модели: {match_ctx.get('pick','')} с P={match_ctx.get('prob',0)*100:.0f}% (уверенность: {match_ctx.get('confidence','')})\n"
         f"EV: {match_ctx.get('ev',0)*100:+.1f}%\n"
     )
-    
     try:
-        r = _sess.post(
-            f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type":"application/json"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role":"system","content":LLM_SYSTEM_PROMPT},
-                    {"role":"user","content":user_msg}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 300,
-            },
-            timeout=30, proxies=NO_PROXY
-        )
+        r = _sess.post(f"{base}/chat/completions",
+            headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},
+            json={"model":model,
+                  "messages":[{"role":"system","content":LLM_SYSTEM_PROMPT},
+                              {"role":"user","content":user_msg}],
+                  "temperature":0.3,"max_tokens":300},
+            timeout=30,proxies=NO_PROXY)
         llm_usage_increment(1)
         if r.status_code!=200:
-            log_err("llm_request", f"HTTP {r.status_code}: {r.text[:150]}")
+            log_err("llm_request",f"HTTP {r.status_code}: {r.text[:150]}")
             return None
         data = r.json()
         content = data.get("choices",[{}])[0].get("message",{}).get("content","")
-        # Парсим JSON из ответа
         content = content.strip()
         if content.startswith("```"): content = re.sub(r"^```(?:json)?\s*|\s*```$","",content).strip()
-        try:
-            parsed = json.loads(content)
+        parsed = None
+        try: parsed = json.loads(content)
         except Exception:
-            # Попробуем вытащить JSON из текста
-            m = re.search(r"\{[^{}]*\}", content)
+            m = re.search(r"\{[^{}]*\}",content)
             if m:
                 try: parsed = json.loads(m.group(0))
                 except Exception: parsed = None
-            else: parsed = None
-        
         if parsed and "opinion" in parsed:
             opinion = str(parsed["opinion"]).strip()
-            agree = parsed.get("agree")
-            risks = parsed.get("risks")
+            agree = parsed.get("agree"); risks = parsed.get("risks")
             tag = "✅ Согласен" if agree else "🤔 Спорно"
             result = f"{tag}. {opinion}"
             if risks: result += f" · Риски: {risks}"
-            disk_cache_put(ck, result)
-            return result
-        # Fallback — просто текст
-        disk_cache_put(ck, content[:300])
-        return content[:300] if content else None
+            disk_cache_put(ck,result); return result
+        disk_cache_put(ck,content[:300]); return content[:300] if content else None
     except Exception as e:
-        log_err("llm_analyze", e)
-        return None
+        log_err("llm_analyze",e); return None
 
 class Calibrator:
     def __init__(self):
@@ -1066,16 +1065,39 @@ def migrate(D):
     if "initial_bank" not in D["meta"]: D["meta"]["initial_bank"] = float(D.get("bank",10000.0))
     D["version"] = DATA_VERSION
     return D
+# [v12.9.4] load/save с локальным файлом (ключи не теряются)
 def load_data():
     if CLOUD_IS_CLOUD:
         gd = gist_load_json(CLOUD_GIST_ID,HISTORY_FILE)
         if gd: return migrate(gd)
+    try:
+        if os.path.exists(LOCAL_PATH):
+            with open(LOCAL_PATH,"r",encoding="utf-8") as f:
+                ld = json.load(f)
+            if isinstance(ld,dict):
+                # локальный файл хранит и данные, и usage
+                data_part = ld.get("data") or ld
+                return migrate(data_part)
+    except Exception as e:
+        log_err("load_data_local",e)
     return new_data()
 def save_data(D):
     if CLOUD_IS_CLOUD:
         Ds = clone(D); Ds.get("meta",{}).pop("api_key",None); Ds.get("meta",{}).pop("llm_api_key",None)
         return gist_save_json(CLOUD_GIST_ID,HISTORY_FILE,Ds)
-    return True
+    try:
+        ld = {}
+        if os.path.exists(LOCAL_PATH):
+            try:
+                with open(LOCAL_PATH,"r",encoding="utf-8") as f: ld = json.load(f)
+            except Exception: ld = {}
+        ld["data"] = clone(D)
+        with open(LOCAL_PATH,"w",encoding="utf-8") as f:
+            json.dump(ld,f,ensure_ascii=False,indent=2,default=str)
+        return True
+    except Exception as e:
+        log_err("save_data_local",e)
+        return True
 def clone(D): return json.loads(json.dumps(D,default=str))
 def engine_cache_fp(season,extra,matrix_n): return (APP_VERSION,season,int(matrix_n),str(extra))
 def engine_cache_get(fp):
@@ -1134,8 +1156,6 @@ def api_find_fixture_id(api_key,home,away,date_iso,count_usage=True):
         fa = _norm_team_name((teams.get("away") or {}).get("name"))
         if fh==hn and fa==an: return (f.get("fixture") or {}).get("id")
     return None
-
-# [v12.9.3] TheSportsDB поиск результата (бесплатно, без лимитов)
 def tsdb_find_result(home,away,date_iso):
     if not home or not away or not date_iso: return None
     ck = f"tsdb_result_{date_iso}_{_norm_team_name(home)}_{_norm_team_name(away)}"
@@ -1169,7 +1189,6 @@ def tsdb_find_result(home,away,date_iso):
         disk_cache_put(ck,None); return None
     except Exception as e_:
         log_err("tsdb_find_result",e_); return None
-
 def auto_settle(D):
     api_key = D.get("meta",{}).get("api_key","")
     D2 = clone(D); changed = 0; now = datetime.now()
@@ -1185,7 +1204,6 @@ def auto_settle(D):
                 D2["bets"][idx]["fixture_id"] = found; fid = found
         if bd and bd>now: continue
         res = None; source = None
-        # Приоритет 1: API-Football (если есть запросы)
         if fid and api_key and settle_usage_remaining()>0:
             ck = f"api_result_{fid}"
             cached = disk_cache_get(ck,3600)
@@ -1193,7 +1211,6 @@ def auto_settle(D):
             else:
                 res = api_fixture_result(api_key,fid,count_usage=False)
                 settle_usage_increment(1); source = "api"
-        # Приоритет 2: TheSportsDB (бесплатно, без лимитов)
         if res is None and " vs " in (b.get("match") or "") and bd:
             h,a = b["match"].split(" vs ",1)
             tsdb_res = tsdb_find_result(h,a,bd.strftime("%Y-%m-%d"))
@@ -1206,7 +1223,6 @@ def auto_settle(D):
                     f"pick={b.get('pick')} score={hg}:{ag}"); continue
         D2 = apply_settle(D2,idx,outcome,score=f"{hg}:{ag}"); changed += 1
         log_err("auto_settle_ok",f"settled bet {b.get('id')} via {source}: {hg}:{ag} → {outcome}")
-        # CLV только если источник — API
         if use_sqlite_enabled(D2) and fid and source and source.startswith("api"):
             try:
                 closing = api_fixture_odds(api_key,fid) or {}
@@ -1228,9 +1244,7 @@ def auto_settle(D):
         if bd and now-bd>timedelta(hours=48):
             D2 = apply_settle(D2,idx,"void",score="void (no result)"); changed += 1
     return D2,changed
-
 def stadium_bg(div): return STADIUM_WALLS.get(norm_div(div),STADIUM_WALLS["DEFAULT"])
-
 def render_verdict_card(c,thr):
     v = c.get("verdict") or {}
     if not v: return ""
@@ -1265,7 +1279,6 @@ def render_verdict_card(c,thr):
     if is_action and not has_real:
         warn = ("<div style='color:#fde68a;font-size:.78rem;margin-top:8px;'>⚠️ Реального кэфа не нашли — "
                 "используется estimate odd (fair × 0.94).</div>")
-    # [v12.9.3] Блок мнения ИИ
     llm_opinion = c.get("llm_opinion") or ""
     llm_html = ""
     if llm_opinion:
@@ -1370,7 +1383,7 @@ if _now_ts-_last_auto>AUTO_SETTLE_THROTTLE_SEC:
 pending_count = sum(1 for b in D["bets"] if isinstance(b,dict) and b.get("status")=="pending")
 st.markdown(f"""
 <div class="hero"><h1>NEURO BET PRO</h1>
-<p>v{APP_VERSION} · 🤖 LLM аналитик ·  estimate odds ·  TSDB auto-settle · 🇷🇺 переводы · 🗄 SQLite</p>
+<p>v{APP_VERSION} · 🤖 LLM аналитик · estimate odds · TSDB auto-settle · 🇷 переводы ·  SQLite · 🔑 локальное хранение ключей</p>
 <div class="kpis">
  <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
  <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1396,7 +1409,6 @@ with st.sidebar:
 <div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">Auto-settle (API)</div>
 <div style="font-size:1.3rem;font-weight:800;color:{'#34d399' if s_rem>10 else ('#fbbf24' if s_rem>3 else '#f87171')};">{s_rem} / {AUTO_SETTLE_LIMIT}</div>
 <div style="color:#8b93a7;font-size:.75rem;">+ бесплатный TSDB fallback</div></div>""",unsafe_allow_html=True)
-    # [v12.9.3] LLM счётчик
     llm_used = int(llm_usage_load().get("count",0)); llm_rem = max(0,LLM_DAILY_LIMIT-llm_used)
     st.markdown(f"""
 <div style="background:rgba(139,92,246,.10);border:1px solid rgba(139,92,246,.35);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
@@ -1416,15 +1428,14 @@ with st.sidebar:
         api_usage_reset(); settle_usage_reset(); llm_usage_reset()
         st.toast("Счётчики сброшены",icon="♻️"); st.rerun()
     if CLOUD_IS_CLOUD: st.success("☁️ Cloud mode",icon="✅")
-    else: st.warning("💾 Local mode",icon="⚠️")
+    else: st.warning("💾 Local mode (ключи в neuro_local.json)",icon="💾")
     st.markdown("**🔑 Ключи**")
     ak = st.text_input("API-Football",value=D.get("meta",{}).get("api_key",""),type="password")
     if ak!=D.get("meta",{}).get("api_key",""):
         D["meta"]["api_key"] = ak; save_data(D)
-    # [v12.9.3] LLM настройки
     st.markdown("**🤖 ИИ-аналитик**")
     llm_prov = st.selectbox("Провайдер",list(LLM_PROVIDERS.keys()),
-                            index=list(LLM_PROVIDERS.keys()).index(D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)") or "Groq (бесплатно, быстро)"))
+                            index=list(LLM_PROVIDERS.keys()).index(D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)")) if D.get("meta",{}).get("llm_provider") in LLM_PROVIDERS else 0)
     cur_prov = LLM_PROVIDERS[llm_prov]
     st.caption(f"Получить ключ: [{cur_prov['key_url']}]({cur_prov['key_url']})")
     st.caption(f"Модель по умолчанию: `{cur_prov['model']}`")
@@ -1432,7 +1443,7 @@ with st.sidebar:
                             type="password",help="Ключ от Groq / OpenRouter / OpenAI / DeepSeek")
     llm_model = st.text_input("Модель (override)",value=D.get("meta",{}).get("llm_model",""),
                               placeholder=cur_prov["model"],
-                              help="Оставь пустым — используется модель по умолчанию провайдера")
+                              help="Оставь пустым — модель по умолчанию провайдера")
     if llm_prov!=D.get("meta",{}).get("llm_provider") or llm_key!=D.get("meta",{}).get("llm_api_key") or llm_model!=D.get("meta",{}).get("llm_model",""):
         D["meta"]["llm_provider"] = llm_prov
         D["meta"]["llm_api_key"] = llm_key
@@ -1560,11 +1571,9 @@ with tab1:
                     best = None
                     if verdict.get("is_action"):
                         fid_ = r.get("fixture_id")
-                        # [v12.9.3] Приоритет: реальный кэф
                         if fid_ and api_usage_remaining()>20 and matches_with_best<15:
                             real_odds = api_fixture_odds(ak_,fid_)
                             verdict,best = refine_with_real_odds(verdict,rows,real_odds,D["bank"],kelly_frac)
-                        # [v12.9.3] FALLBACK: estimate odds (fair * 0.94)
                         if best is None and verdict.get("is_action"):
                             est_odd = verdict.get("odd") or verdict.get("fair_odd")
                             if est_odd and est_odd>1.01:
@@ -1587,7 +1596,6 @@ with tab1:
                         "lam_h":P["lams"][0],"lam_a":P["lams"][1],
                         "p1":P["p1"],"px":P["x"],"p2":P["p2"],"over":P["over"],"btts":P["btts"]})
                 logs.append(f"🎯 Найдено с P≥{min_prob*100:.0f}%: {matches_with_best}")
-                # [v12.9.3] LLM аналитик — запрашиваем мнение для топ-N карточек
                 llm_key_ = D.get("meta",{}).get("llm_api_key","")
                 llm_prov_ = D.get("meta",{}).get("llm_provider","Groq (бесплатно, быстро)")
                 llm_model_ = D.get("meta",{}).get("llm_model","")
@@ -1609,8 +1617,7 @@ with tab1:
                            "p1":card.get("p1",0),"px":card.get("px",0),"p2":card.get("p2",0),
                            "over":card.get("over",0),"btts":card.get("btts",0),
                            "fh":card.get("fh","—"),"fa":card.get("fa","—"),
-                           "h2h_n":P.get("h2h_n",0) if 'P' in locals() else 0,
-                           "pick":v_.get("label",""),"prob":v_.get("prob",0),
+                           "h2h_n":0,"pick":v_.get("label",""),"prob":v_.get("prob",0),
                            "confidence":v_.get("confidence",""),"ev":v_.get("ev",0)}
                     opinion = llm_analyze_match(ctx)
                     if opinion:
