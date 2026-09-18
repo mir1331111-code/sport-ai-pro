@@ -183,4 +183,124 @@ def tsdb_past_league(tsdb_id: str, limit: int = 60) -> list[dict]:
         ev = (r.json() or {}).get("events") or []
         out = []
         for e in ev[:limit]:
-            h, a = e.get("strHomeTeam"), e.get("
+            h, a = e.get("strHomeTeam"), e.get("strAwayTeam")
+            hg = _f(e.get("intHomeScore"))
+            ag = _f(e.get("intAwayScore"))
+            if not h or not a or hg is None or ag is None:
+                continue
+            out.append({
+                "HomeTeam": h, "AwayTeam": a,
+                "FTHG": str(int(hg)), "FTAG": str(int(ag)),
+                "Date": (e.get("dateEvent") or "")[:10],
+            })
+        cache_put(ck, out)
+        return out
+    except Exception:
+        return []
+
+
+def tsdb_match_result(fixture_id: str) -> Optional[dict]:
+    if not fixture_id:
+        return None
+    ck = f"tsdb_result_{fixture_id}"
+    cached = cache_get(ck, CACHE_TTL["tsdb_result"])
+    if cached is not None:
+        return cached or None
+    try:
+        r = _sess.get(
+            "https://www.thesportsdb.com/api/v1/json/3/lookupevent.php",
+            params={"id": fixture_id}, timeout=15, proxies=NO_PROXY)
+        if r.status_code != 200:
+            return None
+        ev = ((r.json() or {}).get("events") or [None])[0]
+        if not ev:
+            return None
+        status = ev.get("strStatus") or ""
+        hg = _f(ev.get("intHomeScore"))
+        ag = _f(ev.get("intAwayScore"))
+        if hg is None or ag is None:
+            cache_put(ck, None)
+            return None
+        result = {"home": int(hg), "away": int(ag), "status": status}
+        cache_put(ck, result)
+        return result
+    except Exception:
+        return None
+
+
+# -------------------- The Odds API --------------------
+def _norm_name(s: str) -> str:
+    return re.sub(r"[^a-zа-я0-9]", "", (s or "").lower())
+
+
+def odds_api_fixture(sport_key: str, home: str, away: str,
+                     api_key: str) -> Optional[dict]:
+    if not api_key or not sport_key:
+        return None
+    # Сначала кэш — лимит не тратим
+    ck = f"odds_{sport_key}_{_norm_name(home)}_{_norm_name(away)}"
+    cached = cache_get(ck, CACHE_TTL["odds"])
+    if cached is not None:
+        return cached or None
+    if usage.odds_remaining() <= 0:
+        return None
+    try:
+        r = _sess.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            params={"apiKey": api_key, "regions": "eu",
+                    "markets": "h2h,totals,btts", "oddsFormat": "decimal"},
+            timeout=20, proxies=NO_PROXY)
+        usage.odds_increment(1)
+        if r.status_code != 200:
+            return None
+        events = r.json() or []
+        hn, an = _norm_name(home), _norm_name(away)
+        target = None
+        for ev in events:
+            eh = _norm_name(ev.get("home_team", ""))
+            ea = _norm_name(ev.get("away_team", ""))
+            if eh == hn and ea == an:
+                target = ev
+                break
+            if (eh in hn or hn in eh) and (ea in an or an in ea):
+                target = ev
+                break
+        if not target:
+            return None
+        acc = defaultdict(list)
+        for bmk in target.get("bookmakers") or []:
+            for mkt in bmk.get("markets") or []:
+                name = mkt.get("key")
+                for out in mkt.get("outcomes") or []:
+                    on = out.get("name") or ""
+                    odd = _f(out.get("price"))
+                    if odd is None or odd <= 1.0:
+                        continue
+                    if name == "h2h":
+                        if on == target.get("home_team"):
+                            acc["П1"].append(odd)
+                        elif on == target.get("away_team"):
+                            acc["П2"].append(odd)
+                        elif on == "Draw":
+                            acc["X"].append(odd)
+                    elif name == "totals":
+                        pt = _f(out.get("point"))
+                        if pt is not None and abs(pt - 2.5) < 0.01:
+                            if on == "Over":
+                                acc["ТБ 2.5"].append(odd)
+                            elif on == "Under":
+                                acc["ТМ 2.5"].append(odd)
+                    elif name == "btts":
+                        if on == "Yes":
+                            acc["BTTS да"].append(odd)
+                        elif on == "No":
+                            acc["BTTS нет"].append(odd)
+        out = {k: sum(v) / len(v) for k, v in acc.items() if v}
+        if not (("П1" in out and "X" in out and "П2" in out) or
+                ("ТБ 2.5" in out and "ТМ 2.5" in out) or
+                ("BTTS да" in out and "BTTS нет" in out)):
+            out = {}
+        cache_put(ck, out or None)
+        return out or None
+    except Exception:
+        return None
