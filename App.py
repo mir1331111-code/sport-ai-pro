@@ -1,4 +1,4 @@
-"""NEURO BET PRO v12.9 — SQLite + CLV + Drawdown/Sharpe + all fixes from 12.8.2."""
+"""NEURO BET PRO v12.9.1 — absolute DB path + sqlite diagnostics + real initial bank."""
 import streamlit as st
 import csv, io, os, math, re, pickle, json, html, time, hashlib, gzip, base64, hmac, sqlite3
 from contextlib import contextmanager
@@ -18,23 +18,29 @@ try:
 except Exception:
     _HAS_RETRY = False
 
-st.set_page_config(page_title="NEURO BET PRO v12.9", page_icon="🏟", layout="wide",
+st.set_page_config(page_title="NEURO BET PRO v12.9.1", page_icon="🏟", layout="wide",
                    initial_sidebar_state="expanded")
 
-APP_VERSION = "12.9"
+APP_VERSION = "12.9.1"
 DATA_VERSION = 15
 HISTORY_FILE = "neuro_bet_pro.json"
 ENGINE_GIST_FILE = "engine.b64"
 API_USAGE_FILE = "api_usage.json"
 SETTLE_USAGE_FILE = "settle_usage.json"
 DISK_CACHE_DIR = "neuro_cache"
-DB_FILE = "neuro.db"
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
+
+# v12.9.1 — абсолютный путь к БД (рядом с app.py, не зависит от CWD)
+try:
+    _APP_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _APP_DIR = os.getcwd()
+DB_FILE = os.path.join(_APP_DIR, "neuro.db")
 
 esc = html.escape
 API_LIMIT_DAILY = 100
 AUTO_SETTLE_LIMIT = 20
-AUTO_SETTLE_THROTTLE_SEC = 21600  # 6 часов = 4 раза в день
+AUTO_SETTLE_THROTTLE_SEC = 21600
 
 API_TO_DIV = {
     "API_39": "E0", "API_40": "E1",
@@ -88,7 +94,6 @@ STADIUM_WALLS = {
     "DEFAULT": "linear-gradient(135deg, rgba(71,85,105,.55), rgba(15,23,42,.95))",
 }
 
-# --- команды (сокращённый словарь — вставляй свой полный, если нужно) ---
 TEAM_TRANSLATIONS = {
     "Manchester United": "Манчестер Юнайтед", "Manchester City": "Манчестер Сити",
     "Liverpool": "Ливерпуль", "Arsenal": "Арсенал", "Chelsea": "Челси",
@@ -197,8 +202,11 @@ NO_PROXY = {"http": None, "https": None, "all": None}
 
 
 # ============================================================
-# SQLite storage layer (v12.9)
+# SQLite storage layer
 # ============================================================
+SQLITE_BOOT_OK = False
+SQLITE_BOOT_ERROR = ""
+
 def _db_conn():
     conn = sqlite3.connect(DB_FILE, timeout=10, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -216,53 +224,63 @@ def _db():
 
 
 def db_init():
-    with _db() as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS bets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            match TEXT NOT NULL,
-            match_ru TEXT,
-            div TEXT,
-            league TEXT,
-            market TEXT,
-            pick TEXT NOT NULL,
-            odds REAL NOT NULL,
-            closing_odds REAL,
-            stake REAL NOT NULL,
-            prob REAL,
-            status TEXT DEFAULT 'pending',
-            score TEXT,
-            strat TEXT,
-            odds_source TEXT,
-            mode TEXT,
-            fixture_id INTEGER,
-            date TEXT,
-            date_iso TEXT,
-            date_time TEXT,
-            ev REAL,
-            clv REAL,
-            settled_at TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
-        CREATE INDEX IF NOT EXISTS idx_bets_date ON bets(date_iso);
-        CREATE INDEX IF NOT EXISTS idx_bets_fixture ON bets(fixture_id);
+    global SQLITE_BOOT_OK, SQLITE_BOOT_ERROR
+    try:
+        with _db() as c:
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS bets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match TEXT NOT NULL,
+                match_ru TEXT,
+                div TEXT,
+                league TEXT,
+                market TEXT,
+                pick TEXT NOT NULL,
+                odds REAL NOT NULL,
+                closing_odds REAL,
+                stake REAL NOT NULL,
+                prob REAL,
+                status TEXT DEFAULT 'pending',
+                score TEXT,
+                strat TEXT,
+                odds_source TEXT,
+                mode TEXT,
+                fixture_id INTEGER,
+                date TEXT,
+                date_iso TEXT,
+                date_time TEXT,
+                ev REAL,
+                clv REAL,
+                settled_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
+            CREATE INDEX IF NOT EXISTS idx_bets_date ON bets(date_iso);
+            CREATE INDEX IF NOT EXISTS idx_bets_fixture ON bets(fixture_id);
 
-        CREATE TABLE IF NOT EXISTS bank_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT DEFAULT CURRENT_TIMESTAMP,
-            bank REAL NOT NULL,
-            event TEXT,
-            bet_id INTEGER,
-            pnl REAL
-        );
+            CREATE TABLE IF NOT EXISTS bank_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP,
+                bank REAL NOT NULL,
+                event TEXT,
+                bet_id INTEGER,
+                pnl REAL
+            );
 
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );
-        """)
-    db_set_meta("schema_version", "1")
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+            """)
+        db_set_meta("schema_version", "1")
+        SQLITE_BOOT_OK = True
+        SQLITE_BOOT_ERROR = ""
+        return True
+    except Exception as e:
+        SQLITE_BOOT_OK = False
+        SQLITE_BOOT_ERROR = f"{type(e).__name__}: {e}"
+        log_err("db_init", e)
+        return False
 
 
 def db_set_meta(key, value):
@@ -325,9 +343,12 @@ def db_fetch_bets(status=None, limit=None):
 
 
 def db_log_bank(bank, event="", bet_id=None, pnl=None):
-    with _db() as c:
-        c.execute("INSERT INTO bank_history(bank, event, bet_id, pnl) VALUES(?,?,?,?)",
-                  (float(bank), event, bet_id, pnl))
+    try:
+        with _db() as c:
+            c.execute("INSERT INTO bank_history(bank, event, bet_id, pnl) VALUES(?,?,?,?)",
+                      (float(bank), event, bet_id, pnl))
+    except Exception as e:
+        log_err("db_log_bank", e)
 
 
 def db_bank_history(limit=2000):
@@ -391,9 +412,12 @@ def db_update_clv_for_fixture(fixture_id, closing_odds_map):
 
 
 def clv_summary():
-    with _db() as c:
-        c.row_factory = sqlite3.Row
-        rows = c.execute("SELECT clv FROM bets WHERE clv IS NOT NULL").fetchall()
+    try:
+        with _db() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute("SELECT clv FROM bets WHERE clv IS NOT NULL").fetchall()
+    except Exception:
+        return {"n": 0, "avg_clv": 0.0, "positive_share": 0.0}
     vals = [float(r["clv"]) for r in rows if r["clv"] is not None]
     if not vals:
         return {"n": 0, "avg_clv": 0.0, "positive_share": 0.0}
@@ -405,7 +429,10 @@ def clv_summary():
 
 
 def drawdown_stats(initial_bank=10000.0):
-    hist = db_bank_history(limit=100000)
+    try:
+        hist = db_bank_history(limit=100000)
+    except Exception:
+        hist = []
     banks = [initial_bank] + [h["bank"] for h in hist if h.get("bank") is not None]
     if len(banks) < 2:
         return {"peak": initial_bank, "max_dd": 0.0, "max_dd_pct": 0.0,
@@ -436,7 +463,10 @@ def drawdown_stats(initial_bank=10000.0):
 
 
 def sharpe_ratio(initial_bank=10000.0, periods_per_year=252):
-    hist = db_bank_history(limit=100000)
+    try:
+        hist = db_bank_history(limit=100000)
+    except Exception:
+        hist = []
     banks = [initial_bank] + [h["bank"] for h in hist if h.get("bank") is not None]
     if len(banks) < 3:
         return 0.0
@@ -457,10 +487,12 @@ def sharpe_ratio(initial_bank=10000.0, periods_per_year=252):
 
 
 def use_sqlite_enabled(D):
-    return bool(D.get("meta", {}).get("use_sqlite", True))
+    return bool(D.get("meta", {}).get("use_sqlite", True)) and SQLITE_BOOT_OK
 
 
 def sync_bets_to_sqlite(D):
+    if not SQLITE_BOOT_OK:
+        return 0
     try:
         sqlite_count = len(db_fetch_bets(limit=100000))
         if sqlite_count >= len(D.get("bets", [])):
@@ -483,18 +515,23 @@ def sync_bets_to_sqlite(D):
 
 
 def sqlite_status():
+    if not SQLITE_BOOT_OK:
+        return {"bets": 0, "pending": 0, "size_kb": 0, "path": DB_FILE,
+                "exists": os.path.exists(DB_FILE), "error": SQLITE_BOOT_ERROR}
     try:
         n_bets = len(db_fetch_bets(limit=100000))
         n_pending = len(db_fetch_bets(status="pending"))
         db_size = os.path.getsize(DB_FILE) if os.path.exists(DB_FILE) else 0
-        return {"bets": n_bets, "pending": n_pending, "size_kb": db_size / 1024}
+        return {"bets": n_bets, "pending": n_pending, "size_kb": db_size / 1024,
+                "path": DB_FILE, "exists": os.path.exists(DB_FILE), "error": ""}
     except Exception as e:
         log_err("sqlite_status", e)
-        return {"bets": 0, "pending": 0, "size_kb": 0}
+        return {"bets": 0, "pending": 0, "size_kb": 0, "path": DB_FILE,
+                "exists": os.path.exists(DB_FILE), "error": str(e)}
 
 
 # ============================================================
-# Disk cache + Gist (engine, api usage)
+# Disk cache + Gist
 # ============================================================
 def _disk_cache_path(key):
     return os.path.join(DISK_CACHE_DIR, f"{hashlib.md5(key.encode()).hexdigest()}.bin")
@@ -1500,6 +1537,9 @@ def migrate(D):
 
     if not isinstance(D.get("meta"), dict):
         D["meta"] = {}
+    # v12.9.1 — фиксируем реальный стартовый банк для drawdown
+    if "initial_bank" not in D["meta"]:
+        D["meta"]["initial_bank"] = float(D.get("bank", 10000.0))
     D["version"] = DATA_VERSION
     return D
 
@@ -1672,7 +1712,6 @@ def auto_settle(D):
         if outcome:
             D2 = apply_settle(D2, idx, outcome, score=f"{hg}:{ag}")
             changed += 1
-            # v12.9 — CLV
             if use_sqlite_enabled(D2) and fid:
                 try:
                     closing = api_fixture_odds(api_key, fid) or {}
@@ -1842,9 +1881,15 @@ section.stButton>button{background:linear-gradient(135deg,#0ea5e9,#8b5cf6,#ec489
 
 
 # ============================================================
-# Boot
+# Boot — с явной диагностикой SQLite
 # ============================================================
-db_init()
+_db_ok = db_init()
+if not _db_ok:
+    st.error(f"❌ SQLite не инициализирована: {SQLITE_BOOT_ERROR}")
+    st.caption(f"Попытка писать в: `{DB_FILE}`")
+    st.caption(f"Текущая папка: `{os.getcwd()}`")
+    st.caption("Проверь права на запись в папку. Если папка read-only — "
+               "укажи другой путь в переменной DB_FILE.")
 
 if "data" not in st.session_state:
     st.session_state.data = load_data()
@@ -1854,8 +1899,13 @@ if "meta" not in D:
 if CLOUD_API_FOOTBALL_KEY and not D["meta"].get("api_key"):
     D["meta"]["api_key"] = CLOUD_API_FOOTBALL_KEY
 
+# v12.9.1 — фиксируем initial_bank при первом запуске
+if "initial_bank" not in D["meta"]:
+    D["meta"]["initial_bank"] = float(D.get("bank", 10000.0))
+    save_data(D)
+
 # Одноразовая миграция Gist → SQLite
-if use_sqlite_enabled(D) and not db_get_meta("migrated_from_gist_at"):
+if SQLITE_BOOT_OK and use_sqlite_enabled(D) and not db_get_meta("migrated_from_gist_at"):
     if db_migrate_from_gist(D):
         st.toast("📦 История мигрирована в SQLite", icon="🗄")
 
@@ -1878,7 +1928,7 @@ pending_count = sum(1 for b in D["bets"] if isinstance(b, dict) and b.get("statu
 st.markdown(f"""
 <div class="hero">
  <h1>NEURO BET PRO</h1>
- <p>v{APP_VERSION} · 🇷🇺 переводы · 🎯 умные альтернативы · 🗄 SQLite · 📈 CLV · 📉 Drawdown · ⏱ 6ч auto-settle</p>
+ <p>v{APP_VERSION} · 🇷🇺 переводы · 🎯 умные альтернативы · 🗄 SQLite · 📈 CLV · 📉 Drawdown</p>
  <div class="kpis">
   <div class="kpi"><div class="t">Банкролл</div><div class="v y">{D['bank']:.0f} у.е.</div></div>
   <div class="kpi"><div class="t">В работе</div><div class="v">{pending_count}</div></div>
@@ -1889,6 +1939,20 @@ st.markdown(f"""
 
 with st.sidebar:
     st.header("⚙️ Настройки")
+
+    # v12.9.1 — диагностика SQLite
+    st.markdown(f"""
+<div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
+<div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🗄 SQLite</div>
+<div style="font-size:.75rem;color:#e6eaf2;">CWD: <code>{esc(os.getcwd())}</code></div>
+<div style="font-size:.75rem;color:#e6eaf2;">DB: <code>{esc(DB_FILE)}</code></div>
+<div style="font-size:.75rem;color:{'#34d399' if SQLITE_BOOT_OK else '#f87171'};">
+  Status: <b>{'OK' if SQLITE_BOOT_OK else 'FAIL'}</b>
+  · exists: <b>{os.path.exists(DB_FILE)}</b>
+</div>
+{f'<div style="font-size:.72rem;color:#f87171;margin-top:4px;">{esc(SQLITE_BOOT_ERROR)}</div>' if SQLITE_BOOT_ERROR else ''}
+</div>""", unsafe_allow_html=True)
+
     usage = api_usage_load()
     used = int(usage.get("count", 0))
     remaining = max(0, API_LIMIT_DAILY - used)
@@ -1907,15 +1971,15 @@ with st.sidebar:
 <div style="color:#8b93a7;font-size:.75rem;">авто-проверок ставок сегодня</div>
 </div>""", unsafe_allow_html=True)
 
-    # v12.9 — SQLite + CLV + DD
-    if use_sqlite_enabled(D):
+    if SQLITE_BOOT_OK and use_sqlite_enabled(D):
         s = sqlite_status()
         clv = clv_summary()
-        dd = drawdown_stats(initial_bank=10000.0)
-        sharpe = sharpe_ratio(initial_bank=10000.0)
+        init_bank = float(D.get("meta", {}).get("initial_bank", 10000.0))
+        dd = drawdown_stats(initial_bank=init_bank)
+        sharpe = sharpe_ratio(initial_bank=init_bank)
         st.markdown(f"""
 <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
-<div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🗄 SQLite</div>
+<div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">🗄 SQLite stats</div>
 <div style="font-size:.85rem;color:#e6eaf2;">Ставок: <b>{s['bets']}</b> · Pending: <b>{s['pending']}</b> · {s['size_kb']:.1f} KB</div>
 </div>
 <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
@@ -1925,6 +1989,7 @@ with st.sidebar:
 <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 14px;margin-bottom:10px;">
 <div style="color:#7dd3fc;font-size:.7rem;text-transform:uppercase;font-weight:700;">📉 Drawdown</div>
 <div style="font-size:.85rem;color:#e6eaf2;">Max: <b style="color:#f87171">-{dd['max_dd_pct']*100:.1f}%</b> · Сейчас: <b>{dd['current_dd_pct']*100:.1f}%</b> · Sharpe: <b>{sharpe:.2f}</b></div>
+<div style="font-size:.72rem;color:#8b93a7;">init: {init_bank:.0f} · peak: {dd['peak']:.0f}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1983,6 +2048,7 @@ with st.sidebar:
             D["cards"] = []
             D["bank"] = 10000.0
             D["stats"] = {"won": 0, "lost": 0, "profit": 0, "push": 0, "void": 0}
+            D["meta"]["initial_bank"] = 10000.0
             save_data(D)
             st.session_state.confirm_clear = False
             st.rerun()
@@ -2341,13 +2407,11 @@ with tab3:
     if s.get("void", 0) > 0:
         st.caption(f"⬜ Void (не найден результат): {s['void']} — stake возвращён")
 
-    # v12.9 — SQLite-статистика
-    if use_sqlite_enabled(D):
+    if SQLITE_BOOT_OK and use_sqlite_enabled(D):
         st.divider()
         st.subheader("🗄 SQLite + CLV + Drawdown")
         sqlite_bets = db_fetch_bets(limit=100000)
         if sqlite_bets:
-            settled = [b for b in sqlite_bets if b.get("status") in ("won", "lost", "push", "void")]
             n = len(sqlite_bets)
             n_pending_db = sum(1 for b in sqlite_bets if b.get("status") == "pending")
             n_won = sum(1 for b in sqlite_bets if b.get("status") == "won")
@@ -2357,15 +2421,15 @@ with tab3:
             st.caption(f"SQLite: {n} ставок · pending {n_pending_db} · won {n_won} · lost {n_lost} · push {n_push} · void {n_void}")
 
         clv = clv_summary()
-        dd = drawdown_stats(initial_bank=10000.0)
-        sharpe = sharpe_ratio(initial_bank=10000.0)
+        init_bank = float(D.get("meta", {}).get("initial_bank", 10000.0))
+        dd = drawdown_stats(initial_bank=init_bank)
+        sharpe = sharpe_ratio(initial_bank=init_bank)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("CLV avg", f"{clv['avg_clv']*100:+.2f}%")
         c2.metric("CLV N", clv['n'])
         c3.metric("Max DD", f"-{dd['max_dd_pct']*100:.1f}%")
         c4.metric("Sharpe", f"{sharpe:.2f}")
 
-        # График банка
         hist = db_bank_history(limit=5000)
         if len(hist) > 1:
             try:
